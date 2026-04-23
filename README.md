@@ -129,19 +129,24 @@ De forma resumida, o fluxo esperado envolve:
 - **Preservação do histórico** do estudante ao longo do tempo.
 - **Base para automação responsável**, sem eliminar a análise humana especializada.
 
-## Status do projeto
+## Status do projeto NAPNE 360 - 0.1.0 - 23/04/2026
+|Versões                                    |
+|------------------------------------------ |
+|0.1.0 — Ideia e levantamento de requisitos |
+|0.2.0 — Protótipo de interface             |
+|0.3.0 — Base funcional                     |
+|0.4.0 — Geração do PEI                     |
+|1.0.0 — Versão estável                     |
 
 Este projeto encontra-se em fase de **levantamento de requisitos e estruturação da solução**, a partir de demandas reais observadas no fluxo de trabalho do NAPNE.
 
 ## Próximos passos
 
-- Mapear com mais detalhe cada etapa do fluxo de acompanhamento.
+- Mapear com mais detalhes cada etapa do fluxo de acompanhamento.
 - Estruturar os formulários digitais de coleta de dados.
 - Definir perfis de acesso e permissões.
-- Especificar os critérios de alertas e monitoramento.
 - Modelar a geração inicial de PEI por disciplina.
 - Prototipar interfaces e validar com os usuários envolvidos.
-- Planejar integrações futuras com sistemas institucionais, quando aplicável.
 
 ## Impacto esperado
 
