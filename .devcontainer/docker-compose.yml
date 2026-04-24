@@ -1,6 +1,6 @@
 services:
   app:
-    image: mcr.microsoft.com/devcontainers/java:17
+    image: mcr.microsoft.com/devcontainers/java:21
     command: sleep infinity
     depends_on:
       - mysql

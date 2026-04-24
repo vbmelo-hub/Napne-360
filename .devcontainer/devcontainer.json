@@ -6,7 +6,7 @@
 
   "features": {
     "ghcr.io/devcontainers/features/java:1": {
-      "version": "none",
+      "version": "21",
       "installMaven": "true",
       "installGradle": "false"
     },
@@ -34,8 +34,6 @@
       }
     }
   },
-
-  "forwardPorts": [4200, 9000, 3306, 8080],
 
   "portsAttributes": {
     "4200": {
