@@ -1,0 +1,54 @@
+{
+  "name": "Napne 360",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "none",
+      "installMaven": "true",
+      "installGradle": "false"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers-extra/features/angular-cli:2": {
+      "version": "19"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "vscjava.vscode-spring-boot-dashboard",
+        "Angular.ng-template",
+        "redhat.vscode-xml",
+        "redhat.vscode-yaml",
+        "github.vscode-github-actions"
+      ],
+      "settings": {
+        "java.configuration.updateBuildConfiguration": "automatic",
+        "java.compile.nullAnalysis.mode": "automatic"
+      }
+    }
+  },
+
+  "forwardPorts": [4200, 9000, 3306, 8080],
+
+  "portsAttributes": {
+    "4200": {
+      "label": "Front-end"
+    },
+    "9000": {
+      "label": "Back-end"
+    },
+    "3306": {
+      "label": "MySQL"
+    },
+    "8080": {
+      "label": "phpMyAdmin"
+    }
+  }
+}
