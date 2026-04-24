@@ -1,0 +1,13 @@
+{
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Run Backend - Spring Boot",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/backend",
+      "mainClass": "br.edu.ifac.napne360.Napne360BackendApplication",
+      "projectName": "napne360-backend",
+      "args": ""
+    }
+  ]
+}

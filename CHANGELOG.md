@@ -13,4 +13,5 @@ Todas as mudanças deste projeto serão documentadas neste arquivo.
 - Configura Dev Container para usar Java 21
 ### Adicionado
 - backend com Spring Boot
+- Configuração de execução do backend (launch.json)
 - SETUP.md
