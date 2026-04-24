@@ -11,3 +11,5 @@ Todas as mudanças deste projeto serão documentadas neste arquivo.
 ## [0.1.0] - 2026-04-24
 ### Alterado
 - Configura Dev Container para usar Java 21
+### Adicionado
+- SETUP.md
