@@ -113,3 +113,22 @@ export interface Course { id: number; name: string; code: string; campusId: numb
 export interface Subject { id: number; name: string; code: string; workloadHours: number; courseId: number; }
 export interface Campus { id: number; name: string; code: string; active: boolean; }
 export interface UserView { id: number; name: string; email: string; active: boolean; campusId: number | null; roles: string[]; }
+
+export interface ReferenceEntryAdmin {
+  id: number;
+  kind: string;
+  code: string;
+  label: string;
+  description: string;
+  active: boolean;
+  version: number;
+}
+
+export interface DocumentTemplateView {
+  id: string;
+  name: string;
+  documentType: string;
+  defaults: Record<string, unknown>;
+  active: boolean;
+  version: number | null;
+}

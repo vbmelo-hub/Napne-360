@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Attachment, Campus, CareRecord, Course, Dossier, NapneCase, Page, Pei, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
+import { Attachment, Campus, CareRecord, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, ReferenceEntryAdmin, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
@@ -60,4 +60,11 @@ export class ApiService {
   setUserRoles(id:number,roles:string[]) { return this.http.put<UserView>(`/api/v1/admin/users/${id}/roles`,{roles}); }
   resetPassword(id:number,password:string) { return this.http.post(`/api/v1/admin/users/${id}/password`,{password}); }
   references(kind:string) { return this.http.get<{id:number,code:string,label:string}[]>('/api/v1/catalog/references',{params:{kind}}); }
+  adminReferences() { return this.http.get<ReferenceEntryAdmin[]>('/api/v1/admin/references'); }
+  createReference(value: object) { return this.http.post<ReferenceEntryAdmin>('/api/v1/admin/references', value); }
+  updateReference(id: number, value: object) { return this.http.put<ReferenceEntryAdmin>(`/api/v1/admin/references/${id}`, value); }
+  setReferenceActive(id: number, active: boolean) { return this.http.patch<ReferenceEntryAdmin>(`/api/v1/admin/references/${id}/active`, { active }); }
+  adminTemplates() { return this.http.get<DocumentTemplateView[]>('/api/v1/admin/templates'); }
+  createTemplate(value: object) { return this.http.post<DocumentTemplateView>('/api/v1/admin/templates', value); }
+  updateTemplate(id: string, value: object) { return this.http.put<DocumentTemplateView>(`/api/v1/admin/templates/${id}`, value); }
 }

@@ -9,5 +9,5 @@ export const routes: Routes = [
   { path: 'estudantes/:id', canActivate: [authGuard], loadComponent: () => import('./pages/student-detail.component').then(m => m.StudentDetailComponent) },
   { path: 'estudantes/:studentId/pei/:peiId', canActivate: [authGuard], loadComponent: () => import('./pages/pei-editor.component').then(m => m.PeiEditorComponent) },
   { path: 'administracao', canActivate: [authGuard, adminGuard], loadComponent: () => import('./pages/admin.component').then(m => m.AdminComponent) },
-  { path: '**', redirectTo: '' }
+  { path: '**', canActivate: [authGuard], loadComponent: () => import('./pages/not-found.component').then(m => m.NotFoundComponent) }
 ];
