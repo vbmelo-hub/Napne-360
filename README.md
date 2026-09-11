@@ -1,157 +1,86 @@
 # NAPNE 360
 
-Sistema proposto para apoiar o acompanhamento educacional inclusivo, centralizando informações dos estudantes atendidos pelo NAPNE e reduzindo processos manuais, fragmentados e sujeitos a atraso.
+Plataforma de acompanhamento educacional inclusivo: cadastro e dossiê, atendimento, estudo de caso, orientações pedagógicas, plano de ação, devolutivas docentes, observações de tutoria e PEI por componente.
 
-## Visão geral
+Entrega desenvolvida na branch `codex/implementacao-completa-napne-360`. A matriz de [rastreabilidade](docs/requirements-traceability.md) liga os requisitos à implementação e aos testes. Alertas, notificações, relatórios gerenciais e dashboards estão fora do escopo.
 
-O **NAPNE 360** nasce da necessidade de organizar, integrar e tornar mais ágil o fluxo de acompanhamento de estudantes com necessidades educacionais específicas. Atualmente, grande parte desse trabalho é feita de forma manual, com informações espalhadas entre e-mails, formulários, planilhas, documentos em PDF, pastas no Drive e processos no SEI. Esse cenário dificulta o acompanhamento contínuo, aumenta a sobrecarga da equipe e pode gerar atrasos no suporte ao estudante.
+## Tecnologias
 
-A proposta do sistema é transformar esse fluxo em uma plataforma única, capaz de:
+- Java 21, Spring Boot 3.5, Maven Wrapper.
+- Angular 20.3 / TypeScript 5.9; Node 22 atualizado ou Node 24.15.
+- MySQL 8: contas, permissões, vínculos, cadastros e auditoria.
+- MongoDB 7: dossiês, registros, modelos, versões de PEI e metadados.
+- Arquivos locais com validação, hash e acesso autorizado.
 
-- centralizar o dossiê do estudante;
-- apoiar a coleta e organização de dados iniciais;
-- gerar insumos para relatórios pedagógicos;
-- oferecer alertas para situações críticas;
-- apoiar a construção de um **PEI (Plano Educacional Individualizado)** inicial por disciplina;
-- fornecer painéis de acompanhamento para diferentes perfis de acesso.
+O Angular 19 originalmente previsto foi atualizado com autorização do usuário para corrigir vulnerabilidades. Veja [ADR 0002](docs/adr/0002-angular-security-update.md).
 
-## Problema que o projeto busca resolver
+## Executar localmente
 
-Hoje, o acompanhamento realizado pelo NAPNE enfrenta desafios como:
+Com Docker disponível:
 
-- **processos fragmentados e manuais**;
-- excesso de retrabalho na coleta, impressão, digitação e armazenamento de informações;
-- dificuldade para consolidar o histórico do estudante;
-- atraso na entrega de relatórios aos professores;
-- ausência de alertas rápidos para faltas consecutivas e outros sinais de risco;
-- dificuldade de monitoramento contínuo por parte de tutores, professores e equipe;
-- sobrecarga na elaboração manual de documentos como relatórios e PEIs.
+```sh
+docker compose up -d --build --wait
+```
 
-Esses fatores impactam diretamente a agilidade da intervenção pedagógica e a qualidade do acompanhamento institucional.
+Frontend: http://localhost:4200
 
-## Objetivo geral
+API: http://localhost:9000
+OpenAPI de desenvolvimento: http://localhost:9000/swagger-ui.html
 
-Desenvolver uma solução digital para informatizar o fluxo de acompanhamento do NAPNE, desde o recebimento das informações iniciais do estudante até o monitoramento contínuo e a geração de apoio para decisões pedagógicas.
+O Compose contém configurações exclusivamente de desenvolvimento. As imagens, health checks, migrations e fluxos E2E foram validados em conjunto; isso não substitui homologação institucional de produção.
 
-## Objetivos específicos
+Para desenvolver com Java/Node locais, siga [SETUP.md](SETUP.md).
 
-- Centralizar dados do estudante em um único ambiente.
-- Registrar entrevistas, estudos de caso, relatórios e histórico de acompanhamento.
-- Facilitar o acesso rápido às informações essenciais para a equipe do NAPNE.
-- Reduzir o retrabalho na produção de documentos.
-- Permitir acompanhamento contínuo por meio de indicadores e alertas.
-- Apoiar professores com informações objetivas sobre adaptação e acompanhamento.
-- Criar base para geração semiautomática de PEI por disciplina.
-- Preservar o histórico institucional do estudante durante sua trajetória acadêmica.
+## Demonstração
 
-## Funcionalidades previstas
+Contas fictícias, criadas somente no perfil `dev`:
 
-### 1. Cadastro e dossiê do estudante
-- Registro centralizado de dados iniciais.
-- Armazenamento de documentos recebidos no processo de matrícula.
-- Organização de informações acadêmicas, comportamentais, socioemocionais e de saúde.
-- Histórico consolidado de atendimentos, observações e encaminhamentos.
+| Perfil | Conta |
+| --- | --- |
+| Administração | admin@napne.local |
+| NAPNE | napne@napne.local |
+| Professor | professor@napne.local |
+| Tutor | tutor@napne.local |
+| COTEP | cotep@napne.local |
+| Coordenação | coordenacao@napne.local |
+| Gestão | gestao@napne.local |
 
-### 2. Entrevista inicial e estudo de caso
-- Formulários digitais para coleta estruturada de dados.
-- Registro de entrevista inicial com aluno e/ou família.
-- Apoio à triagem para identificação de casos que precisam de aprofundamento.
-- Estrutura para estudos de caso mais detalhados.
+Senha de demonstração para essas contas: `Napne360!Demo`.
 
-### 3. Relatórios e acompanhamento pedagógico
-- Geração de relatórios para professores com base no perfil do estudante.
-- Registro de necessidades de adaptação por disciplina.
-- Organização do histórico de orientações pedagógicas.
+O estudante “Alex Exemplo” e os vínculos são fictícios. Administrador não recebe acesso automático ao dossiê. Docentes e tutores acessam somente atribuições autorizadas. Anexos clínicos ficam restritos à equipe NAPNE.
 
-### 4. Geração de PEI inicial
-- Criação de um esboço inicial de **PEI por disciplina**, com base nas informações já registradas no sistema.
-- Possibilidade de edição e ajuste posterior pelo professor conforme a realidade da turma e do estudante.
+## Verificação
 
-### 5. Alertas e monitoramento
-- Alertas para sinais de risco, como faltas consecutivas e situações que demandem ação rápida.
-- Visualização de pontos críticos logo na entrada do sistema.
-- Apoio à tomada de decisão com mais rapidez.
+No backend:
 
-### 6. Painéis por perfil de acesso
-O sistema poderá contar com painéis e permissões específicas para diferentes perfis, como:
+```sh
+./mvnw clean verify
+```
 
-- equipe NAPNE;
-- professores;
-- tutores;
-- monitores;
-- coordenações;
-- direção.
+No Windows, use `mvnw.cmd clean verify` com `JAVA_HOME` apontando para Java 21.
 
-Cada perfil acessará apenas as informações necessárias para seu papel no acompanhamento.
+No frontend:
 
-### 7. Feedback docente simplificado
-- Coleta rápida de feedback mensal dos professores.
-- Interface simples e intuitiva, pensada para preenchimento em poucos minutos.
-- Base para geração de gráficos de evolução e identificação de necessidades de intervenção.
+```sh
+npm ci
+npm run build
+npm test -- --browsers=ChromeHeadless
+npm run e2e
+npm audit --omit=dev
+```
 
-### 8. Relatórios institucionais
-- Apoio à produção de relatórios para uso institucional.
-- Consolidação de dados para auditorias, acompanhamento interno e demandas administrativas.
-- Geração de indicadores e estatísticas sobre o público atendido.
+E2E exige Chrome, API disponível na porta 9000 e seed de desenvolvimento. Os testes criam somente dados fictícios, identificados por matrícula `TEST-...`, e preservam o histórico.
 
-## Público-alvo
+## Documentação
 
-O NAPNE 360 é pensado para atender principalmente:
+- [Configuração](SETUP.md)
+- [Arquitetura](docs/architecture.md)
+- [Decisão de persistência](docs/adr/0001-persistencia-hibrida.md)
+- [Segurança e privacidade](docs/security-and-privacy.md)
+- [Backup e restauração](docs/backup-and-restore.md)
+- [Registro de verificação](docs/verification.md)
+- [Guia de uso](docs/user-guide.md)
+- [Rastreabilidade e pendências](docs/requirements-traceability.md)
+- [Changelog](CHANGELOG.md)
 
-- estudantes acompanhados pelo NAPNE;
-- equipe multidisciplinar e servidores do núcleo;
-- professores;
-- tutores;
-- monitores;
-- coordenações e gestão institucional.
-
-O sistema considera a diversidade de perfis acompanhados, incluindo estudantes com diferentes necessidades específicas, exigindo um fluxo flexível, adaptável e sensível às particularidades de cada caso.
-
-## Fluxo macro do sistema
-
-De forma resumida, o fluxo esperado envolve:
-
-1. Recebimento das informações iniciais do estudante.
-2. Registro digital da entrevista inicial.
-3. Triagem e aprofundamento dos casos necessários.
-4. Consolidação do dossiê do estudante.
-5. Geração de relatório pedagógico.
-6. Apoio à geração de PEI inicial por disciplina.
-7. Monitoramento contínuo com feedbacks e alertas.
-8. Produção de indicadores e relatórios institucionais.
-
-## Diferenciais da proposta
-
-- **Centralização** das informações em um único sistema.
-- **Redução do trabalho manual** e do retrabalho da equipe.
-- **Maior rapidez** no acompanhamento de situações críticas.
-- **Apoio direto ao professor** no processo de inclusão.
-- **Preservação do histórico** do estudante ao longo do tempo.
-- **Base para automação responsável**, sem eliminar a análise humana especializada.
-
-## Status do projeto NAPNE 360 - 0.1.0 - 23/04/2026
-|Versões                                    |
-|------------------------------------------ |
-|0.1.0 — Ideia e levantamento de requisitos |
-|0.2.0 — Protótipo de interface             |
-|0.3.0 — Base funcional                     |
-|0.4.0 — Geração do PEI                     |
-|1.0.0 — Versão estável                     |
-
-Este projeto encontra-se em fase de **levantamento de requisitos e estruturação da solução**, a partir de demandas reais observadas no fluxo de trabalho do NAPNE.
-
-## Próximos passos
-
-- Mapear com mais detalhes cada etapa do fluxo de acompanhamento.
-- Estruturar os formulários digitais de coleta de dados.
-- Definir perfis de acesso e permissões.
-- Modelar a geração inicial de PEI por disciplina.
-- Prototipar interfaces e validar com os usuários envolvidos.
-
-## Impacto esperado
-
-Com a implementação do NAPNE 360, espera-se fortalecer o acompanhamento educacional inclusivo por meio de uma solução mais organizada, rápida e funcional, permitindo que a equipe dedique menos tempo ao trabalho operacional e mais tempo ao cuidado pedagógico e à intervenção qualificada.
-
-## Observação
-
-O NAPNE 360 é uma proposta construída a partir de necessidades reais identificadas no cotidiano do atendimento institucional. Seu foco é apoiar o trabalho humano, ampliar a capacidade de acompanhamento e melhorar a efetividade das ações de inclusão.
+Não há integração ativa com SIGAA, SEI ou SSO. O PEI é um rascunho determinístico com revisão humana identificada; não faz diagnóstico nem recomenda tratamento.

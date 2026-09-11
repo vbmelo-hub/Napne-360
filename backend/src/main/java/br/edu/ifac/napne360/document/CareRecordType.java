@@ -1,0 +1,13 @@
+package br.edu.ifac.napne360.document;
+
+public enum CareRecordType {
+    INITIAL_SCREENING,
+    WELCOMING,
+    CASE_STUDY,
+    PEDAGOGICAL_GUIDANCE,
+    ACTION_PLAN,
+    TEACHER_FEEDBACK,
+    TUTOR_OBSERVATION,
+    SUPPORT_REFUSAL,
+    SUPPORT_REQUEST
+}

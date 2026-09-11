@@ -79,7 +79,7 @@ if ($env:MVNW_REPOURL) {
 $distributionUrlName = $distributionUrl -replace '^.*/',''
 $distributionUrlNameMain = $distributionUrlName -replace '\.[^.]*$','' -replace '-bin$',''
 
-$MAVEN_M2_PATH = "$HOME/.m2"
+$MAVEN_M2_PATH = "$env:USERPROFILE/.m2"
 if ($env:MAVEN_USER_HOME) {
   $MAVEN_M2_PATH = "$env:MAVEN_USER_HOME"
 }
@@ -89,10 +89,11 @@ if (-not (Test-Path -Path $MAVEN_M2_PATH)) {
 }
 
 $MAVEN_WRAPPER_DISTS = $null
-if ((Get-Item $MAVEN_M2_PATH).Target[0] -eq $null) {
+$MAVEN_M2_ITEM = Get-Item $MAVEN_M2_PATH
+if (-not $MAVEN_M2_ITEM.Target) {
   $MAVEN_WRAPPER_DISTS = "$MAVEN_M2_PATH/wrapper/dists"
 } else {
-  $MAVEN_WRAPPER_DISTS = (Get-Item $MAVEN_M2_PATH).Target[0] + "/wrapper/dists"
+  $MAVEN_WRAPPER_DISTS = $MAVEN_M2_ITEM.Target[0] + "/wrapper/dists"
 }
 
 $MAVEN_HOME_PARENT = "$MAVEN_WRAPPER_DISTS/$distributionUrlNameMain"
@@ -132,7 +133,13 @@ if ($env:MVNW_USERNAME -and $env:MVNW_PASSWORD) {
   $webclient.Credentials = New-Object System.Net.NetworkCredential($env:MVNW_USERNAME, $env:MVNW_PASSWORD)
 }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$webclient.DownloadFile($distributionUrl, "$TMP_DOWNLOAD_DIR/$distributionUrlName") | Out-Null
+# curl uses the Windows TLS stack and also works on hosts where legacy WebClient TLS fails.
+if ((Get-Command curl.exe -ErrorAction SilentlyContinue) -and !$env:MVNW_USERNAME) {
+  & curl.exe --fail --silent --show-error --location --retry 2 --output "$TMP_DOWNLOAD_DIR/$distributionUrlName" $distributionUrl
+  if ($LASTEXITCODE -ne 0) { throw "Cannot download Maven distribution" }
+} else {
+  $webclient.DownloadFile($distributionUrl, "$TMP_DOWNLOAD_DIR/$distributionUrlName") | Out-Null
+}
 
 # If specified, validate the SHA-256 sum of the Maven distribution zip file
 $distributionSha256Sum = (Get-Content -Raw "$scriptDir/.mvn/wrapper/maven-wrapper.properties" | ConvertFrom-StringData).distributionSha256Sum

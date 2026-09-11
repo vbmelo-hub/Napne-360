@@ -22,3 +22,20 @@
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+# Maven / Java build output
+backend/target/
+.m2-cache/
+
+# Angular / Node
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/playwright-report/
+frontend/test-results/
+
+# Local runtime data and secrets
+data/
+backups/
+.env
+*.local
