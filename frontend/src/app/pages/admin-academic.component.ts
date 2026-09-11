@@ -3,9 +3,10 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { forkJoin } from 'rxjs';
 import { ApiService } from '../core/api.service';
 import { Campus, Course, Subject, UserView } from '../core/models';
+import { labelFor } from '../core/presentation';
 
 @Component({selector:'app-admin-academic',standalone:true,imports:[ReactiveFormsModule],template:`
-  <h2>Estrutura acadêmica e vínculos</h2>
+  <header class="module-head"><span class="eyebrow">Organização acadêmica</span><h2>Estrutura acadêmica e vínculos</h2><p>Cadastre cursos e componentes e defina quem acompanha cada estudante.</p></header>
   @if(message()){<p role="status">{{message()}}</p>}
   <div class="grid two">
     <form class="card stack" [formGroup]="courseForm" (ngSubmit)="createCourse()"><h3>Novo curso</h3><label>Campus<select formControlName="campusId"><option value="">Selecione</option>@for(c of campuses();track c.id){<option [value]="c.id">{{c.name}}</option>}</select></label><label>Nome do curso<input formControlName="name"></label><label>Código do curso<input formControlName="code"></label><button [disabled]="courseForm.invalid">Criar curso</button></form>
@@ -18,8 +19,8 @@ import { Campus, Course, Subject, UserView } from '../core/models';
     </form>
     <section class="card"><h3>Estrutura cadastrada</h3>@for(c of courses();track c.id){<h4>{{c.name}} · {{c.campus}}</h4><ul>@for(s of subjects();track s.id){@if(s.courseId===c.id){<li>{{s.name}} · {{s.workloadHours}} horas</li>}}</ul>}</section>
   </div>
-  <section class="card"><h3>Vínculos registrados</h3><div style="overflow:auto"><table><thead><tr><th>Matrícula</th><th>Usuário</th><th>Tipo</th><th>Situação</th><th>Ação</th></tr></thead><tbody>@for(a of assignments();track a.id){<tr><td>{{registrationLabel(a.studentId)}}</td><td>{{userLabel(a.userId)}}</td><td>{{a.assignmentType}}</td><td>{{a.active?'Ativo':'Revogado'}}</td><td>@if(a.active){<button class="secondary" (click)="revoke(a.id)">Revogar</button>}</td></tr>}</tbody></table></div></section>
-`,styles:[`.card{margin-block:1rem}`]})
+  <section class="card assignments"><div class="section-header"><div><h3>Vínculos registrados</h3><p>O histórico permanece disponível após a revogação.</p></div></div><div class="table-wrap"><table class="mobile-cards"><thead><tr><th>Matrícula</th><th>Usuário</th><th>Tipo</th><th>Situação</th><th>Ação</th></tr></thead><tbody>@for(a of assignments();track a.id){<tr><td data-label="Matrícula">{{registrationLabel(a.studentId)}}</td><td data-label="Usuário">{{userLabel(a.userId)}}</td><td data-label="Tipo">{{label(a.assignmentType)}}</td><td data-label="Situação"><span [class]="a.active?'badge badge--success':'badge'">{{a.active?'Ativo':'Revogado'}}</span></td><td>@if(a.active){<button class="secondary compact" (click)="revoke(a.id)">Revogar</button>}</td></tr>}</tbody></table></div></section>
+`,styles:[`.module-head{margin-bottom:1rem}.module-head h2{margin:.15rem 0}.module-head p,.section-header p{color:var(--ink-600);margin:0}.grid{align-items:start}.card{margin-block:1rem}.card h3{margin-bottom:.8rem}.assignments{padding:0;overflow:hidden}.assignments .section-header{padding:1.25rem 1.5rem;margin:0}.assignments .table-wrap{border-radius:0;border:0;border-top:1px solid var(--border)}`]})
 export class AdminAcademicComponent implements OnInit {
   private api = inject(ApiService);
   private fb = inject(FormBuilder);
@@ -27,6 +28,7 @@ export class AdminAcademicComponent implements OnInit {
   readonly message=signal('');readonly users=signal<UserView[]>([]);readonly campuses=signal<Campus[]>([]);readonly courses=signal<Course[]>([]);readonly subjects=signal<Subject[]>([]);
   readonly registrations=signal<{id:number,registration:string,campusId:number,courseId:number}[]>([]);
   readonly assignments=signal<{id:number,studentId:number,userId:number,subjectId:number|null,assignmentType:string,active:boolean}[]>([]);
+  readonly label=labelFor;
   readonly courseForm=this.fb.nonNullable.group({name:['',Validators.required],code:['',Validators.required],campusId:['',Validators.required]});
   readonly subjectForm=this.fb.nonNullable.group({name:['',Validators.required],code:['',Validators.required],courseId:['',Validators.required],workloadHours:[60,[Validators.required,Validators.min(1)]],syllabus:['']});
   readonly assignmentForm=this.fb.nonNullable.group({studentId:['',Validators.required],userId:['',Validators.required],subjectId:[''],assignmentType:['TEACHER',Validators.required]});
@@ -37,8 +39,8 @@ export class AdminAcademicComponent implements OnInit {
   createAssignment():void{if(this.assignmentForm.invalid)return;const v=this.assignmentForm.getRawValue();this.api.createAssignment({...v,userId:Number(v.userId),studentId:Number(v.studentId),subjectId:v.subjectId?Number(v.subjectId):null}).subscribe({next:()=>{this.assignmentForm.reset({assignmentType:'TEACHER'});this.done('Vínculo concedido.');},error:()=>this.fail()});}
   revoke(id:number):void{this.api.revokeAssignment(id).subscribe({next:()=>this.done('Vínculo revogado; histórico preservado.'),error:()=>this.fail()});}
   assignmentSubjects(){const courseId=this.registrations().find(s=>s.id===Number(this.assignmentForm.controls.studentId.value))?.courseId;return this.subjects().filter(s=>s.courseId===courseId);}
-  registrationLabel(id:number){return this.registrations().find(s=>s.id===id)?.registration??String(id);}
-  userLabel(id:number){return this.users().find(u=>u.id===id)?.name??String(id);}
+  registrationLabel(id:number){return this.registrations().find(s=>s.id===id)?.registration??'Matrícula indisponível';}
+  userLabel(id:number){return this.users().find(u=>u.id===id)?.name??'Usuário indisponível';}
   private done(value:string):void{this.message.set(value);this.load();}
   private fail():void{this.message.set('Não foi possível concluir. Confira o campus, o perfil e os vínculos informados.');}
 }

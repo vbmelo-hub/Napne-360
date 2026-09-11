@@ -1,32 +1,13 @@
-import { Component, signal, inject } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AuthService } from '../core/auth.service';
+import { labelFor } from '../core/presentation';
+import { ToastService } from '../core/toast.service';
 
-@Component({
-  standalone:true,
-  imports:[ReactiveFormsModule],
-  template:`<h1>Minha conta</h1><p>{{ auth.user()?.name }}</p>
-    <form class="card stack" [formGroup]="form" (ngSubmit)="changePassword()">
-      <h2>Alterar senha</h2><label>Senha atual<input type="password" autocomplete="current-password" formControlName="currentPassword"></label>
-      <label>Nova senha — 12 a 72 caracteres<input type="password" autocomplete="new-password" formControlName="newPassword"></label>
-      <label>Confirmar nova senha<input type="password" autocomplete="new-password" formControlName="confirmation"></label>
-      @if(message()){<p role="status">{{message()}}</p>}
-      <div><button [disabled]="form.invalid || busy()">Alterar senha e encerrar sessões</button></div>
-    </form><p>Para recuperar uma senha esquecida, solicite a redefinição ao administrador autorizado do campus.</p>
-    <button class="secondary" (click)="renew()" [disabled]="busy()">Renovar sessão</button>`
-})
-export class AccountComponent {
-  auth = inject(AuthService);
-  private fb = inject(FormBuilder);
-
-  readonly busy=signal(false); readonly message=signal('');
-  readonly form=this.fb.nonNullable.group({currentPassword:['',Validators.required],newPassword:['',[Validators.required,Validators.minLength(12),Validators.maxLength(72)]],confirmation:['',Validators.required]});
-  changePassword():void {
-    const value=this.form.getRawValue();
-    if(this.form.invalid)return;
-    if(value.newPassword!==value.confirmation){this.message.set('A confirmação deve ser igual à nova senha.');return;}
-    this.busy.set(true);
-    this.auth.changePassword(value.currentPassword,value.newPassword).subscribe({next:()=>this.busy.set(false),error:()=>{this.busy.set(false);this.message.set('Não foi possível alterar a senha. Confira a senha atual.');}});
-  }
-  renew():void {this.busy.set(true);this.auth.refresh().subscribe({next:()=>{this.busy.set(false);this.message.set('Sessão renovada.');},error:()=>{this.busy.set(false);this.message.set('Entre novamente para renovar a sessão.');}});}
-}
+@Component({standalone:true,imports:[ReactiveFormsModule],template:`
+  <header class="page-header"><div><span class="eyebrow">Identidade e segurança</span><h1>Minha conta</h1><p>Consulte seus dados de acesso e mantenha sua senha protegida.</p></div></header>
+  <section class="account-layout"><article class="card profile-card"><span class="avatar" aria-hidden="true">{{initials()}}</span><div><span class="eyebrow">Conta institucional</span><h2>{{auth.user()?.name}}</h2><p>{{auth.user()?.email}}</p></div><dl><div><dt>Perfis</dt><dd>@for(role of roleLabels();track role){<span class="badge badge--info">{{role}}</span>}</dd></div><div><dt>Campus</dt><dd>{{auth.user()?.campusId ? 'Campus vinculado' : 'Sem campus vinculado'}}</dd></div></dl></article>
+  <div class="stack"><form class="card stack" [formGroup]="form" (ngSubmit)="changePassword()"><div class="section-header"><div><h2>Alterar senha</h2><p>A alteração encerra as sessões abertas para proteger sua conta.</p></div></div><label class="required">Senha atual<input type="password" autocomplete="current-password" formControlName="currentPassword"></label><div class="grid two"><label class="required">Nova senha<input type="password" autocomplete="new-password" formControlName="newPassword"><span class="field-hint">Use entre 12 e 72 caracteres.</span></label><label class="required">Confirmar nova senha<input type="password" autocomplete="new-password" formControlName="confirmation"></label></div>@if(message()){<div class="error" role="alert">{{message()}}</div>}<div><button [disabled]="form.invalid||busy()">@if(busy()){<span class="spinner"></span>}Alterar senha e sair</button></div></form>
+  <section class="card session-card"><div><h2>Renovar sessão</h2><p>Atualize seu período de acesso sem sair do sistema.</p></div><button class="secondary" (click)="renew()" [disabled]="busy()">Renovar agora</button></section><p class="recovery">Esqueceu sua senha? Solicite a redefinição ao administrador autorizado do campus.</p></div></section>
+`,styles:[`.account-layout{display:grid;grid-template-columns:minmax(16rem,.65fr) minmax(0,1.35fr);gap:1rem;align-items:start}.profile-card{text-align:center}.profile-card .avatar{margin:0 auto 1rem}.profile-card h2{margin:.2rem 0}.profile-card p{color:var(--ink-600)}dl{border-top:1px solid var(--border);margin:1.5rem 0 0;padding-top:1rem;text-align:left}dl div{margin-bottom:1rem}dt{font-size:.75rem;color:var(--ink-600);text-transform:uppercase;font-weight:800}dd{margin:.35rem 0;display:flex;gap:.4rem;flex-wrap:wrap}.session-card{display:flex;align-items:center;justify-content:space-between;gap:1rem}.session-card h2{margin-bottom:.25rem}.session-card p,.recovery{color:var(--ink-600);margin:0}.recovery{font-size:.85rem;padding:0 .5rem}@media(max-width:760px){.account-layout{grid-template-columns:1fr}.session-card{align-items:stretch;flex-direction:column}}`]})
+export class AccountComponent{readonly auth=inject(AuthService);private readonly fb=inject(FormBuilder);private readonly toast=inject(ToastService);readonly busy=signal(false);readonly message=signal('');readonly roleLabels=computed(()=>this.auth.user()?.roles.map(labelFor)??[]);readonly form=this.fb.nonNullable.group({currentPassword:['',Validators.required],newPassword:['',[Validators.required,Validators.minLength(12),Validators.maxLength(72)]],confirmation:['',Validators.required]});initials(){return(this.auth.user()?.name??'').split(' ').filter(Boolean).slice(0,2).map(v=>v[0]).join('').toUpperCase();}changePassword(){const v=this.form.getRawValue();this.form.markAllAsTouched();if(this.form.invalid)return;if(v.newPassword!==v.confirmation){this.message.set('A confirmação deve ser igual à nova senha.');return;}this.busy.set(true);this.auth.changePassword(v.currentPassword,v.newPassword).subscribe({next:()=>this.busy.set(false),error:()=>{this.busy.set(false);this.message.set('Não foi possível alterar a senha. Confira a senha atual.');}});}renew(){this.busy.set(true);this.auth.refresh().subscribe({next:()=>{this.busy.set(false);this.toast.show('Sessão renovada com segurança.','success');},error:()=>{this.busy.set(false);this.toast.show('Entre novamente para renovar a sessão.','error');}});}}

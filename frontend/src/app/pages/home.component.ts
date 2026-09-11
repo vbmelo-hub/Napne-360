@@ -1,42 +1,22 @@
-import { Component, inject } from '@angular/core';
+import { Component, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
+import { labelFor } from '../core/presentation';
 
-@Component({
-  standalone: true,
-  imports: [RouterLink],
-  template: `
-    <section class="hero">
-      <div>
-        <span class="eyebrow">Olá, {{ auth.user()?.name }}</span>
-        <h1>Acompanhamento NAPNE</h1>
-        <p>Acesse os estudantes vinculados ao seu trabalho e os registros de acompanhamento.</p>
-      </div>
-    </section>
-    <section aria-labelledby="actions-title">
-      <h2 id="actions-title">Começar</h2>
-      <div class="grid two">
-        <a class="card action" routerLink="/conta"><strong>Minha conta</strong><span>Altere sua senha ou renove sua sessão.</span></a>
-        @if (!auth.hasRole('ADMIN')) {
-          <a class="card action" routerLink="/estudantes"><strong>Estudantes acompanhados</strong><span>Abra o dossiê, a linha do tempo e os registros pedagógicos autorizados.</span></a>
-        }
-        @if (auth.hasRole('ADMIN')) {
-          <a class="card action" routerLink="/administracao"><strong>Configuração institucional</strong><span>Gerencie contas e cadastros sem acesso automático ao conteúdo dos dossiês.</span></a>
-        }
-      </div>
-    </section>
-    <aside class="privacy card"><strong>Privacidade desde o início</strong><span>Use apenas dados necessários à finalidade pedagógica. Nunca copie informações do sistema para canais não autorizados.</span></aside>
-  `,
-  styles: [`
-    .hero { display: grid; align-items: center; background: var(--primary-dark); color: white; border-radius: 1.2rem; padding: 1.5rem; margin-bottom: 1.5rem; }
-    .hero h1 { max-width: 760px; font-size: clamp(1.6rem, 3vw, 2.3rem); line-height: 1.2; margin: .6rem 0 1rem; }
-    .hero p { max-width: 680px; font-size: 1.1rem; opacity: .9; }
-    .eyebrow { font-weight: 750; text-transform: uppercase; letter-spacing: .08em; }
-    .action { display: grid; text-decoration: none; color: inherit; gap: .4rem; border-left: 5px solid var(--accent); }
-    .action strong { color: var(--primary-dark); font-size: 1.2rem; }
-    .privacy { margin-top: 2rem; display: flex; gap: .8rem; align-items: baseline; }
-    @media (max-width: 620px) { .privacy { display: grid; } }
-  `]
-})
-export class HomeComponent {  auth = inject(AuthService);
+@Component({standalone:true,imports:[RouterLink],template:`
+  <header class="welcome"><div><span class="eyebrow">{{ greeting() }}, {{ firstName() }}</span><h1>{{ title() }}</h1><p>{{ description() }}</p></div><div class="role-card"><span>Seu acesso</span><strong>{{ roleLabel() }}</strong><small>As informações e ações são ajustadas às permissões do seu perfil.</small></div></header>
+  <section aria-labelledby="quick-title"><div class="section-header"><div><h2 id="quick-title">Acessos principais</h2><p>Continue pelas áreas disponíveis para o seu trabalho.</p></div></div><div class="action-grid">
+    @if(!auth.hasRole('ADMIN')){<a class="action-card action-card--primary" routerLink="/estudantes"><span class="action-number">01</span><div><strong>Estudantes acompanhados</strong><p>Consulte estudantes vinculados e acesse todo o acompanhamento autorizado.</p><span class="action-link">Abrir estudantes <b aria-hidden="true">→</b></span></div></a>}
+    @if(auth.hasRole('ADMIN')){<a class="action-card action-card--primary" routerLink="/administracao"><span class="action-number">01</span><div><strong>Configuração institucional</strong><p>Organize contas, perfis, campi, cursos, componentes e vínculos.</p><span class="action-link">Abrir administração <b aria-hidden="true">→</b></span></div></a>}
+    <a class="action-card" routerLink="/conta"><span class="action-number">02</span><div><strong>Minha conta</strong><p>Consulte seu perfil, renove a sessão ou altere sua senha.</p><span class="action-link">Gerenciar acesso <b aria-hidden="true">→</b></span></div></a>
+  </div></section>
+  <section class="orientation card"><div><span class="orientation-mark" aria-hidden="true">i</span><div><h2>O que você pode fazer aqui</h2><p>{{ guidance() }}</p></div></div><aside><strong>Uso responsável dos dados</strong><p>Consulte e registre somente informações necessárias à finalidade educacional. O acesso é auditado e limitado pelos vínculos institucionais.</p></aside></section>
+`,styles:[`.welcome{position:relative;overflow:hidden;background:var(--primary-950);color:#fff;border-radius:var(--radius-xl);padding:clamp(1.5rem,4vw,3rem);display:grid;grid-template-columns:1fr minmax(15rem,22rem);gap:2rem;align-items:end;margin-bottom:2rem}.welcome::after{content:'';position:absolute;width:20rem;height:20rem;border:1px solid rgba(255,255,255,.12);border-radius:50%;right:-7rem;top:-10rem}.welcome .eyebrow{color:#70d5ae}.welcome h1{max-width:50rem;margin:.45rem 0 .75rem}.welcome p{color:#cce0d9;max-width:44rem;margin:0}.role-card{position:relative;z-index:1;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);border-radius:var(--radius-lg);padding:1rem}.role-card span,.role-card strong,.role-card small{display:block}.role-card span{font-size:.75rem;color:#b7d3ca}.role-card strong{font-size:1.08rem;margin:.15rem 0 .45rem}.role-card small{color:#d0e3dc}.action-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-bottom:2rem}.action-card{display:flex;gap:1rem;border:1px solid var(--border);background:#fff;border-radius:var(--radius-lg);padding:1.4rem;text-decoration:none;color:var(--ink-950);box-shadow:var(--shadow-sm)}.action-card:hover{border-color:var(--primary-600);box-shadow:var(--shadow-md);transform:translateY(-2px)}.action-card--primary{border-top:4px solid var(--primary-700)}.action-number{font-size:.72rem;color:var(--primary-700);font-weight:850}.action-card strong{font-size:1.1rem}.action-card p{color:var(--ink-600);margin:.35rem 0 1rem}.action-link{font-weight:750;color:var(--primary-700);font-size:.9rem}.orientation{display:grid;grid-template-columns:1.2fr .8fr;gap:2rem}.orientation>div{display:flex;gap:1rem}.orientation-mark{width:2.5rem;height:2.5rem;border-radius:50%;display:grid;place-items:center;background:var(--primary-100);color:var(--primary-800);font-weight:900;flex:none}.orientation h2{margin:.15rem 0 .3rem}.orientation p{color:var(--ink-600);margin:0}.orientation aside{border-left:1px solid var(--border);padding-left:2rem}.orientation aside p{font-size:.88rem;margin-top:.35rem}@media(max-width:760px){.welcome{grid-template-columns:1fr}.action-grid,.orientation{grid-template-columns:1fr}.orientation aside{border:0;border-top:1px solid var(--border);padding:1rem 0 0}}` ]})
+export class HomeComponent{
+  readonly auth=inject(AuthService);readonly firstName=computed(()=>this.auth.user()?.name.split(' ')[0]??'');readonly roleLabel=computed(()=>labelFor(this.auth.user()?.roles[0]));
+  readonly greeting=computed(()=>new Date().getHours()<12?'Bom dia':new Date().getHours()<18?'Boa tarde':'Boa noite');
+  readonly title=computed(()=>this.auth.hasRole('ADMIN')?'Estrutura institucional em um só lugar':'Acompanhamento NAPNE');
+  readonly description=computed(()=>this.auth.hasRole('ADMIN')?'Administre a estrutura que sustenta o acompanhamento inclusivo, sem acesso automático aos dossiês dos estudantes.':'Consulte o percurso educacional dos estudantes vinculados e registre as contribuições permitidas ao seu perfil.');
+  hip='';
+  guidance():string{if(this.auth.hasRole('NAPNE'))return'Organize dossiês, casos, registros, documentos, linha do tempo e PEIs dos estudantes do campus.';if(this.auth.hasRole('TEACHER'))return'Acesse seus estudantes vinculados, registre devolutivas docentes e participe da elaboração e revisão do PEI.';if(this.auth.hasRole('TUTOR'))return'Acompanhe estudantes atribuídos e registre observações de tutoria no contexto pedagógico.';if(this.auth.hasRole('COTEP','COURSE_COORDINATOR'))return'Consulte o acompanhamento autorizado, produza orientações pedagógicas e colabore com o PEI.';if(this.auth.hasRole('MANAGEMENT'))return'Consulte o acompanhamento dos estudantes autorizados, respeitando a finalidade e os limites de acesso.';return'Gerencie contas, perfis e vínculos que definem o acesso seguro à plataforma.';}
 }

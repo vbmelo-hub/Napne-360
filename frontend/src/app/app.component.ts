@@ -1,43 +1,58 @@
-import { Component, inject } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Component, computed, inject, signal } from '@angular/core';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { filter } from 'rxjs';
 import { AuthService } from './core/auth.service';
+import { labelFor } from './core/presentation';
+import { ToastOutletComponent } from './shared/toast-outlet.component';
 
 @Component({
-  selector: 'app-root',
-  standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  selector: 'app-root', standalone: true,
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ToastOutletComponent],
   template: `
-    <a class="skip" href="#conteudo">Pular para o conteúdo</a>
+    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
     @if (auth.authenticated()) {
-      <header>
-        <div class="container nav">
-          <a class="brand" routerLink="/" aria-label="NAPNE 360 - início"><span aria-hidden="true">N360</span> NAPNE 360</a>
-          <nav aria-label="Navegação principal">
-            <a routerLink="/" [routerLinkActiveOptions]="{exact: true}" routerLinkActive="active">Início</a>
-            @if (!auth.hasRole('ADMIN')) { <a routerLink="/estudantes" routerLinkActive="active">Estudantes</a> }
-            @if (auth.hasRole('ADMIN')) { <a routerLink="/administracao" routerLinkActive="active">Administração</a> }
+      <div class="app-shell">
+        <aside class="sidebar" [class.sidebar--open]="menuOpen()" aria-label="Navegação principal">
+          <div class="brand-block"><a class="brand" routerLink="/" (click)="closeMenu()"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span><strong>NAPNE 360</strong><small>Acompanhamento inclusivo</small></span></a><button class="icon-button sidebar-close" type="button" (click)="closeMenu()" aria-label="Fechar menu">×</button></div>
+          <nav>
+            <a routerLink="/" [routerLinkActiveOptions]="{exact:true}" routerLinkActive="active" (click)="closeMenu()"><span class="nav-icon" aria-hidden="true">⌂</span><span>Início</span></a>
+            @if (!auth.hasRole('ADMIN')) {<a routerLink="/estudantes" routerLinkActive="active" (click)="closeMenu()"><span class="nav-icon" aria-hidden="true">◎</span><span>Estudantes</span></a>}
+            @if (auth.hasRole('ADMIN')) {<a routerLink="/administracao" routerLinkActive="active" (click)="closeMenu()"><span class="nav-icon" aria-hidden="true">▦</span><span>Administração</span></a>}
+            <a routerLink="/conta" routerLinkActive="active" (click)="closeMenu()"><span class="nav-icon" aria-hidden="true">○</span><span>Minha conta</span></a>
           </nav>
-          <div class="account"><span>{{ auth.user()?.name }}</span><button class="secondary" (click)="auth.logout()">Sair</button></div>
+          <div class="sidebar-note"><strong>Ambiente protegido</strong><p>Consulte apenas dados necessários ao acompanhamento educacional.</p></div>
+        </aside>
+        @if (menuOpen()) {<button class="shell-backdrop" type="button" aria-label="Fechar menu" (click)="closeMenu()"></button>}
+        <div class="shell-content">
+          <header class="topbar">
+            <button class="icon-button menu-button" type="button" (click)="menuOpen.set(true)" aria-label="Abrir menu" [attr.aria-expanded]="menuOpen()">☰</button>
+            <div class="topbar-context"><span>NAPNE 360</span><strong>{{ pageTitle() }}</strong></div>
+            <a class="user-summary" routerLink="/conta"><span class="avatar avatar--small" aria-hidden="true">{{ initials(auth.user()?.name ?? '') }}</span><span><strong>{{ auth.user()?.name }}</strong><small>{{ primaryRole() }}</small></span></a>
+            <button class="secondary compact" type="button" (click)="auth.logout()">Sair</button>
+          </header>
+          <main id="conteudo" tabindex="-1"><router-outlet /></main>
         </div>
-      </header>
-    }
-    <main id="conteudo" class="container"><router-outlet /></main>
-  `,
-  styles: [`
-    header { background: var(--surface); border-bottom: 1px solid var(--border); }
-    .nav { min-height: 4.5rem; display: flex; align-items: center; gap: 1.5rem; }
-    .brand { color: var(--primary-dark); font-weight: 800; text-decoration: none; white-space: nowrap; }
-    .brand span { display: inline-grid; place-items: center; width: 2.4rem; height: 2.4rem; border-radius: .65rem; background: var(--primary); color: white; margin-right: .45rem; font-size: .76rem; }
-    nav { display: flex; gap: .35rem; flex: 1; }
-    nav a { color: var(--ink); padding: .6rem .8rem; border-radius: .45rem; text-decoration: none; }
-    nav a.active, nav a:hover { background: var(--primary-soft); color: var(--primary-dark); }
-    .account { display: flex; align-items: center; gap: .75rem; }
-    main { padding-block: 2rem 4rem; }
-    .skip { position: absolute; left: -9999px; top: .5rem; z-index: 100; background: white; padding: .7rem; }
-    .skip:focus { left: .5rem; }
-    @media (max-width: 760px) { .nav { flex-wrap: wrap; padding-block: .7rem; } nav { order: 3; width: 100%; } .account span { display: none; } }
-  `]
+      </div>
+    } @else {<main id="conteudo" class="public-main" tabindex="-1"><router-outlet /></main>}
+    <app-toast-outlet />
+  `
 })
 export class AppComponent {
-  auth = inject(AuthService);
+  readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
+  readonly menuOpen = signal(false);
+  readonly path = signal(this.router.url);
+  readonly pageTitle = computed(() => {
+    const value = this.path();
+    if (value.startsWith('/administracao')) return 'Configuração institucional';
+    if (value.startsWith('/conta')) return 'Minha conta';
+    if (value.includes('/pei/')) return 'Editor do PEI';
+    if (value.startsWith('/estudantes/')) return 'Central do estudante';
+    if (value.startsWith('/estudantes')) return 'Estudantes';
+    return 'Início';
+  });
+  readonly primaryRole = computed(() => labelFor(this.auth.user()?.roles[0]));
+  constructor() { this.router.events.pipe(filter(event => event instanceof NavigationEnd)).subscribe(event => { this.path.set(event.urlAfterRedirects); this.closeMenu(); }); }
+  initials(name: string): string { return name.split(' ').filter(Boolean).slice(0, 2).map(value => value[0]).join('').toUpperCase(); }
+  closeMenu(): void { this.menuOpen.set(false); }
 }
