@@ -22,3 +22,23 @@ O E2E cobre login/logout e navegação dos sete perfis, proteção do administra
 - A auditoria completa do npm indica oito achados moderados somente na árvore de desenvolvimento, ligados ao `webpack-dev-server` e dependências transitivas, sem correção disponível para a linha Angular usada. A imagem publicada contém apenas arquivos estáticos no Nginx e não inclui essas ferramentas.
 - Não foram encontrados achados em dependências npm de produção.
 - Os avisos de descoberta de repositórios do Spring Data durante testes decorrem do uso simultâneo de JPA e MongoDB; os repositórios foram classificados corretamente e os contextos iniciaram.
+
+## Retomada — 2026-11-05: E2E de login
+
+Base: branch `desenvolvimento`, commit `29721f844b5967a7c9aaf2582d6f421d4a284f63`, de 11/09/2026. A [CI desse commit](https://github.com/vbmelo-hub/Napne-360/actions/runs/34659824700) aprovou oito cenários E2E e falhou no teste de login: `getByLabel('Senha')` encontrava tanto o campo quanto o botão “Mostrar senha”. Esse resultado é posterior ao registro de verificação acima.
+
+A falha foi reproduzida localmente antes da alteração. O teste agora identifica o campo pelo rótulo exato e verifica a navegação do formulário por Tab, a habilitação do envio após preenchimento e o uso de Espaço/Enter para mostrar e ocultar a senha, preservando seu valor e o foco.
+
+| Verificação nesta retomada | Resultado |
+| --- | --- |
+| `npm ci` com o lockfile existente | Dependências instaladas |
+| `npm run build` | Bundle de produção gerado |
+| `npm run lint` | Aprovado |
+| `npx --no-install eslint e2e/login.spec.ts` | Aprovado |
+| `npm test -- --browsers=ChromeHeadless` | 1 teste Angular aprovado |
+| Playwright: `login.spec.ts` antes da alteração | Falha por seletor ambíguo reproduzida |
+| Playwright: `login.spec.ts` após a alteração | 1 cenário aprovado, incluindo navegação por teclado |
+
+Ambiente local: Node 24.21.0 e Chromium 151. O E2E usou uma configuração temporária externa ao repositório para selecionar o Chromium instalado e servir o frontend na porta 14200. O teste unitário usou o mesmo navegador por `CHROME_BIN`. O login foi verificado sem enviar credenciais à API.
+
+O backend e os outros oito cenários E2E, que exigem API, MySQL e MongoDB, não foram reexecutados nesta retomada. A correção local ainda precisa de uma nova execução da CI para confirmar a suíte integrada completa. Esta verificação do formulário não representa homologação formal de acessibilidade.

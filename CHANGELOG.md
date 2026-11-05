@@ -2,6 +2,11 @@
 
 Todas as mudanças deste projeto serão documentadas neste arquivo.
 
+## Em desenvolvimento — 2026-11-05
+
+- Corrige a seleção do campo de senha no E2E de login, que também encontrava o botão “Mostrar senha” e impedia a aprovação da CI.
+- Exercita o formulário de login por teclado, incluindo ordem de foco, habilitação do envio e alternância da visibilidade da senha sem perder o conteúdo.
+
 ## Em desenvolvimento — 2026-09-11
 
 - Backend Maven com autenticação, permissões por campus/vínculo, auditoria, casos, dossiês, documentos e PEI.
