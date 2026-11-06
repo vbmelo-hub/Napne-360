@@ -4,6 +4,7 @@ Todas as mudanças deste projeto serão documentadas neste arquivo.
 
 ## Em desenvolvimento — 2026-11-05
 
+- Atualiza os sete pacotes Angular de execução e `@angular/compiler-cli` de 20.3.31 para 20.3.34, corrigindo os avisos de XSRF no HTTP Client e DoS no Router; auditoria de produção sem achados e verificações locais descritas em `docs/verification.md`.
 - Corrige a seleção do campo de senha no E2E de login, que também encontrava o botão “Mostrar senha” e impedia a aprovação da CI.
 - Exercita o formulário de login por teclado, incluindo ordem de foco, habilitação do envio e alternância da visibilidade da senha sem perder o conteúdo.
 
