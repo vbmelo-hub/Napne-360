@@ -2,8 +2,16 @@ services:
   app:
     image: mcr.microsoft.com/devcontainers/java:21
     command: sleep infinity
+    volumes:
+      - ..:/workspaces/Napne-360:cached
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/napne360?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USERNAME: napne360
+      DB_PASSWORD: napne360
+      MONGODB_URI: mongodb://mongo:27017/napne360_documents
     depends_on:
       - mysql
+      - mongo
     ports:
       - "9000:9000"
       - "4200:4200"
@@ -13,10 +21,19 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: napne360
+      MYSQL_USER: napne360
+      MYSQL_PASSWORD: napne360
     ports:
       - "3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
+
+  mongo:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
 
   phpmyadmin:
     image: phpmyadmin:5.2
@@ -30,3 +47,4 @@ services:
 
 volumes:
   mysql-data:
+  mongo-data:
