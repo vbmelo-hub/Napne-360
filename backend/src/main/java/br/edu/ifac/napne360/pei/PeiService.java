@@ -5,6 +5,8 @@ import br.edu.ifac.napne360.common.ConflictException;
 import br.edu.ifac.napne360.common.NotFoundException;
 import br.edu.ifac.napne360.document.DossierDocument;
 import br.edu.ifac.napne360.document.DossierRepository;
+import br.edu.ifac.napne360.identity.ReferenceCatalogService;
+import br.edu.ifac.napne360.identity.ReferenceIdDeserializer;
 import br.edu.ifac.napne360.identity.Subject;
 import br.edu.ifac.napne360.identity.SubjectRepository;
 import br.edu.ifac.napne360.identity.UserAccount;
@@ -12,8 +14,8 @@ import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.student.Student;
 import br.edu.ifac.napne360.timeline.TimelineService;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -27,6 +29,7 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class PeiService {
+    private final ReferenceCatalogService catalog;
     private final PeiRepository peis;
     private final DossierRepository dossiers;
     private final SubjectRepository subjects;
@@ -66,10 +69,11 @@ public class PeiService {
                 throw new IllegalArgumentException("O docente deve estar ativo e vinculado ao estudante e componente.");
             }
         }
+        var term = catalog.academicTerm(request.academicTermId(), request.academicTerm());
         int revision = peis.findByStudentIdAndSubjectIdAndAcademicTermOrderByRevisionDesc(
-                student.getId(), subject.getId(), request.academicTerm()).stream().findFirst().map(PeiDocument::getRevision).orElse(0) + 1;
+                student.getId(), subject.getId(), term.getCode()).stream().findFirst().map(PeiDocument::getRevision).orElse(0) + 1;
         PeiDocument pei = PeiDocument.builder().studentId(student.getId()).subjectId(subject.getId()).teacherId(teacherId)
-                .academicTerm(request.academicTerm()).revision(revision).content(template(student, subject)).createdBy(user.getEmail())
+                .academicTerm(term.getCode()).academicTermId(term.getId()).academicTermLabel(term.getLabel()).revision(revision).content(template(student, subject)).createdBy(user.getEmail())
                 .updatedBy(user.getEmail()).build();
         pei = peis.save(pei);
         timeline.append(student.getId(), "PEI_CREATED", "Rascunho de PEI criado", user.getName(), TimelineVisibility.PEDAGOGICAL,
@@ -90,7 +94,9 @@ public class PeiService {
         previous.setUpdatedBy(user.getEmail());
         previous.setUpdatedAt(Instant.now());
         PeiDocument next = PeiDocument.builder().studentId(previous.getStudentId()).subjectId(previous.getSubjectId())
-                .teacherId(previous.getTeacherId()).academicTerm(previous.getAcademicTerm()).revision(previous.getRevision() + 1)
+                .teacherId(previous.getTeacherId()).academicTerm(previous.getAcademicTerm())
+                .academicTermId(previous.getAcademicTermId()).academicTermLabel(previous.getAcademicTermLabel())
+                .revision(previous.getRevision() + 1)
                 .status(request.status() == null ? PeiStatus.DRAFT : request.status())
                 .content(request.content() == null ? Map.of() : new LinkedHashMap<>(request.content()))
                 .createdBy(previous.getCreatedBy()).updatedBy(user.getEmail()).build();
@@ -175,6 +181,11 @@ public class PeiService {
                 "digitalTechnologies", "NAO_OBSERVADO");
     }
 
-    public record PeiCreateRequest(@NotNull Long subjectId, Long teacherId, @NotBlank String academicTerm) {}
+    public record PeiCreateRequest(@NotNull Long subjectId, Long teacherId, String academicTerm,
+                                   @JsonDeserialize(using = ReferenceIdDeserializer.class) Long academicTermId) {
+        public PeiCreateRequest(Long subjectId, Long teacherId, String academicTerm) {
+            this(subjectId, teacherId, academicTerm, null);
+        }
+    }
     public record PeiUpdateRequest(PeiStatus status, Map<String, Object> content) {}
 }

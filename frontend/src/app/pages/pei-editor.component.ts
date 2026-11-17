@@ -12,7 +12,7 @@ import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
   @if(loading()){<div class="loading-grid"><span class="skeleton skeleton-card"></span><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-card"></span></div>}
   @if(loadError()){<div class="error" role="alert"><strong>Não foi possível carregar o PEI.</strong><p>{{loadError()}}</p></div>}
   @if(pei();as value){
-    <header class="pei-header"><div><span class="eyebrow">Plano de Ensino Individualizado</span><h1>Editor do PEI</h1><p>Período {{value.academicTerm}} · revisão {{value.revision}}</p></div><span [class]="'badge badge--'+tone(value.status)">{{label(value.status)}}</span></header>
+    <header class="pei-header"><div><span class="eyebrow">Plano de Ensino Individualizado</span><h1>Editor do PEI</h1><p>Período {{value.academicTermLabel??value.academicTerm}} · revisão {{value.revision}}</p></div><span [class]="'badge badge--'+tone(value.status)">{{label(value.status)}}</span></header>
     <div class="notice review-note" role="note"><span class="review-mark" aria-hidden="true">✓</span><div><strong>Revisão humana obrigatória</strong><p>Este rascunho apoia o planejamento pedagógico. Não representa diagnóstico e não substitui a análise do docente e da equipe responsável.</p></div></div>
     <form class="editor-layout" [formGroup]="form" (ngSubmit)="save()"><aside class="editor-nav card"><strong>Seções do documento</strong>@for(section of sections;track section.id){<a [href]="'#'+section.id">{{section.label}}</a>}<div class="document-state"><span>Estado atual</span><strong>{{label(value.status)}}</strong><small>Revisão {{value.revision}}</small></div></aside>
       <div class="editor-main stack">

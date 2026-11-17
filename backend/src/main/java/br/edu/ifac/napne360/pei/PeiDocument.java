@@ -20,6 +20,8 @@ public class PeiDocument {
     private Long subjectId;
     private Long teacherId;
     private String academicTerm;
+    private Long academicTermId;
+    private String academicTermLabel;
     @Builder.Default
     private int revision = 1;
     @Builder.Default

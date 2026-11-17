@@ -31,7 +31,9 @@ test('caso completo: dossiê, acompanhamento, PEI e negação de acesso',async({
   for(const type of ['INITIAL_SCREENING','CASE_STUDY','PEDAGOGICAL_GUIDANCE','ACTION_PLAN'])
     await post(studentPath+'/records',{caseId:caseValue.id,type,title:`Teste ${type}`,status:'ACTIVE',content:{notes:'Conteúdo fictício'}});
   await post(studentPath+'/records',{type:'TEACHER_FEEDBACK',subjectId:subjects[0].id,title:'Devolutiva de teste',status:'ACTIVE',content:{performance:'Atividade concluída'}},teacherHeaders);
-  const draft=await post(studentPath+'/peis',{subjectId:subjects[0].id,teacherId:teacher.id,academicTerm:'2026.TEST'},teacherHeaders);
+  const term=await post('/admin/references',{kind:'ACADEMIC_TERM',code:`TEST-WORKFLOW-${Date.now()}`,label:'Período fictício do fluxo'},adminHeaders);
+  // Compatibilidade do cliente antigo: o código agora precisa existir e estar ativo.
+  const draft=await post(studentPath+'/peis',{subjectId:subjects[0].id,teacherId:teacher.id,academicTerm:term.code},teacherHeaders);
   const bypass=await request.put('/api/v1'+studentPath+`/peis/${draft.id}`,{headers:teacherHeaders,data:{status:'APPROVED',content:draft.content}});
   expect(bypass.status()).toBe(400);
   const content={...draft.content,generalObjectives:'Objetivo fictício',specificObjectives:['Objetivo específico'],contents:['Conteúdo'],teachingStrategies:['Exemplos'],assessmentCriteria:['Participação'],assessmentInstruments:['Atividade']};

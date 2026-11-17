@@ -25,7 +25,8 @@ public class ReferenceController {
     public ReferenceEntry update(@PathVariable Long id,@Valid @RequestBody EntryRequest request){
         var entry=entries.findById(id).orElseThrow(()->new NotFoundException("Item não encontrado."));
         if(entry.getKind()!=request.kind())throw new IllegalArgumentException("Tipo do catálogo é imutável.");
-        entry.setCode(request.code().trim());entry.setLabel(request.label().trim());entry.setDescription(request.description());
+        if(!entry.getCode().equals(request.code().trim()))throw new IllegalArgumentException("Código do catálogo é imutável.");
+        entry.setLabel(request.label().trim());entry.setDescription(request.description());
         return entries.save(entry);
     }
     @PatchMapping("/admin/references/{id}/active") @PreAuthorize("hasRole('ADMIN')") @Transactional

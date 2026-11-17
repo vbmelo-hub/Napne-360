@@ -36,7 +36,7 @@ class PeiServiceTest {
     PeiDocument pei;
 
     @BeforeEach void setup() {
-        service = new PeiService(peis,dossiers,subjects,currentUser,timeline,audit,access,users,assignments,templates);
+        service = new PeiService(mock(br.edu.ifac.napne360.identity.ReferenceCatalogService.class),peis,dossiers,subjects,currentUser,timeline,audit,access,users,assignments,templates);
         pei = PeiDocument.builder().id("p1").studentId(1L).subjectId(2L).build();
         when(peis.findById("p1")).thenReturn(Optional.of(pei));
     }

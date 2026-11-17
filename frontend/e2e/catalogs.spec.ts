@@ -1,0 +1,224 @@
+import { expect, test, type Page } from '@playwright/test';
+import { catalogFixture, loginUi, makeLegacyFixture } from './catalog-fixtures';
+
+async function openReferences(page: Page) {
+  await page.goto('/administracao');
+  await page.getByRole('button', { name: 'Cadastros de referência', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Períodos, categorias e modelos', exact: true })).toBeVisible();
+}
+
+test('administra catálogos pela interface e preserva snapshots após renomear e inativar', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const f = await catalogFixture(request);
+  const suffix = Date.now();
+  const categoryLabel = `Categoria fictícia ${suffix}`;
+  const termLabel = `Período fictício ${suffix}`;
+  await loginUi(page, 'admin');
+  await openReferences(page);
+  const form = page.locator('form').filter({ has: page.getByRole('heading', { name: /Novo item de catálogo|Editar item/ }) });
+  const create = async (kind: string, code: string, label: string) => {
+    await form.getByRole('combobox', { name: /^Catálogo/ }).selectOption(kind);
+    await form.getByRole('textbox', { name: /^Código/ }).fill(code);
+    await form.getByRole('textbox', { name: /^Nome apresentado/ }).fill(label);
+    const response = page.waitForResponse(r => r.url().endsWith('/api/v1/admin/references') && r.request().method() === 'POST');
+    await form.getByRole('button', { name: 'Criar item', exact: true }).click();
+    const result = await response;
+    expect(result.status()).toBe(200);
+    await expect(page.getByRole('row').filter({ hasText: label })).toBeVisible();
+    return result.json();
+  };
+  const category = await create('NEED_CATEGORY', `TEST-UI-CATEGORY-${suffix}`, categoryLabel);
+  const term = await create('ACADEMIC_TERM', `TEST-UI-TERM-${suffix}`, termLabel);
+
+  await loginUi(page, 'napne');
+  await page.goto(`/estudantes/${f.student.id}`);
+  await page.locator('#dossier-educationalNeeds summary').click();
+  const categorySelect = page.getByRole('combobox', { name: /Categoria de necessidade educacional/ });
+  await categorySelect.selectOption({ label: categoryLabel });
+  const dossierResponse = page.waitForResponse(r => r.url().endsWith(`${f.path}/dossier`) && r.request().method() === 'PUT');
+  await page.locator('form.dossier-layout').getByRole('button', { name: 'Salvar alterações', exact: true }).click();
+  const savedResponse = await dossierResponse;
+  expect(savedResponse.status()).toBe(200);
+  expect(savedResponse.request().postDataJSON().educationalNeeds.categoryId).toBe(category.id);
+  const saved = await savedResponse.json();
+  expect(saved.educationalNeeds).toMatchObject({ categoryId: category.id, category: categoryLabel });
+
+  await page.getByRole('button', { name: 'PEI', exact: true }).click();
+  const peiForm = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Criar rascunho de PEI', exact: true }) });
+  await peiForm.getByRole('combobox', { name: /^Componente/ }).selectOption(String(f.subject.id));
+  await peiForm.getByRole('combobox', { name: /^Docente responsável/ }).selectOption(String(f.teacher.id));
+  await peiForm.getByRole('combobox', { name: /^Período letivo/ }).selectOption({ label: termLabel });
+  const peiResponse = page.waitForResponse(r => r.url().endsWith(`${f.path}/peis`) && r.request().method() === 'POST');
+  await peiForm.getByRole('button', { name: 'Criar rascunho', exact: true }).click();
+  const created = await peiResponse;
+  expect(created.status()).toBe(200);
+  expect(created.request().postDataJSON().academicTermId).toBe(term.id);
+  const pei = await created.json();
+  expect(pei).toMatchObject({ academicTermId: term.id, academicTerm: term.code, academicTermLabel: termLabel });
+
+  await loginUi(page, 'admin');
+  await openReferences(page);
+  for (const [item, label] of [[category, categoryLabel], [term, termLabel]] as const) {
+    await page.getByRole('row').filter({ hasText: label }).getByRole('button', { name: 'Editar', exact: true }).click();
+    await expect(form.getByRole('textbox', { name: /^Código/ })).toBeDisabled();
+    await expect(form.getByRole('combobox', { name: /^Catálogo/ })).toBeDisabled();
+    await form.getByRole('textbox', { name: /^Nome apresentado/ }).fill(`${label} renomeado`);
+    const renamed = page.waitForResponse(r => r.url().endsWith(`/admin/references/${item.id}`) && r.request().method() === 'PUT');
+    await form.getByRole('button', { name: 'Salvar alterações', exact: true }).click();
+    expect((await renamed).status()).toBe(200);
+    await expect(page.getByRole('row').filter({ hasText: `${label} renomeado` })).toBeVisible();
+  }
+  const another = await f.post('/students', { courseId: f.course.id, registration: `TEST-CATALOG-NEW-${suffix}`, civilName: 'Outra Pessoa Fictícia' });
+  await loginUi(page, 'napne');
+  await page.goto(`/estudantes/${another.id}`);
+  await page.locator('#dossier-educationalNeeds summary').click();
+  await expect(categorySelect.locator(`option[value="${category.id}"]`)).toHaveText(`${categoryLabel} renomeado`);
+  await page.getByRole('button', { name: 'PEI', exact: true }).click();
+  await expect(peiForm.getByRole('combobox', { name: /^Período letivo/ }).locator(`option[value="${term.id}"]`)).toHaveText(`${termLabel} renomeado`);
+  await loginUi(page, 'admin');
+  await openReferences(page);
+  for (const [item, label] of [[category, categoryLabel], [term, termLabel]] as const) {
+    await page.getByRole('row').filter({ hasText: `${label} renomeado` }).getByRole('button', { name: 'Inativar', exact: true }).click();
+    const inactivated = page.waitForResponse(r => r.url().endsWith(`/admin/references/${item.id}/active`) && r.request().method() === 'PATCH');
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Inativar item', exact: true }).click();
+    expect((await inactivated).status()).toBe(200);
+    await expect(page.getByRole('row').filter({ hasText: `${label} renomeado` })).toContainText('Inativo');
+  }
+  // Technical administration still has no access to the newly protected category.
+  expect((await request.get('/api/v1/admin/references', { headers: f.adminHeaders })).status()).toBe(200);
+  expect((await request.get(`${f.path}/dossier`, { headers: f.adminHeaders })).status()).toBe(403);
+  const redacted = await (await request.get(`${f.path}/dossier`, { headers: f.teacherHeaders })).json();
+  expect(redacted.educationalNeeds).toEqual({});
+
+  await loginUi(page, 'napne');
+  await page.goto(`/estudantes/${f.student.id}`);
+  await page.locator('#dossier-educationalNeeds summary').click();
+  await expect(categorySelect).toHaveValue(String(category.id));
+  await expect(categorySelect.locator('option:checked')).toContainText(categoryLabel);
+  await expect(categorySelect.locator('option:checked')).not.toContainText('renomeado');
+  const resaved = page.waitForResponse(r => r.url().endsWith(`${f.path}/dossier`) && r.request().method() === 'PUT');
+  await page.locator('form.dossier-layout').getByRole('button', { name: 'Salvar alterações', exact: true }).click();
+  expect((await resaved).status()).toBe(200);
+  expect((await f.dossier()).educationalNeeds).toMatchObject({ categoryId: category.id, category: categoryLabel });
+  await page.getByRole('button', { name: 'PEI', exact: true }).click();
+  await expect(page.locator('article.pei-row')).toContainText(termLabel);
+  await expect(page.locator('article.pei-row')).not.toContainText('renomeado');
+  await expect(peiForm.getByRole('combobox', { name: /^Período letivo/ }).locator(`option[value="${term.id}"]`)).toHaveCount(0);
+  const revision = await request.put(`${f.path}/peis/${pei.id}`, { headers: f.headers, data: { status: 'DRAFT', content: pei.content } });
+  expect(revision.status()).toBe(200);
+  expect(await revision.json()).toMatchObject({ academicTermId: term.id, academicTerm: term.code, academicTermLabel: termLabel, revision: 2 });
+  await page.goto(`/estudantes/${another.id}`);
+  await page.locator('#dossier-educationalNeeds summary').click();
+  await expect(categorySelect.locator(`option[value="${category.id}"]`)).toHaveCount(0);
+});
+
+test('valida IDs, código legado, inatividade, omissão e remoção antes de persistir', async ({ request }) => {
+  const f = await catalogFixture(request);
+  const category = await f.entry('NEED_CATEGORY', 'Categoria fictícia validada');
+  const term = await f.entry('ACADEMIC_TERM', 'Período fictício validado');
+  const initial = await f.dossier();
+  const history = async () => (await request.get(`${f.path}/dossier/history`, { headers: f.headers })).json();
+  const timeline = async () => (await request.get(`${f.path}/timeline`, { headers: f.headers })).json();
+  const initialTimeline = await timeline();
+  for (const id of [2147483647, term.id, -1]) {
+    const response = await request.put(`${f.path}/dossier`, { headers: f.headers, data: { ...initial, educationalNeeds: { categoryId: id } } });
+    expect(response.status()).toBe(400);
+    expect((await f.dossier()).version).toBe(initial.version);
+    expect(await history()).toHaveLength(0);
+    expect(await timeline()).toHaveLength(initialTimeline.length);
+  }
+  let saved = await f.saveDossier({ ...initial, educationalNeeds: { categoryId: category.id, category: 'Snapshot adulterado', notes: 'Nota fictícia', extra: 'Preservar' } });
+  expect(saved.educationalNeeds).toMatchObject({ categoryId: category.id, category: 'Categoria fictícia validada', extra: 'Preservar' });
+  for (const item of [category, term]) {
+    for (const mutation of [{ code: `${item.code}-MUDADO` }, { kind: item.kind === 'ACADEMIC_TERM' ? 'NEED_CATEGORY' : 'ACADEMIC_TERM' }]) {
+      const response = await request.put(`/api/v1/admin/references/${item.id}`, { headers: f.adminHeaders, data: { ...item, label: 'Não deve ser salvo', ...mutation } });
+      expect(response.status()).toBe(400);
+    }
+  }
+  const items = await (await request.get('/api/v1/admin/references', { headers: f.adminHeaders })).json();
+  expect(items.find((item: { id: number }) => item.id === category.id)).toMatchObject({ label: category.label, code: category.code, kind: category.kind });
+  const peiData = { subjectId: f.subject.id, teacherId: f.teacher.id };
+  for (const invalid of [{ academicTermId: category.id }, { academicTermId: 2147483647 }, { academicTerm: term.label }, { academicTerm: 'NAO-CADASTRADO' }]) {
+    const response = await request.post(`${f.path}/peis`, { headers: f.headers, data: { ...peiData, ...invalid } });
+    expect(response.status()).toBe(400);
+  }
+  expect(await (await request.get(`${f.path}/peis`, { headers: f.headers })).json()).toHaveLength(0);
+  const oldClient = await f.post(`/students/${f.student.id}/peis`, { ...peiData, academicTerm: term.code });
+  expect(oldClient).toMatchObject({ academicTermId: term.id, academicTerm: term.code, academicTermLabel: term.label });
+  const newClient = await f.post(`/students/${f.student.id}/peis`, { ...peiData, academicTermId: term.id, academicTermLabel: 'Adulterado' });
+  expect(newClient).toMatchObject({ academicTermId: term.id, academicTerm: term.code, academicTermLabel: term.label });
+  for (const item of [category, term]) {
+    const response = await request.patch(`/api/v1/admin/references/${item.id}/active`, { headers: f.adminHeaders, data: { active: false } });
+    expect(response.status()).toBe(200);
+  }
+  const otherStudent = await f.post('/students', { courseId: f.course.id, registration: `TEST-CATALOG-OTHER-${Date.now()}`, civilName: 'Pessoa Fictícia Sem Vínculo Histórico' });
+  const otherPath = `/api/v1/students/${otherStudent.id}/dossier`;
+  const otherInitial = await (await request.get(otherPath, { headers: f.headers })).json();
+  const otherRefused = await request.put(otherPath, { headers: f.headers, data: { ...otherInitial, educationalNeeds: { categoryId: category.id } } });
+  expect(otherRefused.status()).toBe(400);
+  expect(await (await request.get(otherPath, { headers: f.headers })).json()).toMatchObject({ version: otherInitial.version, educationalNeeds: {} });
+  expect(await (await request.get(`${otherPath}/history`, { headers: f.headers })).json()).toHaveLength(0);
+  // Omission preserves the association and its snapshot even with another submitted text.
+  saved = await f.saveDossier({ ...saved, educationalNeeds: { notes: 'Outra nota fictícia', category: 'Não substituir histórico' } });
+  expect(saved.educationalNeeds).toMatchObject({ categoryId: category.id, category: category.label });
+  saved = await f.saveDossier({ ...saved, educationalNeeds: { ...saved.educationalNeeds, categoryId: category.id, category: 'Adulterado' } });
+  expect(saved.educationalNeeds.category).toBe(category.label);
+  saved = await f.saveDossier({ ...saved, educationalNeeds: { ...saved.educationalNeeds, categoryId: null } });
+  expect(saved.educationalNeeds.categoryId).toBeFalsy();
+  expect(saved.educationalNeeds.category).toBeFalsy();
+  const beforeInvalid = await history();
+  const beforeEvents = await timeline();
+  const refused = await request.put(`${f.path}/dossier`, { headers: f.headers, data: { ...saved, educationalNeeds: { categoryId: category.id } } });
+  expect(refused.status()).toBe(400);
+  expect((await f.dossier()).version).toBe(saved.version);
+  expect(await history()).toHaveLength(beforeInvalid.length);
+  expect(await timeline()).toHaveLength(beforeEvents.length);
+  for (const inactive of [{ academicTermId: term.id }, { academicTerm: term.code }]) {
+    const response = await request.post(`${f.path}/peis`, { headers: f.headers, data: { ...peiData, ...inactive } });
+    expect(response.status()).toBe(400);
+  }
+  const peis = await (await request.get(`${f.path}/peis`, { headers: f.headers })).json();
+  expect(peis).toHaveLength(2);
+  const snapshots = (await history()).flatMap((revision: { fields: { educationalNeeds?: { category?: string } } }) => revision.fields.educationalNeeds?.category || []);
+  expect(snapshots).toContain(category.label);
+  expect(snapshots).not.toContain('Adulterado');
+});
+
+test('reabre legado sem inventar associação e permite revisão e remoção explícita', async ({ page, request }) => {
+  const f = await catalogFixture(request);
+  const term = await f.entry('ACADEMIC_TERM', 'Período temporário de fixture histórica');
+  await f.saveDossier(await f.dossier());
+  const pei = await f.post(`/students/${f.student.id}/peis`, { subjectId: f.subject.id, teacherId: f.teacher.id, academicTermId: term.id });
+  makeLegacyFixture(f.student, pei.id);
+  await loginUi(page, 'napne');
+  await page.goto(`/estudantes/${f.student.id}`);
+  await page.locator('#dossier-educationalNeeds summary').click();
+  const select = page.getByRole('combobox', { name: /Categoria de necessidade educacional/ });
+  await expect(page.locator('#dossier-educationalNeeds')).toContainText('Categoria legada fictícia');
+  const save = async () => {
+    const response = page.waitForResponse(r => r.url().endsWith(`${f.path}/dossier`) && r.request().method() === 'PUT');
+    await page.locator('form.dossier-layout').getByRole('button', { name: 'Salvar alterações', exact: true }).click();
+    expect((await response).status()).toBe(200);
+  };
+  await save();
+  const preserved = await f.dossier();
+  expect(preserved.educationalNeeds).toMatchObject({ category: 'Categoria legada fictícia', notes: 'Notas legadas fictícias', extra: 'Extra preservado' });
+  expect(preserved.educationalNeeds.categoryId).toBeFalsy();
+  const changedText = await request.put(`${f.path}/dossier`, { headers: f.headers, data: { ...preserved, educationalNeeds: { ...preserved.educationalNeeds, category: 'Texto novo livre' } } });
+  expect(changedText.status()).toBe(400);
+  await select.selectOption('');
+  await save();
+  expect((await f.dossier()).educationalNeeds.category).toBeFalsy();
+  await page.getByRole('button', { name: 'PEI', exact: true }).click();
+  await expect(page.locator('article.pei-row')).toContainText('LEGACY-FICTICIO');
+  const response = await request.put(`${f.path}/peis/${pei.id}`, { headers: f.headers, data: { status: 'DRAFT', content: pei.content } });
+  expect(response.status()).toBe(200);
+  const revision = await response.json();
+  expect(revision.academicTerm).toBe('LEGACY-FICTICIO');
+  expect(revision.academicTermId).toBeFalsy();
+  expect(revision.academicTermLabel).toBeFalsy();
+  await page.reload();
+  await page.getByRole('button', { name: 'PEI', exact: true }).click();
+  await expect(page.locator('article.pei-row')).toHaveCount(2);
+  await expect(page.locator('article.pei-row').first()).toContainText('LEGACY-FICTICIO');
+});
