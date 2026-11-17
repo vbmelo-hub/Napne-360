@@ -22,6 +22,7 @@ export class ApiService {
   changeCaseStage(id: number, stage: string, summary: string | null) { return this.http.patch<NapneCase>(`/api/v1/cases/${id}/stage`, {stage, summary}); }
   records(id: number) { return this.http.get<CareRecord[]>(`/api/v1/students/${id}/records`); }
   createRecord(id: number, value: object) { return this.http.post<CareRecord>(`/api/v1/students/${id}/records`, value); }
+  updateRecord(studentId: number, recordId: string, value: object) { return this.http.put<CareRecord>(`/api/v1/students/${studentId}/records/${recordId}`, value); }
   timeline(id: number, type = '') {
     let params = new HttpParams().set('limit', 100);
     if (type) params = params.set('type', type);

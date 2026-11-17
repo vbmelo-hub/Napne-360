@@ -1,0 +1,601 @@
+import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
+import { provideRouter, ActivatedRoute } from '@angular/router';
+import { Subject, of, throwError } from 'rxjs';
+import { StudentDetailComponent } from './student-detail.component';
+import { ApiService } from '../core/api.service';
+import { AuthService } from '../core/auth.service';
+import { ToastService } from '../core/toast.service';
+import { CareRecord, Dossier, SessionUser, StudentDetails } from '../core/models';
+
+interface AuthServiceTestAccess {
+  state: { set(user: SessionUser | null): void };
+}
+
+describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
+  let component: StudentDetailComponent;
+  let fixture: ComponentFixture<StudentDetailComponent>;
+  let apiService: jasmine.SpyObj<ApiService>;
+  let authService: AuthService;
+  let toastService: jasmine.SpyObj<ToastService>;
+
+  const mockStudent: StudentDetails = {
+    id: 1,
+    registration: '2026001',
+    displayName: 'Estudante Teste',
+    course: 'Sistemas para Internet',
+    campus: 'Rio Branco',
+    status: 'ACTIVE',
+    civilName: 'Estudante Civil',
+    socialName: null,
+    birthDate: '2001-01-01',
+    institutionalEmail: 'estudante@ifac.edu.br',
+    phone: null,
+    campusId: 1,
+    courseId: 10,
+    version: 1
+  };
+
+  const mockDossier: Dossier = {
+    studentId: 1,
+    identification: {},
+    educationalNeeds: {},
+    healthAndSupport: {},
+    familyContext: {},
+    schoolHistory: {},
+    strengths: {},
+    difficulties: {},
+    initialInterventions: {},
+    version: 1,
+    redacted: false
+  };
+
+  const mockRecord: CareRecord = {
+    id: 'rec-1',
+    studentId: 1,
+    caseId: 50,
+    subjectId: 100,
+    type: 'PEDAGOGICAL_GUIDANCE',
+    status: 'DRAFT',
+    title: 'Orientações Iniciais',
+    content: {
+      teachingNeeds: 'Material adaptado',
+      adaptations: 'Tempo estendido',
+      napneSupport: 'Acompanhamento quinzenal',
+      notes: 'Rascunho inicial do professor/napne',
+      extraFieldPreserved: 'valor_adicional_que_deve_ser_mantido'
+    },
+    createdBy: 'napne@test.local',
+    updatedAt: '2026-11-17T10:00:00Z',
+    version: 1,
+    history: [
+      {
+        version: 0,
+        title: 'Orientações v0',
+        status: 'DRAFT',
+        content: {
+          teachingNeeds: 'Material adaptado inicial',
+          adaptations: 'Tempo padrão',
+          notes: 'Primeiro rascunho v0'
+        },
+        author: 'napne@test.local',
+        occurredAt: '2026-11-17T09:00:00Z'
+      }
+    ]
+  };
+
+  beforeEach(async () => {
+    sessionStorage.clear();
+    sessionStorage.setItem('napne360.session', JSON.stringify({
+      token: 'jwt-napne',
+      id: 2,
+      name: 'NAPNE Member',
+      email: 'napne@test.local',
+      campusId: 1,
+      roles: ['NAPNE']
+    }));
+
+    const apiSpy = jasmine.createSpyObj<ApiService>('ApiService', [
+      'student', 'dossier', 'cases', 'records', 'peis', 'timeline',
+      'attachments', 'studentSubjects', 'studentTeachers', 'courses',
+      'createRecord', 'updateRecord'
+    ]);
+    const toastSpy = jasmine.createSpyObj<ToastService>('ToastService', ['show']);
+
+    apiSpy.student.and.returnValue(of(mockStudent));
+    apiSpy.dossier.and.returnValue(of(mockDossier));
+    apiSpy.cases.and.returnValue(of([]));
+    apiSpy.records.and.returnValue(of([mockRecord]));
+    apiSpy.peis.and.returnValue(of([]));
+    apiSpy.timeline.and.returnValue(of([]));
+    apiSpy.attachments.and.returnValue(of([]));
+    apiSpy.studentSubjects.and.returnValue(of([{ id: 100, name: 'Matemática', code: 'MAT', workloadHours: 60, courseId: 10 }]));
+    apiSpy.studentTeachers.and.returnValue(of([]));
+    apiSpy.courses.and.returnValue(of([]));
+
+    await TestBed.configureTestingModule({
+      imports: [StudentDetailComponent],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            snapshot: {
+              paramMap: {
+                get: (k: string) => (k === 'id' ? '1' : null)
+              }
+            }
+          }
+        },
+        { provide: ApiService, useValue: apiSpy },
+        { provide: ToastService, useValue: toastSpy }
+      ]
+    }).compileComponents();
+
+    apiService = TestBed.inject(ApiService) as jasmine.SpyObj<ApiService>;
+    authService = TestBed.inject(AuthService);
+    toastService = TestBed.inject(ToastService) as jasmine.SpyObj<ToastService>;
+
+    fixture = TestBed.createComponent(StudentDetailComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+  });
+
+  function setSessionUser(user: SessionUser) {
+    sessionStorage.setItem('napne360.session', JSON.stringify(user));
+    (authService as unknown as AuthServiceTestAccess).state.set(user);
+    fixture.detectChanges();
+  }
+
+  it('permite iniciar edição de acompanhamento, preenchendo campos e preservando vínculos', () => {
+    expect(component.editingRecord()).toBeNull();
+
+    // Inicia edição do registro existente
+    component.editRecord(mockRecord);
+    fixture.detectChanges();
+
+    expect(component.editingRecord()).toBe(mockRecord);
+    expect(component.recordForm.controls.title.value).toBe('Orientações Iniciais');
+    expect(component.recordForm.controls.type.value).toBe('PEDAGOGICAL_GUIDANCE');
+    expect(component.recordForm.controls.status.value).toBe('DRAFT');
+    expect(component.recordForm.controls.subjectId.value).toBe('100');
+    expect(component.recordForm.controls.notes.value).toBe('Rascunho inicial do professor/napne');
+    expect(component.structuredRecord.controls['teachingNeeds'].value).toBe('Material adaptado');
+    expect(component.structuredRecord.controls['adaptations'].value).toBe('Tempo estendido');
+  });
+
+  it('cancela a edição limpando o registro em edição e restaurando o formulário', () => {
+    component.editRecord(mockRecord);
+    component.recordForm.controls.title.setValue('Título alterado');
+
+    component.cancelRecordEdit();
+    fixture.detectChanges();
+
+    expect(component.editingRecord()).toBeNull();
+    expect(component.recordForm.controls.title.value).toBe('');
+    expect(component.recordForm.controls.notes.value).toBe('');
+    expect(apiService.updateRecord).not.toHaveBeenCalled();
+  });
+
+  it('finaliza acompanhamento (DRAFT -> ACTIVE) enviando version, vínculos imutáveis e preservando chaves extras', () => {
+    component.editRecord(mockRecord);
+
+    component.recordForm.controls.status.setValue('ACTIVE');
+    component.recordForm.controls.notes.setValue('Finalizado após reunião');
+    component.structuredRecord.controls['teachingNeeds'].setValue('Material adaptado revisado');
+
+    const updatedRecord: CareRecord = {
+      ...mockRecord,
+      version: 2,
+      status: 'ACTIVE',
+      content: {
+        ...mockRecord.content,
+        notes: 'Finalizado após reunião',
+        teachingNeeds: 'Material adaptado revisado'
+      }
+    };
+    apiService.updateRecord.and.returnValue(of(updatedRecord));
+
+    component.saveRecord();
+
+    expect(apiService.updateRecord).toHaveBeenCalledWith(
+      1,
+      'rec-1',
+      jasmine.objectContaining({
+        caseId: 50,
+        subjectId: 100,
+        type: 'PEDAGOGICAL_GUIDANCE',
+        title: 'Orientações Iniciais',
+        status: 'ACTIVE',
+        version: 1,
+        content: jasmine.objectContaining({
+          extraFieldPreserved: 'valor_adicional_que_deve_ser_mantido',
+          notes: 'Finalizado após reunião',
+          teachingNeeds: 'Material adaptado revisado'
+        })
+      })
+    );
+
+    expect(component.editingRecord()).toBeNull();
+    expect(component.records().find(r => r.id === 'rec-1')?.status).toBe('ACTIVE');
+    expect(toastService.show).toHaveBeenCalledWith(jasmine.stringMatching(/atualizado/i), 'success');
+  });
+
+  it('reabre acompanhamento (ACTIVE -> DRAFT) mantendo version e campos existentes', () => {
+    const activeRecord: CareRecord = {
+      ...mockRecord,
+      id: 'rec-active',
+      status: 'ACTIVE',
+      version: 2
+    };
+
+    component.editRecord(activeRecord);
+    expect(component.recordForm.controls.status.value).toBe('ACTIVE');
+
+    component.recordForm.controls.status.setValue('DRAFT');
+    component.recordForm.controls.notes.setValue('Reaberto para novos ajustes');
+
+    const reopenedRecord: CareRecord = {
+      ...activeRecord,
+      status: 'DRAFT',
+      version: 3
+    };
+    apiService.updateRecord.and.returnValue(of(reopenedRecord));
+
+    component.saveRecord();
+
+    expect(apiService.updateRecord).toHaveBeenCalledWith(
+      1,
+      'rec-active',
+      jasmine.objectContaining({
+        status: 'DRAFT',
+        version: 2
+      })
+    );
+  });
+
+  it('mantém os dados digitados e o estado de edição se a API devolver conflito (HTTP 409), 403 ou 500', () => {
+    component.editRecord(mockRecord);
+    component.recordForm.controls.title.setValue('Título novo durante conflito');
+    component.recordForm.controls.notes.setValue('Anotação que não pode ser perdida');
+    component.structuredRecord.controls['teachingNeeds'].setValue('Necessidade alterada preservada');
+
+    // Teste 1: HTTP 409 Conflito
+    apiService.updateRecord.and.returnValue(throwError(() => ({ status: 409 })));
+    component.saveRecord();
+
+    expect(component.editingRecord()).toBe(mockRecord);
+    expect(component.recordForm.controls.title.value).toBe('Título novo durante conflito');
+    expect(component.recordForm.controls.notes.value).toBe('Anotação que não pode ser perdida');
+    expect(component.structuredRecord.controls['teachingNeeds'].value).toBe('Necessidade alterada preservada');
+    expect(toastService.show).toHaveBeenCalledWith(
+      jasmine.stringMatching(/alterado por outra pessoa|Não foi possível/i),
+      'error'
+    );
+
+    // Teste 2: HTTP 403 Acesso negado
+    apiService.updateRecord.and.returnValue(throwError(() => ({ status: 403 })));
+    component.saveRecord();
+
+    expect(component.editingRecord()).toBe(mockRecord);
+    expect(component.recordForm.controls.title.value).toBe('Título novo durante conflito');
+
+    // Teste 3: HTTP 500 Erro no servidor
+    apiService.updateRecord.and.returnValue(throwError(() => ({ status: 500 })));
+    component.saveRecord();
+
+    expect(component.editingRecord()).toBe(mockRecord);
+    expect(component.recordForm.controls.notes.value).toBe('Anotação que não pode ser perdida');
+  });
+
+  it('F1: autorização com múltiplos perfis respeita regras do backend e não bloqueia autores válidos', () => {
+    // 1. NAPNE pode editar qualquer registro
+    expect(component.canEditRecord(mockRecord)).toBeTrue();
+
+    // 2. Usuário com perfis múltiplos TEACHER + TUTOR criando TUTOR_OBSERVATION
+    const tutorRecord: CareRecord = {
+      ...mockRecord,
+      id: 'rec-tutor',
+      type: 'TUTOR_OBSERVATION',
+      createdBy: 'docente_tutor@test.local'
+    };
+    const teacherRecord: CareRecord = {
+      ...mockRecord,
+      id: 'rec-docente',
+      type: 'TEACHER_FEEDBACK',
+      createdBy: 'docente_tutor@test.local'
+    };
+
+    setSessionUser({
+      token: 'jwt-combo',
+      id: 10,
+      name: 'Docente e Tutor',
+      email: 'docente_tutor@test.local',
+      campusId: 1,
+      roles: ['TEACHER', 'TUTOR']
+    });
+
+    // Deve autorizar ambos os tipos pelo conjunto de papéis
+    expect(component.canEditRecord(tutorRecord)).toBeTrue();
+    expect(component.canEditRecord(teacherRecord)).toBeTrue();
+
+    // 3. Usuário com MANAGEMENT + TEACHER
+    setSessionUser({
+      token: 'jwt-mgmt-teacher',
+      id: 11,
+      name: 'Gestor Professor',
+      email: 'gestor_prof@test.local',
+      campusId: 1,
+      roles: ['MANAGEMENT', 'TEACHER']
+    });
+    const mgmtTeacherRecord: CareRecord = {
+      ...mockRecord,
+      type: 'TEACHER_FEEDBACK',
+      createdBy: 'gestor_prof@test.local'
+    };
+    expect(component.canEditRecord(mgmtTeacherRecord)).toBeTrue();
+
+    // 4. Somente MANAGEMENT (sem papéis pedagógicos autorizados)
+    setSessionUser({
+      token: 'jwt-mgmt-pure',
+      id: 12,
+      name: 'Gestor Puro',
+      email: 'gestor_puro@test.local',
+      campusId: 1,
+      roles: ['MANAGEMENT']
+    });
+    expect(component.canEditRecord(mockRecord)).toBeFalse();
+    expect(component.canEditRecord(tutorRecord)).toBeFalse();
+
+    // 5. Outro autor do mesmo tipo de registro
+    setSessionUser({
+      token: 'jwt-outro',
+      id: 13,
+      name: 'Outro Professor',
+      email: 'outro_prof@test.local',
+      campusId: 1,
+      roles: ['TEACHER']
+    });
+    expect(component.canEditRecord(teacherRecord)).toBeFalse();
+  });
+
+  it('F2: histórico de versões renderiza campos estruturados anteriores além de notas', () => {
+    component.tab.set('records');
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const historySummary = compiled.querySelector('.record-history summary');
+    expect(historySummary).not.toBeNull();
+    expect(historySummary?.textContent).toContain('Histórico de versões (1)');
+
+    const revisionContent = compiled.querySelector('.revision-content');
+    expect(revisionContent).not.toBeNull();
+    const contentText = revisionContent?.textContent || '';
+
+    // Deve renderizar os campos estruturados da revisão:
+    expect(contentText).toContain('Material adaptado inicial');
+    expect(contentText).toContain('Tempo padrão');
+    // Deve renderizar as notas da revisão:
+    expect(contentText).toContain('Primeiro rascunho v0');
+  });
+
+  it('F3: impede troca de edição durante envio pendente e protege formulário contra respostas atrasadas', fakeAsync(() => {
+    component.tab.set('records');
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const updateSubject = new Subject<CareRecord>();
+    apiService.updateRecord.and.returnValue(updateSubject.asObservable());
+
+    component.editRecord(mockRecord);
+    component.recordForm.controls.title.setValue('Ajuste em A');
+    fixture.detectChanges();
+
+    // Dispara save (requisição fica pendente)
+    component.saveRecord();
+    fixture.detectChanges();
+
+    expect(component.actionBusy()).toBeTrue();
+
+    // Controles editáveis do formulário DEVEM estar desabilitados no DOM durante actionBusy via fieldset (:disabled)
+    const fieldSet = compiled.querySelector('fieldset.record-form-fields') as HTMLFieldSetElement;
+    const titleInput = compiled.querySelector('input[formControlName="title"]') as HTMLInputElement;
+    const notesTextarea = compiled.querySelector('textarea[formControlName="notes"]') as HTMLTextAreaElement;
+    const statusSelect = compiled.querySelector('select[formControlName="status"]') as HTMLSelectElement;
+    const allTextareas = compiled.querySelectorAll('.record-form-fields textarea');
+
+    expect(fieldSet).not.toBeNull();
+    expect(fieldSet.disabled).toBeTrue();
+    expect(titleInput).not.toBeNull();
+    expect(titleInput.matches(':disabled')).toBeTrue();
+    expect(notesTextarea).not.toBeNull();
+    expect(notesTextarea.matches(':disabled')).toBeTrue();
+    expect(statusSelect).not.toBeNull();
+    expect(statusSelect.matches(':disabled')).toBeTrue();
+    expect(allTextareas.length).toBeGreaterThan(1);
+    allTextareas.forEach(t => expect((t as HTMLElement).matches(':disabled')).toBeTrue());
+
+    // Botão de editar deve estar desabilitado no DOM
+    const editBtn = compiled.querySelector('.record-card button.secondary') as HTMLButtonElement;
+    expect(editBtn).not.toBeNull();
+    expect(editBtn.disabled).toBeTrue();
+
+    // Tentar chamar editRecord de outro registro durante actionBusy deve ser ignorado
+    const otherRecord: CareRecord = { ...mockRecord, id: 'rec-2', title: 'Registro B' };
+    component.editRecord(otherRecord);
+    expect(component.editingRecord()?.id).toBe('rec-1');
+
+    // Emite sucesso da requisição de A
+    const updatedA: CareRecord = { ...mockRecord, title: 'Ajuste em A concluído', version: 2 };
+    updateSubject.next(updatedA);
+    tick();
+    fixture.detectChanges();
+
+    expect(component.actionBusy()).toBeFalse();
+    expect(component.editingRecord()).toBeNull();
+  }));
+
+  it('F3: no erro da requisição pendente, reabilita fieldset e controles preservando dados digitados', fakeAsync(() => {
+    component.tab.set('records');
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const updateSubject = new Subject<CareRecord>();
+    apiService.updateRecord.and.returnValue(updateSubject.asObservable());
+
+    component.editRecord(mockRecord);
+    component.recordForm.controls.title.setValue('Título em edição antes do erro');
+    component.recordForm.controls.notes.setValue('Nota mantida no erro');
+    fixture.detectChanges();
+
+    component.saveRecord();
+    fixture.detectChanges();
+
+    const fieldSet = compiled.querySelector('fieldset.record-form-fields') as HTMLFieldSetElement;
+    const titleInput = compiled.querySelector('input[formControlName="title"]') as HTMLInputElement;
+    expect(fieldSet.disabled).toBeTrue();
+    expect(titleInput.matches(':disabled')).toBeTrue();
+
+    // Emite erro na requisição
+    updateSubject.error({ status: 409 });
+    tick();
+    fixture.detectChanges();
+
+    // Fieldset e controles voltam a ficar habilitados e mantêm o conteúdo
+    expect(component.actionBusy()).toBeFalse();
+    expect(fieldSet.disabled).toBeFalse();
+    expect(titleInput.matches(':disabled')).toBeFalse();
+    expect(titleInput.value).toBe('Título em edição antes do erro');
+    expect(component.recordForm.controls.notes.value).toBe('Nota mantida no erro');
+    expect(component.editingRecord()?.id).toBe('rec-1');
+  }));
+
+  it('F4: jornada completa no DOM (criar rascunho -> recarregar -> editar -> finalizar) com controles reais', () => {
+    component.tab.set('records');
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+
+    // 1. Criar novo rascunho usando elementos do DOM
+    const typeSelect = compiled.querySelector('select[formControlName="type"]') as HTMLSelectElement;
+    typeSelect.value = 'PEDAGOGICAL_GUIDANCE';
+    typeSelect.dispatchEvent(new Event('change'));
+
+    const titleInput = compiled.querySelector('input[formControlName="title"]') as HTMLInputElement;
+    titleInput.value = 'Plano de Apoio em Cálculo';
+    titleInput.dispatchEvent(new Event('input'));
+
+    const notesTextarea = compiled.querySelector('textarea[formControlName="notes"]') as HTMLTextAreaElement;
+    notesTextarea.value = 'Observações da primeira sessão';
+    notesTextarea.dispatchEvent(new Event('input'));
+
+    fixture.detectChanges();
+
+    const newCreatedRecord: CareRecord = {
+      id: 'rec-jornada-1',
+      studentId: 1,
+      caseId: null,
+      subjectId: 100,
+      type: 'PEDAGOGICAL_GUIDANCE',
+      status: 'DRAFT',
+      title: 'Plano de Apoio em Cálculo',
+      content: { notes: 'Observações da primeira sessão' },
+      createdBy: 'napne@test.local',
+      updatedAt: '2026-11-17T11:00:00Z',
+      version: 1,
+      history: []
+    };
+    apiService.createRecord.and.returnValue(of(newCreatedRecord));
+
+    const submitBtn = compiled.querySelector('.create-panel button[type="submit"]') as HTMLButtonElement;
+    submitBtn.click();
+    fixture.detectChanges();
+
+    expect(apiService.createRecord).toHaveBeenCalled();
+    expect(component.records().some(r => r.id === 'rec-jornada-1')).toBeTrue();
+
+    // 2. Simular recarregamento da página (loadAll)
+    apiService.records.and.returnValue(of([newCreatedRecord]));
+    component.loadAll();
+    fixture.detectChanges();
+
+    expect(component.records().length).toBe(1);
+    expect(component.records()[0].id).toBe('rec-jornada-1');
+
+    // 3. Clicar em "Editar" no card do registro no DOM
+    const cardEditBtn = compiled.querySelector('article[data-record-id="rec-jornada-1"] button.secondary') as HTMLButtonElement;
+    expect(cardEditBtn).not.toBeNull();
+    cardEditBtn.click();
+    fixture.detectChanges();
+
+    // Cabeçalho deve refletir modo de edição
+    const formHeading = compiled.querySelector('#record-form-heading');
+    expect(formHeading?.textContent).toContain('Editar registro');
+
+    // 4. Finalizar o registro (mudar status para ACTIVE no DOM)
+    const statusSelect = compiled.querySelector('select[formControlName="status"]') as HTMLSelectElement;
+    statusSelect.value = 'ACTIVE';
+    statusSelect.dispatchEvent(new Event('change'));
+
+    const finalizedRecord: CareRecord = {
+      ...newCreatedRecord,
+      status: 'ACTIVE',
+      version: 2
+    };
+    apiService.updateRecord.and.returnValue(of(finalizedRecord));
+
+    const saveChangesBtn = compiled.querySelector('.create-panel button[type="submit"]') as HTMLButtonElement;
+    saveChangesBtn.click();
+    fixture.detectChanges();
+
+    expect(apiService.updateRecord).toHaveBeenCalledWith(
+      1,
+      'rec-jornada-1',
+      jasmine.objectContaining({
+        status: 'ACTIVE',
+        version: 1
+      })
+    );
+
+    // Lista atualizada com status Ativo
+    expect(component.records().find(r => r.id === 'rec-jornada-1')?.status).toBe('ACTIVE');
+    expect(component.editingRecord()).toBeNull();
+  });
+});
+
+describe('ApiService - CareRecord updateRecord', () => {
+  let service: ApiService;
+  let http: HttpTestingController;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()]
+    });
+    service = TestBed.inject(ApiService);
+    http = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => http.verify());
+
+  it('faz requisição PUT para /api/v1/students/:studentId/records/:id', () => {
+    const payload = {
+      caseId: 50,
+      subjectId: 100,
+      type: 'PEDAGOGICAL_GUIDANCE',
+      status: 'ACTIVE',
+      title: 'Título atualizado',
+      content: { notes: 'Notas atualizadas' },
+      version: 1
+    };
+
+    service.updateRecord(1, 'rec-1', payload).subscribe();
+
+    const req = http.expectOne('/api/v1/students/1/records/rec-1');
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual(payload);
+    req.flush({ id: 'rec-1', ...payload });
+  });
+});
