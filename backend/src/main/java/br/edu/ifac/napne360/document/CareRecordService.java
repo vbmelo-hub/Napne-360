@@ -1,6 +1,7 @@
 package br.edu.ifac.napne360.document;
 
 import br.edu.ifac.napne360.audit.AuditService;
+import br.edu.ifac.napne360.common.ConflictException;
 import br.edu.ifac.napne360.common.NotFoundException;
 import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.UserAccount;
@@ -57,15 +58,7 @@ public class CareRecordService {
                 .subjectId(request.subjectId()).type(request.type()).status(request.status() == null ? RecordStatus.DRAFT : request.status())
                 .title(request.title()).content(content)
                 .createdBy(user.getEmail()).updatedBy(user.getEmail()).build());
-        TimelineVisibility visibility = request.type() == CareRecordType.PEDAGOGICAL_GUIDANCE
-                || request.type() == CareRecordType.ACTION_PLAN || request.type() == CareRecordType.TEACHER_FEEDBACK
-                || request.type() == CareRecordType.TUTOR_OBSERVATION
-                ? TimelineVisibility.PEDAGOGICAL : TimelineVisibility.RESTRICTED;
-        Map<String, Object> eventData = new java.util.LinkedHashMap<>();
-        eventData.put("recordId", value.getId());
-        eventData.put("type", value.getType().name());
-        if (value.getSubjectId() != null) eventData.put("subjectId", value.getSubjectId());
-        timeline.append(studentId, "CARE_RECORD_CREATED", "Registro de acompanhamento criado", user.getName(), visibility, eventData);
+        appendEvent(studentId, "CARE_RECORD_CREATED", "Registro de acompanhamento criado", user, value);
         audit.record(auth, http, "CREATE", "CARE_RECORD", value.getId(), "SUCCESS", value.getType().name());
         return value;
     }
@@ -80,6 +73,8 @@ public class CareRecordService {
         validateScope(studentId, request, user);
         if (!user.getRoles().contains(RoleName.NAPNE) && !user.getEmail().equals(value.getCreatedBy()))
             throw new AccessDeniedException("Somente o autor ou o NAPNE pode revisar este registro.");
+        if (request.version() == null || !java.util.Objects.equals(request.version(), value.getVersion()))
+            throw new ConflictException("O registro foi alterado. Recarregue antes de salvar.");
         value.getHistory().add(new CareRecordDocument.Revision(value.getVersion(), value.getTitle(), value.getStatus(),
                 new java.util.LinkedHashMap<>(value.getContent()), value.getUpdatedBy(), value.getUpdatedAt()));
         value.setTitle(request.title());
@@ -88,8 +83,19 @@ public class CareRecordService {
         value.setUpdatedBy(user.getEmail());
         value.setUpdatedAt(Instant.now());
         value = records.save(value);
+        appendEvent(studentId, "CARE_RECORD_UPDATED", "Registro de acompanhamento atualizado", user, value);
         audit.record(auth, http, "UPDATE", "CARE_RECORD", value.getId(), "SUCCESS", value.getType().name());
         return value;
+    }
+
+    private void appendEvent(Long studentId, String eventType, String title, UserAccount user, CareRecordDocument value) {
+        TimelineVisibility visibility = PEDAGOGICAL_VISIBLE.contains(value.getType())
+                ? TimelineVisibility.PEDAGOGICAL : TimelineVisibility.RESTRICTED;
+        Map<String, Object> eventData = new java.util.LinkedHashMap<>();
+        eventData.put("recordId", value.getId());
+        eventData.put("type", value.getType().name());
+        if (value.getSubjectId() != null) eventData.put("subjectId", value.getSubjectId());
+        timeline.append(studentId, eventType, title, user.getName(), visibility, eventData);
     }
 
     private void validateType(UserAccount user, CareRecordType type) {
@@ -112,5 +118,5 @@ public class CareRecordService {
     }
 
     public record CareRecordRequest(Long caseId, Long subjectId, @NotNull CareRecordType type, RecordStatus status,
-                                    @NotBlank String title, Map<String, Object> content) {}
+                                    @NotBlank String title, Map<String, Object> content, Long version) {}
 }

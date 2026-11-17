@@ -2,6 +2,14 @@
 
 Todas as mudanças deste projeto serão documentadas neste arquivo.
 
+## Em desenvolvimento — 2026-11-17
+
+- Permite retomar, editar, cancelar e finalizar acompanhamentos na interface, com consulta aos campos das versões anteriores e preservação de vínculos e conteúdo adicional.
+- Exige a versão lida pelo cliente na atualização do acompanhamento; uma versão ausente ou desatualizada retorna HTTP 409 antes de alterar o documento. A criação anterior continua compatível.
+- Registra edições de acompanhamento na linha do tempo com visibilidade por perfil/componente e sem copiar conteúdo sensível para o evento.
+- Ajusta o envelope multipart para 11 MiB no Nginx e no Spring, preservando o limite de 10 MiB por arquivo.
+- Acrescenta testes de serviço/HTTP, componente, jornadas reais de NAPNE/docente/tutor e limites de upload, além de script de regressão de Nginx e patch proposto para a CI. Evidências e limites em `docs/verification.md`.
+
 ## Em desenvolvimento — 2026-11-05
 
 - Atualiza os sete pacotes Angular de execução e `@angular/compiler-cli` de 20.3.31 para 20.3.34, corrigindo os avisos de XSRF no HTTP Client e DoS no Router; auditoria de produção sem achados e verificações locais descritas em `docs/verification.md`.

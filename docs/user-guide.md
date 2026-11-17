@@ -12,6 +12,10 @@ Abra **Estudantes acompanhados**. Cadastre matrícula, curso e nomes; o nome soc
 
 Em **Casos**, registre o encaminhamento e altere a etapa. Em **Acompanhamento**, selecione triagem, acolhimento, estudo de caso, orientação, plano de ação, recusa ou nova solicitação. Registre fontes/estratégias apenas quando pertinentes ao caso. Use rascunho enquanto o documento está em elaboração.
 
+Para continuar um acompanhamento salvo, use **Editar** no cartão. Atualize título, campos ou comentários e escolha **Rascunho** ou **Finalizado** antes de **Salvar alterações**. O tipo, caso e componente existentes são preservados. **Cancelar edição** descarta apenas as mudanças ainda não enviadas. **Histórico de versões** mostra os valores anteriores, situação, autor e data. NAPNE pode revisar registros autorizados do campus; os demais autores precisam de perfil e vínculo compatíveis.
+
+Se outra pessoa salvar primeiro, a atualização é recusada por conflito e o texto digitado permanece na tela atual. Preserve esse texto antes de recarregar; a aplicação ainda não oferece mesclagem automática nem recuperação de texto após recarregar a página.
+
 Em **Documentos**, envie PDF, PNG, JPEG ou DOCX até 10 MB. O arquivo é acessível apenas a NAPNE do campus. Conteúdo destinado ao ensino deve ser elaborado em **Orientações pedagógicas**.
 
 ## Professor e equipe pedagógica

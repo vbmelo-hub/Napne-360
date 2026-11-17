@@ -60,6 +60,15 @@ export interface NapneCase {
   summary: string | null;
 }
 
+export interface CareRecordRevision {
+  version: number | null;
+  title: string;
+  status: string;
+  content: Record<string, unknown>;
+  author: string;
+  occurredAt: string;
+}
+
 export interface CareRecord {
   id: string;
   studentId: number;
@@ -70,7 +79,11 @@ export interface CareRecord {
   title: string;
   content: Record<string, unknown>;
   createdBy: string;
+  updatedBy?: string;
+  createdAt?: string;
   updatedAt: string;
+  version: number | null;
+  history?: CareRecordRevision[];
 }
 
 export interface Pei {
