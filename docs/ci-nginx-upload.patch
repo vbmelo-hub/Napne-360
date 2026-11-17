@@ -1,0 +1,16 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 5b78898..b6fc04e 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -40,6 +40,11 @@ jobs:
+         run: npm audit --omit=dev --audit-level=high
+       - name: Start integration databases
+         run: docker compose up -d --wait mysql mongo
++      - name: Test Nginx upload envelope
++        run: |
++          sudo apt-get update -qq
++          sudo apt-get install -y --no-install-recommends nginx
++          python3 -I scripts/test_upload_nginx.py --nginx /usr/sbin/nginx
+       - name: Start API with fictional seed
+         run: |
+           java -jar backend/target/napne360-backend-0.0.1-SNAPSHOT.jar > backend.log 2>&1 &
