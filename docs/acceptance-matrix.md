@@ -8,7 +8,7 @@ Base técnica: `main`, commit `13f7376cb18bdb8d0055b1a5bcbd4ace0b843417`, consul
 
 Escopo registrado: RF01–RF14 e RNF01–RNF06, incluindo a administração prevista nos requisitos. RF15–RF19 permanecem excluídos. Emissão de documentos pedagógicos individuais não se confunde com relatórios gerenciais e dashboards excluídos.
 
-Os critérios abaixo são propostas de aceite derivadas dos requisitos consolidados e dos achados. Prioridades são sugestões técnicas, sem responsáveis ou prazos atribuídos. Decisões de negócio ainda abertas estão identificadas como D01–D07; não foram presumidas como aprovadas.
+Os critérios abaixo são propostas de aceite derivadas dos requisitos consolidados e dos achados. Prioridades são sugestões técnicas, sem responsáveis ou prazos atribuídos. As decisões D01–D07 têm seu estado explícito na tabela; D03 foi confirmada em 2026-11-17 e as demais não foram presumidas como aprovadas.
 
 ## Como interpretar e registrar o aceite
 
@@ -91,7 +91,7 @@ CA29 começa no lote 1 e permanece transversal: cada correção ou implementaç�
 | --- | --- | --- | --- |
 | D01 | Quais etapas podem ser configuradas, regras de transição/reabertura, atribuição de responsável e quando um acompanhamento pertence a um caso. | CA07–CA08 | Fluxo validado com NAPNE e regras descritas com exemplos permitidos e recusados. |
 | D02 | Campos exigidos para finalizar cada tipo de registro e significado de ciência/pactuação. | CA14 | Distinção documentada entre rascunho e finalizado, com campos e permissões de revisão. Não presumir assinatura eletrônica como obrigatória. |
-| D03 | Identificação e seleção de categorias/períodos; comportamento de itens inativos e valores históricos. | CA11 | Regra de catálogo definida e aplicada no frontend e no servidor. |
+| D03 | Confirmada pelo usuário em 2026-11-17: novos usos selecionam somente itens ativos; a associação histórica pode ser conservada no mesmo registro e mantém identificação/nome registrados, inclusive após renomeação ou inativação. Novas associações inativas são recusadas no servidor. Aplicação técnica do recorte: IDs numéricos identificam as seleções; código/tipo administrativos são imutáveis. Textos legados permanecem legíveis, sem associação automática por semelhança. | CA11; recorte de categorias/períodos de CA21 | Decisão aprovada; comprovação técnica e limites do incremento em [verificação de catálogos](verification/2026-11-17-catalogos.md). Isso não representa aceite de CA21 completo nem homologação institucional. |
 | D04 | Quem pode revisar/aprovar/arquivar PEI; definição de vigência; coexistência de planos ou rascunhos; comportamento ao substituir um aprovado. | CA17–CA19 | Regra de negócio explícita. Não impor silenciosamente um único plano ou um novo fluxo de aprovação. |
 | D05 | Quais documentos individuais compõem a entrega, formato/modelo institucional, nomes, cabeçalho, versão e identificação de aprovação. | CA20 | Modelos e exemplos fictícios validados; escopo de emissão acordado. Não incluir RF15–RF19 por associação. |
 | D06 | Ambiente e condições de uso real, finalidade, acesso, retenção/expurgo, custódia dos backups e objetivos de recuperação. | CA23, CA27 | Definição institucional. Não inventar prazos de retenção, RPO/RTO ou autorização para dados reais. |

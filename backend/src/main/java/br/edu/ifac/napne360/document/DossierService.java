@@ -1,6 +1,7 @@
 package br.edu.ifac.napne360.document;
 
 import br.edu.ifac.napne360.audit.AuditService;
+import br.edu.ifac.napne360.identity.ReferenceCatalogService;
 import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.security.CurrentUserService;
@@ -22,6 +23,7 @@ public class DossierService {
     private final CurrentUserService currentUser;
     private final TimelineService timeline;
     private final AuditService audit;
+    private final ReferenceCatalogService catalog;
 
     public DossierView get(Long studentId, Authentication auth, HttpServletRequest http) {
         DossierDocument document = dossiers.findByStudentId(studentId)
@@ -38,6 +40,7 @@ public class DossierService {
                 .orElseGet(() -> DossierDocument.builder().studentId(studentId).build());
         if (!java.util.Objects.equals(request.version(), document.getVersion()))
             throw new br.edu.ifac.napne360.common.ConflictException("O dossiê foi alterado. Recarregue antes de salvar.");
+        Map<String, Object> educationalNeeds = catalog.category(request.educationalNeeds(), document.getEducationalNeeds());
         if (document.getId() != null) document.getHistory().add(new DossierDocument.Revision(document.getVersion(),
                 Map.of("identification", copy(document.getIdentification()), "educationalNeeds", copy(document.getEducationalNeeds()),
                         "healthAndSupport", copy(document.getHealthAndSupport()), "familyContext", copy(document.getFamilyContext()),
@@ -45,7 +48,7 @@ public class DossierService {
                         "difficulties", copy(document.getDifficulties()), "initialInterventions", copy(document.getInitialInterventions())),
                 document.getUpdatedBy(), document.getUpdatedAt()));
         document.setIdentification(copy(request.identification()));
-        document.setEducationalNeeds(copy(request.educationalNeeds()));
+        document.setEducationalNeeds(educationalNeeds);
         document.setHealthAndSupport(copy(request.healthAndSupport()));
         document.setFamilyContext(copy(request.familyContext()));
         document.setSchoolHistory(copy(request.schoolHistory()));
