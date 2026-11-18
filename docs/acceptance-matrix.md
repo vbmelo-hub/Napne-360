@@ -8,7 +8,7 @@ Base técnica: `main`, commit `13f7376cb18bdb8d0055b1a5bcbd4ace0b843417`, consul
 
 Escopo registrado: RF01–RF14 e RNF01–RNF06, incluindo a administração prevista nos requisitos. RF15–RF19 permanecem excluídos. Emissão de documentos pedagógicos individuais não se confunde com relatórios gerenciais e dashboards excluídos.
 
-Os critérios abaixo são propostas de aceite derivadas dos requisitos consolidados e dos achados. Prioridades são sugestões técnicas, sem responsáveis ou prazos atribuídos. As decisões D01–D07 têm seu estado explícito na tabela; D03 foi confirmada em 2026-11-17 e as demais não foram presumidas como aprovadas.
+Os critérios abaixo são propostas de aceite derivadas dos requisitos consolidados e dos achados. Prioridades são sugestões técnicas, sem responsáveis ou prazos atribuídos. As decisões D01–D07 têm seu estado explícito na tabela; D01 foi confirmada parcialmente e D03 foi confirmada em 2026-11-17. As demais decisões seguem pendentes.
 
 ## Como interpretar e registrar o aceite
 
@@ -89,7 +89,7 @@ CA29 começa no lote 1 e permanece transversal: cada correção ou implementaç�
 
 | ID | Decisão a obter | Critérios dependentes | Condição de fechamento |
 | --- | --- | --- | --- |
-| D01 | Quais etapas podem ser configuradas, regras de transição/reabertura, atribuição de responsável e quando um acompanhamento pertence a um caso. | CA07–CA08 | Fluxo validado com NAPNE e regras descritas com exemplos permitidos e recusados. |
+| D01 | Confirmada parcialmente pelo usuário em 2026-11-17. Quem abre o caso é o responsável inicial. O NAPNE do campus pode transferir casos em andamento para uma conta NAPNE ativa do mesmo campus. Casos encerrados e arquivados continuam com histórico consultável e bloqueiam a transferência. As mudanças preservam autoria, data e versão. | Recorte de CA07–CA08 | Configuração de etapas, transições e reabertura, e critérios de associação de acompanhamentos ainda dependem de definição. Consultar a [verificação de responsáveis e histórico de casos](verification/2026-11-17-casos.md). |
 | D02 | Campos exigidos para finalizar cada tipo de registro e significado de ciência/pactuação. | CA14 | Distinção documentada entre rascunho e finalizado, com campos e permissões de revisão. Não presumir assinatura eletrônica como obrigatória. |
 | D03 | Confirmada pelo usuário em 2026-11-17: novos usos selecionam somente itens ativos; a associação histórica pode ser conservada no mesmo registro e mantém identificação/nome registrados, inclusive após renomeação ou inativação. Novas associações inativas são recusadas no servidor. Aplicação técnica do recorte: IDs numéricos identificam as seleções; código/tipo administrativos são imutáveis. Textos legados permanecem legíveis, sem associação automática por semelhança. | CA11; recorte de categorias/períodos de CA21 | Decisão aprovada; comprovação técnica e limites do incremento em [verificação de catálogos](verification/2026-11-17-catalogos.md). Isso não representa aceite de CA21 completo nem homologação institucional. |
 | D04 | Quem pode revisar/aprovar/arquivar PEI; definição de vigência; coexistência de planos ou rascunhos; comportamento ao substituir um aprovado. | CA17–CA19 | Regra de negócio explícita. Não impor silenciosamente um único plano ou um novo fluxo de aprovação. |

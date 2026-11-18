@@ -62,7 +62,31 @@ export interface NapneCase {
   openedAt: string;
   closedAt: string | null;
   responsible: string;
+  responsibleId: number;
   summary: string | null;
+  version: number;
+}
+
+export interface CaseResponsibleCandidate {
+  id: number;
+  name: string;
+}
+
+export interface CaseHistoryView {
+  id: number;
+  caseId: number;
+  version: number;
+  type: 'OPENED' | 'STAGE_CHANGED' | 'RESPONSIBLE_CHANGED';
+  fromStage: string | null;
+  toStage: string | null;
+  fromResponsibleId: number | null;
+  fromResponsible: string | null;
+  toResponsibleId: number | null;
+  toResponsible: string | null;
+  actorId: number;
+  actor: string;
+  occurredAt: string;
+  reason: string | null;
 }
 
 export interface CareRecordRevision {
