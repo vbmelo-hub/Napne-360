@@ -20,8 +20,10 @@ export class ApiService {
   cases(id: number) { return this.http.get<NapneCase[]>(`/api/v1/students/${id}/cases`); }
   createCase(id: number, value: object) { return this.http.post<NapneCase>(`/api/v1/students/${id}/cases`, value); }
   getCase(id: number) { return this.http.get<NapneCase>(`/api/v1/cases/${id}`); }
-  changeCaseStage(id: number, stage: string, summary: string | null, version: number) {
-    return this.http.patch<NapneCase>(`/api/v1/cases/${id}/stage`, {stage, summary, version});
+  changeCaseStage(id: number, stage: string, summary: string | null, version: number, reason?: string) {
+    return this.http.patch<NapneCase>(`/api/v1/cases/${id}/stage`, {
+      stage, summary, version, ...(reason === undefined ? {} : {reason})
+    });
   }
   caseResponsibleCandidates(id: number) {
     return this.http.get<CaseResponsibleCandidate[]>(`/api/v1/cases/${id}/responsible-candidates`);

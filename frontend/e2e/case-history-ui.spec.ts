@@ -113,4 +113,47 @@ test('NAPNE abre o caso, mantém rascunhos no conflito e consulta as revisões p
     await expect(otherCard.getByRole('listitem')).toContainText('Abertura · Versão ' + other.version);
     await expect(otherCard.getByText('Motivo: ' + reason, { exact: true })).toHaveCount(0);
   });
+
+  await test.step('reabrir com motivo e manter o caso arquivado disponível para consulta', async () => {
+    const nextStage = card.getByRole('combobox', { name: 'Próxima etapa', exact: true });
+    const register = card.getByRole('button', { name: 'Registrar etapa', exact: true });
+    const dialog = page.getByRole('alertdialog', { name: 'Registrar mudança de etapa?', exact: true });
+    const saveStage = async () => {
+      await register.click();
+      const saved = responseFor('PATCH', casePath + '/stage');
+      await dialog.getByRole('button', { name: 'Registrar etapa', exact: true }).click();
+      const response = await saved;
+      expect(response.status()).toBe(200);
+      return { value: await response.json() as CaseView, body: response.request().postDataJSON() };
+    };
+
+    await nextStage.selectOption('CLOSED');
+    const { value: firstClosure } = await saveStage();
+    expect(firstClosure.closedAt).toEqual(expect.any(String));
+    await expect(nextStage.locator('option:not([value=""])')).toHaveCount(2);
+    await nextStage.selectOption('SCREENING');
+    await expect(register).toBeDisabled();
+    const reopenReason = ('TEST-REOPEN-REASON-UI-' + fixture.key + ' ').padEnd(500, 'x');
+    const reopenField = card.getByLabel('Motivo da reabertura', { exact: true });
+    await reopenField.fill(reopenReason + 'x');
+    await expect(register).toBeDisabled();
+    await expect(card.getByRole('status')).toHaveText('O motivo deve ter até 500 caracteres.');
+    await reopenField.fill('  ' + reopenReason + '  ');
+    const reopened = await saveStage();
+    expect(reopened.body).toEqual({ stage: 'SCREENING', summary, version: firstClosure.version, reason: reopenReason });
+    expect(reopened.value).toMatchObject({ closedAt: null, responsibleId: recipient.id });
+    await expect(card.getByText('Motivo: ' + reopenReason, { exact: true })).toBeVisible();
+
+    await nextStage.selectOption('CLOSED');
+    const { value: closed } = await saveStage();
+    await nextStage.selectOption('ARCHIVED');
+    const archived = await saveStage();
+    expect(archived.body).toEqual({ stage: 'ARCHIVED', summary, version: closed.version });
+    expect(archived.value.closedAt).toBe(closed.closedAt);
+    await expect(nextStage).toHaveCount(0);
+    await expect(register).toHaveCount(0);
+    await expect(card.getByRole('button', { name: 'Transferir responsabilidade', exact: true })).toHaveCount(0);
+    await expect(card.getByRole('heading', { name: 'Histórico do caso', exact: true })).toBeVisible();
+    await expect(card.getByRole('listitem').first()).toContainText('Encerrado → Arquivado');
+  });
 });

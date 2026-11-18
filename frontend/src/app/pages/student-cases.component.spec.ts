@@ -10,16 +10,20 @@ describe('Casos no acompanhamento do estudante', () => {
   const currentCase = {
     id: 50, studentId: 1, stage: 'RECEIVED', source: 'Encaminhamento fictício',
     openedAt: '2026-11-17T12:00:00Z', closedAt: null, responsible: 'Pessoa inicial',
-    responsibleId: 2, summary: 'Resumo fictício', version: 0
+    responsibleId: 2, summary: 'Resumo fictício', version: 0, allowedNextStages: ['SCREENING', 'CLOSED']
   };
   const otherCase = {
     ...currentCase, id: 51, source: 'Segundo caso fictício', responsible: 'Outro responsável',
-    stage: 'ARCHIVED', closedAt: '2026-11-18T12:00:00Z'
+    stage: 'ARCHIVED', closedAt: '2026-11-18T12:00:00Z', allowedNextStages: []
+  };
+  const closedCase = {
+    ...currentCase, stage: 'CLOSED', closedAt: '2026-11-18T12:00:00Z',
+    version: 2, allowedNextStages: ['SCREENING', 'ARCHIVED']
   };
   let fixture: ComponentFixture<StudentDetailComponent>;
   let http: HttpTestingController;
 
-  function setup(role = 'NAPNE') {
+  function setup(role = 'NAPNE', firstCase: typeof currentCase | typeof closedCase = currentCase) {
     sessionStorage.setItem('napne360.session', JSON.stringify({
       token: 'token', id: 2, name: 'Pessoa inicial', email: 'napne@example.test',
       campusId: 1, roles: [role]
@@ -37,7 +41,7 @@ describe('Casos no acompanhamento do estudante', () => {
       familyContext: {}, schoolHistory: {}, strengths: {}, difficulties: {},
       initialInterventions: {}, version: 0, redacted: role !== 'NAPNE'
     });
-    http.expectOne(studentUrl + '/cases').flush(role === 'NAPNE' ? [currentCase, otherCase] : []);
+    http.expectOne(studentUrl + '/cases').flush(role === 'NAPNE' ? [firstCase, otherCase] : []);
     for (const resource of ['records', 'peis', 'attachments']) {
       http.expectOne(studentUrl + '/' + resource).flush([]);
     }
@@ -115,10 +119,103 @@ describe('Casos no acompanhamento do estudante', () => {
     expect(patch.request.body).toEqual({ stage: 'SCREENING', summary: 'Resumo fictício', version: 0 });
     expect(stage.matches(':disabled')).toBeTrue();
     expect(button(card, 'Registrar etapa').matches(':disabled')).toBeTrue();
-    patch.flush({ ...currentCase, stage: 'SCREENING', version: 1 });
+    patch.flush({ ...currentCase, stage: 'SCREENING', allowedNextStages: ['RECEIVED', 'CLOSED'], version: 1 });
     http.expectOne(studentUrl + '/timeline?limit=100').flush([]);
     fixture.detectChanges();
     expect(card.textContent).toContain('Versão 1');
+  });
+
+  it('oferece apenas as próximas etapas informadas pela API', () => {
+    setup();
+    const [card] = openCases();
+    expect(Array.from(card.querySelectorAll<HTMLOptionElement>('select option'), option => option.value).filter(Boolean))
+      .toEqual(currentCase.allowedNextStages);
+    expect(button(card, 'Registrar etapa').disabled).toBeTrue();
+  });
+
+  it('exige motivo normalizado ao reabrir e limpa o rascunho após sucesso', () => {
+    setup('NAPNE', closedCase);
+    const [card] = openCases();
+    expect(Array.from(card.querySelectorAll<HTMLOptionElement>('select option'), option => option.value).filter(Boolean))
+      .toEqual(closedCase.allowedNextStages);
+    expect(card.querySelector('textarea')).toBeNull();
+    field<HTMLSelectElement>(card, 'select', 'SCREENING');
+    expect(button(card, 'Registrar etapa').disabled).toBeTrue();
+    field<HTMLTextAreaElement>(card, 'textarea', '   ');
+    expect(button(card, 'Registrar etapa').disabled).toBeTrue();
+    field<HTMLTextAreaElement>(card, 'textarea', 'x'.repeat(501));
+    expect(button(card, 'Registrar etapa').disabled).toBeTrue();
+    expect(card.textContent).toContain('O motivo deve ter até 500 caracteres.');
+    const normalizedReason = 'x'.repeat(500);
+    const reason = field<HTMLTextAreaElement>(card, 'textarea', '  ' + normalizedReason + '  ');
+    expect(reason.maxLength).toBe(-1);
+    click(card, 'Registrar etapa');
+    click(fixture.nativeElement.querySelector('[role="alertdialog"]'), 'Registrar etapa');
+    const patch = http.expectOne(caseUrl + '/stage');
+    expect(patch.request.body).toEqual({
+      stage: 'SCREENING', summary: closedCase.summary, version: 2, reason: normalizedReason
+    });
+    expect(reason.matches(':disabled')).toBeTrue();
+    patch.flush({ ...currentCase, stage: 'SCREENING', allowedNextStages: ['RECEIVED', 'CLOSED'], version: 3 });
+    http.expectOne(studentUrl + '/timeline?limit=100').flush([]);
+    fixture.detectChanges();
+    expect(card.querySelector('textarea')).toBeNull();
+    expect(card.textContent).toContain('Versão 3');
+  });
+
+  it('recupera o motivo após erro e conflito se a reabertura continua disponível', () => {
+    setup('NAPNE', closedCase);
+    const [card] = openCases();
+    field<HTMLSelectElement>(card, 'select', 'SCREENING');
+    const reason = field<HTMLTextAreaElement>(card, 'textarea', 'Motivo de reabertura');
+    const submit = () => {
+      click(card, 'Registrar etapa');
+      click(fixture.nativeElement.querySelector('[role="alertdialog"]'), 'Registrar etapa');
+      return http.expectOne(caseUrl + '/stage');
+    };
+    submit().flush(null, { status: 400, statusText: 'Bad Request' });
+    fixture.detectChanges();
+    expect(reason.value).toBe('Motivo de reabertura');
+    submit().flush(null, { status: 409, statusText: 'Conflict' });
+    fixture.detectChanges();
+    expect(reason.value).toBe('Motivo de reabertura');
+    expect(button(card, 'Registrar etapa').disabled).toBeTrue();
+    click(card, 'Sincronizar caso');
+    http.expectOne(caseUrl).flush({ ...closedCase, version: 3 });
+    fixture.detectChanges();
+    expect(reason.value).toBe('Motivo de reabertura');
+    const retry = submit();
+    expect(retry.request.body).toEqual({
+      stage: 'SCREENING', summary: closedCase.summary, version: 3, reason: 'Motivo de reabertura'
+    });
+    retry.flush(null, { status: 409, statusText: 'Conflict' });
+    fixture.detectChanges();
+    click(card, 'Sincronizar caso');
+    http.expectOne(caseUrl).flush({ ...otherCase, id: 50, version: 4 });
+    fixture.detectChanges();
+    expect(card.querySelector('select, textarea')).toBeNull();
+    expect(card.textContent).not.toContain('Registrar etapa');
+    expect(card.textContent).toContain('Consultar histórico');
+  });
+
+  it('descarta o motivo ao mudar de operação e arquiva sem enviá-lo', () => {
+    setup('NAPNE', closedCase);
+    const [card] = openCases();
+    field<HTMLSelectElement>(card, 'select', 'SCREENING');
+    field<HTMLTextAreaElement>(card, 'textarea', 'Rascunho de outra operação');
+    field<HTMLSelectElement>(card, 'select', 'ARCHIVED');
+    expect(card.querySelector('textarea')).toBeNull();
+    field<HTMLSelectElement>(card, 'select', 'SCREENING');
+    expect(card.querySelector('textarea')?.value).toBe('');
+    field<HTMLSelectElement>(card, 'select', 'ARCHIVED');
+    click(card, 'Registrar etapa');
+    click(fixture.nativeElement.querySelector('[role="alertdialog"]'), 'Registrar etapa');
+    const patch = http.expectOne(caseUrl + '/stage');
+    expect(patch.request.body).toEqual({ stage: 'ARCHIVED', summary: closedCase.summary, version: 2 });
+    patch.flush({ ...closedCase, stage: 'ARCHIVED', version: 3, allowedNextStages: [] });
+    http.expectOne(studentUrl + '/timeline?limit=100').flush([]);
+    fixture.detectChanges();
+    expect(card.querySelector('select, textarea')).toBeNull();
   });
 
   it('transfere com candidatos sob demanda e aplica resposta atrasada apenas ao caso de origem', () => {
@@ -171,7 +268,7 @@ describe('Casos no acompanhamento do estudante', () => {
     click(card, 'Sincronizar caso');
     const sync = http.expectOne(caseUrl);
     expect(sync.request.method).toBe('GET');
-    sync.flush({ ...currentCase, stage: 'SCREENING', version: 2 });
+    sync.flush({ ...currentCase, stage: 'SCREENING', allowedNextStages: ['RECEIVED', 'CLOSED'], version: 2 });
     fixture.detectChanges();
     expect(candidate.value).toBe('7');
     expect(reason.value).toBe('Motivo preservado');
@@ -181,7 +278,7 @@ describe('Casos no acompanhamento do estudante', () => {
     click(card, 'Confirmar transferência');
     const retry = http.expectOne(caseUrl + '/responsible');
     expect(retry.request.body).toEqual({ responsibleId: 7, version: 2, reason: 'Motivo preservado' });
-    retry.flush({ ...currentCase, stage: 'SCREENING', version: 3, responsibleId: 7, responsible: 'Pessoa elegível' });
+    retry.flush({ ...currentCase, stage: 'SCREENING', allowedNextStages: ['RECEIVED', 'CLOSED'], version: 3, responsibleId: 7, responsible: 'Pessoa elegível' });
     http.expectOne(studentUrl + '/timeline?limit=100').flush([]);
   });
 
@@ -191,7 +288,7 @@ describe('Casos no acompanhamento do estudante', () => {
     field<HTMLSelectElement>(card, 'select', 'SCREENING');
     click(card, 'Registrar etapa');
     click(fixture.nativeElement.querySelector('[role="alertdialog"]'), 'Registrar etapa');
-    http.expectOne(caseUrl + '/stage').flush({ ...currentCase, stage: 'SCREENING', version: 1 });
+    http.expectOne(caseUrl + '/stage').flush({ ...currentCase, stage: 'SCREENING', allowedNextStages: ['RECEIVED', 'CLOSED'], version: 1 });
     const refresh = http.expectOne(studentUrl + '/timeline?limit=100');
 
     click(fixture.nativeElement, 'Linha do tempo');
@@ -235,6 +332,8 @@ describe('Casos no acompanhamento do estudante', () => {
     setup();
     const [, card] = openCases();
     expect(card.textContent).not.toContain('Transferir responsabilidade');
+    expect(card.textContent).not.toContain('Registrar etapa');
+    expect(card.querySelector('select, textarea')).toBeNull();
     const path = '/api/v1/cases/51/history';
     click(card, 'Consultar histórico');
     const first = http.expectOne(path + '?page=0&size=20');

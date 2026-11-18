@@ -26,6 +26,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.security.access.AccessDeniedException;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -65,17 +66,30 @@ public class CaseService {
         NapneCase value = requireCase(caseId);
         requireVersion(value, request.version());
         CaseStage previous = value.getStage();
-        if (previous == request.stage() && Objects.equals(value.getSummary(), request.summary())) return view(value);
+        CaseStage next = request.stage();
+        if (previous == next && Objects.equals(value.getSummary(), request.summary())) return view(value);
+        boolean allowed = previous == next ? previous.isActive() : previous.allowedNextStages().contains(next);
+        if (!allowed) throw new IllegalArgumentException("A alteração não é permitida nesta etapa do caso.");
+
+        String reason = null;
+        if (previous == CaseStage.CLOSED && next == CaseStage.SCREENING) {
+            reason = trimReopenReason(request.reason());
+            if (reason.isEmpty() || reason.length() > 500)
+                throw new IllegalArgumentException("Informe um motivo de reabertura de até 500 caracteres.");
+        }
+
         UserAccount user = currentUser.require();
-        value.setStage(request.stage());
+        // MySQL stores both case and history timestamps with microsecond precision.
+        Instant occurredAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        value.setStage(next);
         value.setSummary(request.summary());
-        if (request.stage() == CaseStage.CLOSED || request.stage() == CaseStage.ARCHIVED) value.setClosedAt(Instant.now());
-        else value.setClosedAt(null);
+        if (next == CaseStage.CLOSED) value.setClosedAt(occurredAt);
+        else if (next.isActive()) value.setClosedAt(null);
         value = cases.saveAndFlush(value);
-        recordHistory(value, CaseHistory.Type.STAGE_CHANGED, previous, value.getResponsible(), user, Instant.now(), null);
+        recordHistory(value, CaseHistory.Type.STAGE_CHANGED, previous, value.getResponsible(), user, occurredAt, reason);
         timeline.append(value.getStudent().getId(), "CASE_STAGE_CHANGED", "Etapa do caso atualizada", user.getName(),
-                TimelineVisibility.RESTRICTED, Map.of("caseId", value.getId(), "from", previous.name(), "to", request.stage().name()));
-        audit.record(auth, http, "UPDATE_STAGE", "NAPNE_CASE", value.getId(), "SUCCESS", previous + " -> " + request.stage());
+                TimelineVisibility.RESTRICTED, Map.of("caseId", value.getId(), "from", previous.name(), "to", next.name()));
+        audit.record(auth, http, "UPDATE_STAGE", "NAPNE_CASE", value.getId(), "SUCCESS", previous + " -> " + next);
         return view(value);
     }
 
@@ -98,7 +112,7 @@ public class CaseService {
     public CaseView transfer(Long caseId, ResponsibleRequest request, Authentication auth, HttpServletRequest http) {
         NapneCase value = requireCase(caseId);
         requireVersion(value, request.version());
-        if (value.getStage() == CaseStage.CLOSED || value.getStage() == CaseStage.ARCHIVED)
+        if (!value.getStage().isActive())
             throw new ConflictException("Não é possível transferir um caso encerrado ou arquivado.");
         if (request.responsibleId() == null || request.responsibleId() <= 0)
             throw new IllegalArgumentException("Responsável inválido.");
@@ -130,6 +144,20 @@ public class CaseService {
                 values.getTotalElements(), values.getTotalPages(), values.getNumber(), values.getSize());
     }
 
+    private static String trimReopenReason(String reason) {
+        if (reason == null) return "";
+        int start = 0;
+        int end = reason.length();
+        while (start < end && isTrimSpace(reason.charAt(start))) start++;
+        while (end > start && isTrimSpace(reason.charAt(end - 1))) end--;
+        return reason.substring(start, end);
+    }
+
+    private static boolean isTrimSpace(char value) {
+        // Match String.trim() in the browser, including non-breaking spaces and the BOM.
+        return Character.isSpaceChar(value) || (value >= '\t' && value <= '\r') || value == '\uFEFF';
+    }
+
     private NapneCase requireCase(Long caseId) {
         NapneCase value = cases.findById(caseId).orElseThrow(() -> new NotFoundException("Caso não encontrado."));
         requireCampusAccess(value.getStudent().getId());
@@ -156,12 +184,13 @@ public class CaseService {
 
     private CaseView view(NapneCase value) {
         return new CaseView(value.getId(), value.getStudent().getId(), value.getStage(), value.getSource(), value.getOpenedAt(),
-                value.getClosedAt(), value.getResponsible().getId(), value.getResponsible().getName(), value.getSummary(), value.getVersion());
+                value.getClosedAt(), value.getResponsible().getId(), value.getResponsible().getName(), value.getSummary(), value.getVersion(),
+                value.getStage().allowedNextStages());
     }
 
     public record CaseRequest(@NotBlank String source, String summary) {}
     public record CaseStageRequest(@NotNull CaseStage stage, String summary,
-                                   @JsonDeserialize(using = ReferenceIdDeserializer.class) Long version) {}
+                                   @JsonDeserialize(using = ReferenceIdDeserializer.class) Long version, String reason) {}
     public record ResponsibleRequest(@JsonDeserialize(using = ReferenceIdDeserializer.class) Long responsibleId,
                                      @JsonDeserialize(using = ReferenceIdDeserializer.class) Long version, @Size(max = 500) String reason) {}
     public record ResponsibleCandidate(Long id, String name) {}
@@ -170,5 +199,5 @@ public class CaseService {
                                   Long actorId, String actor, Instant occurredAt, String reason) {}
     public record HistoryPage(List<CaseHistoryView> content, long totalElements, int totalPages, int number, int size) {}
     public record CaseView(Long id, Long studentId, CaseStage stage, String source, Instant openedAt, Instant closedAt,
-                           Long responsibleId, String responsible, String summary, long version) {}
+                           Long responsibleId, String responsible, String summary, long version, List<CaseStage> allowedNextStages) {}
 }

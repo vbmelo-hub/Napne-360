@@ -58,6 +58,7 @@ export interface NapneCase {
   id: number;
   studentId: number;
   stage: string;
+  allowedNextStages: string[];
   source: string;
   openedAt: string;
   closedAt: string | null;

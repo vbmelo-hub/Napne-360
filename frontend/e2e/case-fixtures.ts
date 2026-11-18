@@ -14,6 +14,7 @@ export type CaseView = {
   responsible: string;
   version: number;
   stage: string;
+  allowedNextStages: string[];
   openedAt: string;
   closedAt: string | null;
 };

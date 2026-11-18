@@ -60,9 +60,9 @@ test('API de casos restringe transferências e registra revisões concorrentes e
     request.patch('/api/v1' + endpoint, { headers: auth, data });
   const transfer = (responsibleId: number, version: number, auth = headers, note?: string) =>
     patch(casePath + '/responsible', { responsibleId, version, reason: note }, auth);
-  const stage = (current: CaseView, nextStage: string, auth = headers) =>
+  const stage = (current: CaseView, nextStage: string, auth = headers, reason?: string) =>
     apiJson<CaseView>(request, '/cases/' + current.id + '/stage', {
-      method: 'PATCH', headers: auth, data: { stage: nextStage, summary: current.summary, version: current.version }
+      method: 'PATCH', headers: auth, data: { stage: nextStage, summary: current.summary, version: current.version, reason }
     });
 
   await test.step('validar elegibilidade, escopo de leitura e recusas sem efeitos', async () => {
@@ -204,10 +204,38 @@ test('API de casos restringe transferências e registra revisões concorrentes e
   });
 
   await test.step('consultar o histórico de casos encerrados ou arquivados e recusar novas transferências', async () => {
-    const closed = await stage(current, 'CLOSED');
-    const archived = await stage(other, 'ARCHIVED');
+    for (const active of [current, other]) {
+      expect(active.allowedNextStages).toContain('CLOSED');
+      expect(active.allowedNextStages).not.toContain('ARCHIVED');
+    }
+    const firstClosure = await stage(current, 'CLOSED');
+    expect(firstClosure.allowedNextStages).toEqual(['SCREENING', 'ARCHIVED']);
+    const beforeReopen = await snapshot(casePath, current.id);
+    const reopenReason = 'TEST-REOPEN-REASON-' + fixture.key;
+    const reopening = { stage: 'SCREENING', summary: firstClosure.summary, version: firstClosure.version };
+    expect((await patch(casePath + '/stage', { ...reopening, reason: '   ' })).status()).toBe(400);
+    expect((await patch(casePath + '/stage', { ...reopening, reason: reopenReason }, outsider.headers)).status()).toBe(403);
+    expect(await snapshot(casePath, current.id)).toEqual(beforeReopen);
+
+    const reopened = await stage(firstClosure, 'SCREENING', second.headers, '  ' + reopenReason + '  ');
+    expect(reopened).toMatchObject({ stage: 'SCREENING', version: firstClosure.version + 1, closedAt: null,
+      summary: current.summary, responsibleId: current.responsibleId });
+    expect((await history()).content[0]).toMatchObject({
+      fromStage: 'CLOSED', toStage: 'SCREENING', reason: reopenReason, actorId: second.id
+    });
+    expect(JSON.stringify(await timeline())).not.toContain(reopenReason);
+    expect(JSON.stringify(await audit(current.id))).not.toContain(reopenReason);
+
+    const closed = await stage(reopened, 'CLOSED');
+    const otherClosed = await stage(other, 'CLOSED');
+    const archived = await stage(otherClosed, 'ARCHIVED');
+    expect(archived.closedAt).toBe(otherClosed.closedAt);
+    expect(archived.allowedNextStages).toEqual([]);
     const beforeClosed = await snapshot(casePath, closed.id);
     const beforeArchived = await snapshot(otherPath, archived.id);
+    expect((await patch(otherPath + '/stage', {
+      stage: 'SCREENING', summary: archived.summary, version: archived.version, reason: reopenReason
+    })).status()).toBe(400);
     for (const [state, before] of [[closed, beforeClosed], [archived, beforeArchived]] as const) {
       const endpoint = '/cases/' + state.id;
       expect(state.closedAt).toEqual(expect.any(String));

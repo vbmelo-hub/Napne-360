@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -32,6 +33,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -167,7 +169,131 @@ class CaseControllerIntegrationTest {
         var closed = snapshot(); clearInvocations(timeline, audit);
         perform(patch(stagePath()).content(stageBody("CLOSED", "Resumo", 1)), actor).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1));
         assertThat(snapshot()).isEqualTo(closed); assertThat(historyCount()).isEqualTo(1); verifyNoInteractions(timeline, audit);
-        perform(patch(stagePath()).content(stageBody("RECEIVED", "Resumo", 1)), actor).andExpect(status().isOk()).andExpect(jsonPath("$.closedAt").isEmpty());
+    }
+
+    @ParameterizedTest @EnumSource(CaseStage.class)
+    void exposesOnlyAllowedDestinationsForEveryStage(CaseStage stage) throws Exception {
+        legacy.setStage(stage);
+        cases.saveAndFlush(legacy);
+        var active = List.of("RECEIVED", "SCREENING", "WELCOMING", "CASE_STUDY", "GUIDANCE_ISSUED",
+                "ACTION_PLAN", "PEI", "FOLLOW_UP", "CLOSED");
+        List<String> expected = switch (stage) {
+            case CLOSED -> List.of("SCREENING", "ARCHIVED");
+            case ARCHIVED -> List.of();
+            default -> active.stream().filter(next -> !stage.name().equals(next)).toList();
+        };
+        perform(get("/api/v1/cases/" + legacy.getId()), actor).andExpect(status().isOk())
+                .andExpect(jsonPath("$.allowedNextStages").value(is(expected)));
+        perform(get("/api/v1/students/" + student.getId() + "/cases"), actor).andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].allowedNextStages").value(is(expected)));
+    }
+
+    @Test void activeStagesCanAdvanceAndReturnButCannotArchiveDirectly() throws Exception {
+        var before = snapshot();
+        perform(patch(stagePath()).content(stageBody("ARCHIVED", "Resumo reservado", 0)), actor)
+                .andExpect(status().isBadRequest());
+        assertThat(snapshot()).isEqualTo(before);
+        assertThat(historyCount()).isZero();
+        verifyNoInteractions(timeline, audit);
+        perform(patch(stagePath()).content(stageBody("FOLLOW_UP", "Resumo reservado", 0)), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1));
+        perform(patch(stagePath()).content(stageBody("RECEIVED", "Resumo reservado", 1)), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(2));
+        assertThat(snapshot().get("STAGE")).isEqualTo("RECEIVED");
+        assertThat(historyCount()).isEqualTo(2);
+    }
+
+    @Test void closesReopensAndArchivesWithClosureDateAndRestrictedHistory() throws Exception {
+        closeCase();
+        clearInvocations(timeline, audit);
+        String reason = "R".repeat(500);
+        perform(patch(stagePath()).content(stageBody("SCREENING", "Resumo reservado", 1, "  \u00A0" + reason + "\uFEFF  ")), candidate)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.stage").value("SCREENING"))
+                .andExpect(jsonPath("$.closedAt").isEmpty()).andExpect(jsonPath("$.version").value(2))
+                .andExpect(jsonPath("$.summary").value("Resumo reservado"))
+                .andExpect(jsonPath("$.responsibleId").value(actor.getId()))
+                .andExpect(jsonPath("$.reason").doesNotHaveJsonPath());
+        assertThat(snapshot().get("CLOSED_AT")).isNull();
+        JsonNode reopened = history(legacy.getId(), 0, 20).get("content").get(0);
+        assertThat(reopened.get("type").asText()).isEqualTo("STAGE_CHANGED");
+        assertThat(reopened.get("version").asInt()).isEqualTo(2);
+        assertThat(reopened.get("fromStage").asText()).isEqualTo("CLOSED");
+        assertThat(reopened.get("toStage").asText()).isEqualTo("SCREENING");
+        assertThat(reopened.get("actorId").asLong()).isEqualTo(candidate.getId());
+        assertThat(reopened.get("fromResponsibleId").asLong()).isEqualTo(actor.getId());
+        assertThat(reopened.get("toResponsibleId").asLong()).isEqualTo(actor.getId());
+        assertThat(reopened.get("reason").asText()).isEqualTo(reason);
+        verify(timeline).append(eq(student.getId()), eq("CASE_STAGE_CHANGED"), anyString(), eq(candidate.getName()),
+                eq(TimelineVisibility.RESTRICTED), eq(Map.of("caseId", legacy.getId(), "from", "CLOSED", "to", "SCREENING")));
+        verify(audit).record(any(), any(), eq("UPDATE_STAGE"), eq("NAPNE_CASE"), eq(legacy.getId()), eq("SUCCESS"), eq("CLOSED -> SCREENING"));
+
+        perform(patch(stagePath()).content(stageBody("CLOSED", "Resumo reservado", 2)), actor).andExpect(status().isOk());
+        var closed = snapshot();
+        perform(patch(stagePath()).content(stageBody("ARCHIVED", "Resumo reservado", 3, "Motivo fora da reabertura")), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.stage").value("ARCHIVED"))
+                .andExpect(jsonPath("$.version").value(4)).andExpect(jsonPath("$.allowedNextStages").isEmpty());
+        var archived = snapshot();
+        assertThat(archived.get("CLOSED_AT")).isNotNull().isEqualTo(closed.get("CLOSED_AT"));
+        assertThat(archived.get("RESPONSIBLE_USER_ID")).isEqualTo(closed.get("RESPONSIBLE_USER_ID"));
+        JsonNode archive = history(legacy.getId(), 0, 20).get("content").get(0);
+        assertThat(archive.get("toStage").asText()).isEqualTo("ARCHIVED");
+        assertThat(archive.get("reason").isNull()).isTrue();
+        assertThat(archive.get("occurredAt").asText()).isNotBlank();
+        assertThat(historyCount()).isEqualTo(4);
+    }
+
+    @ParameterizedTest @NullSource @ValueSource(strings = {"", "  \t\n", "\u00A0", "TOO_LONG"})
+    void reopeningRejectsInvalidReasonsWithoutEffects(String reason) throws Exception {
+        closeCase();
+        var before = snapshot();
+        perform(patch(stagePath()).content(stageBody("SCREENING", "Resumo reservado", 1,
+                "TOO_LONG".equals(reason) ? "R".repeat(501) : reason)), actor).andExpect(status().isBadRequest());
+        assertThat(snapshot()).isEqualTo(before);
+        assertThat(historyCount()).isEqualTo(1);
+        verifyNoInteractions(timeline, audit);
+    }
+
+    @Test void closedRejectsOtherActiveDestinationsSummaryOnlyAndUnauthorizedReopening() throws Exception {
+        closeCase();
+        var before = snapshot();
+        var otherCampus = campuses.saveAndFlush(Campus.builder().name("Outro campus").code(token + "-2").build());
+        var otherNapne = account("NAPNE de outro campus", otherCampus, true, Set.of(RoleName.NAPNE));
+        for (CaseStage target : CaseStage.values()) {
+            if (target == CaseStage.SCREENING || target == CaseStage.ARCHIVED) continue;
+            perform(patch(stagePath()).content(stageBody(target.name(), "Resumo alterado", 1, "Motivo fictício")), actor)
+                    .andExpect(status().isBadRequest());
+        }
+        perform(patch(stagePath()).content(stageBody("SCREENING", "Resumo reservado", 1, "Motivo fictício")), otherNapne)
+                .andExpect(status().isForbidden());
+        perform(patch(stagePath()).content(stageBody("SCREENING", "Resumo reservado", 0, "Motivo fictício")), actor)
+                .andExpect(status().isConflict());
+        assertThat(snapshot()).isEqualTo(before);
+        assertThat(historyCount()).isEqualTo(1);
+        verifyNoInteractions(timeline, audit);
+    }
+
+    @Test void archivedAllowsConsultationAndExactNoOpButRejectsMutations() throws Exception {
+        closeCase();
+        perform(patch(stagePath()).content(stageBody("ARCHIVED", "Resumo reservado", 1)), actor).andExpect(status().isOk());
+        var before = snapshot();
+        clearInvocations(timeline, audit);
+        for (CaseStage target : CaseStage.values()) {
+            perform(patch(stagePath()).content(stageBody(target.name(), "Resumo alterado", 2, "Motivo fictício")), actor)
+                    .andExpect(status().isBadRequest());
+        }
+        perform(patch(stagePath()).content(stageBody("ARCHIVED", "Resumo reservado", 2)), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(2));
+        perform(get("/api/v1/cases/" + legacy.getId()), actor).andExpect(status().isOk())
+                .andExpect(jsonPath("$.stage").value("ARCHIVED"));
+        assertThat(history(legacy.getId(), 0, 20).get("totalElements").asInt()).isEqualTo(2);
+        assertThat(snapshot()).isEqualTo(before);
+        verifyNoInteractions(timeline, audit);
+    }
+
+    private void closeCase() throws Exception {
+        perform(patch(stagePath()).content(stageBody("CLOSED", "Resumo reservado", 0)), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.closedAt").isNotEmpty());
+        clearInvocations(timeline, audit);
     }
 
     @Test void changingOnlySummaryCreatesRevisionWithOnlyMetadataInGeneralEvent() throws Exception {
@@ -271,7 +397,11 @@ class CaseControllerIntegrationTest {
     private String stagePath() { return "/api/v1/cases/" + legacy.getId() + "/stage"; }
     private String responsiblePath() { return "/api/v1/cases/" + legacy.getId() + "/responsible"; }
     private String stageBody(String stage, String summary, long version) {
+        return stageBody(stage, summary, version, null);
+    }
+    private String stageBody(String stage, String summary, long version, String reason) {
         var body = json.createObjectNode().put("stage", stage).put("version", version);
+        if (reason != null) body.put("reason", reason);
         if (summary == null) body.putNull("summary"); else body.put("summary", summary);
         return body.toString();
     }

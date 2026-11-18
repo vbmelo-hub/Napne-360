@@ -27,16 +27,29 @@ import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
       </div>
 
       <div class="case-action">
-        <label>
-          Próxima etapa
-          <select [disabled]="changesBlocked()" (change)="nextStage.set($any($event.target).value)">
-            @for (stage of stages; track stage) {
-              <option [value]="stage" [selected]="stage === selectedStage()">{{label(stage)}}</option>
+        @if (item().allowedNextStages.length) {
+          <label>
+            Próxima etapa
+            <select #stageSelect [disabled]="changesBlocked()" (change)="selectStage(stageSelect.value)">
+              <option value="" [selected]="!selectedStage()">Selecione</option>
+              @for (stage of item().allowedNextStages; track stage) {
+                <option [value]="stage" [selected]="stage === selectedStage()">{{label(stage)}}</option>
+              }
+            </select>
+          </label>
+          @if (reopening()) {
+            <label>
+              Motivo da reabertura
+              <textarea #reasonInput required [disabled]="changesBlocked()" [attr.aria-invalid]="reopenReasonTooLong()"
+                [value]="reopenReason()" (input)="reopenReason.set(reasonInput.value)"></textarea>
+            </label>
+            @if (reopenReasonTooLong()) {
+              <small role="status">O motivo deve ter até 500 caracteres.</small>
             }
-          </select>
-        </label>
-        <button type="button" class="secondary" [disabled]="changesBlocked() || selectedStage() === item().stage"
-          (click)="confirmStageOpen.set(true)">Registrar etapa</button>
+          }
+          <button type="button" class="secondary" [disabled]="changesBlocked() || !validStage()"
+            (click)="confirmStageOpen.set(true)">Registrar etapa</button>
+        }
         @if (canTransfer() && !transferOpen()) {
           <button type="button" class="secondary" [disabled]="changesBlocked()"
             (click)="openTransfer()">Transferir responsabilidade</button>
@@ -180,8 +193,6 @@ export class CaseCardComponent {
   readonly item = input.required<NapneCase>();
   readonly caseUpdated = output<{value: NapneCase; mutated: boolean}>();
 
-  readonly stages = ['RECEIVED', 'SCREENING', 'WELCOMING', 'CASE_STUDY', 'GUIDANCE_ISSUED',
-    'ACTION_PLAN', 'PEI', 'FOLLOW_UP', 'CLOSED', 'ARCHIVED'];
   readonly label = labelFor;
   readonly tone = toneFor;
   readonly historyLabels: Record<CaseHistoryView['type'], string> = {
@@ -197,8 +208,18 @@ export class CaseCardComponent {
   readonly changesBlocked = computed(() => this.busy() || this.conflict());
 
   readonly confirmStageOpen = signal(false);
-  readonly nextStage = signal<string | null>(null);
-  readonly selectedStage = computed(() => this.nextStage() ?? this.item().stage);
+  private readonly nextStage = signal('');
+  readonly selectedStage = computed(() => {
+    const stage = this.nextStage();
+    return this.item().allowedNextStages.includes(stage) ? stage : '';
+  });
+  readonly reopening = computed(() => this.item().stage === 'CLOSED' && this.selectedStage() === 'SCREENING');
+  readonly reopenReason = signal('');
+  private readonly normalizedReopenReason = computed(() => this.reopenReason().trim());
+  readonly reopenReasonTooLong = computed(() => this.normalizedReopenReason().length > 500);
+  readonly validStage = computed(() =>
+    !!this.selectedStage() && (!this.reopening() || (!!this.normalizedReopenReason() && !this.reopenReasonTooLong()))
+  );
   readonly stageDescription = computed(() =>
     `O caso será alterado de ${labelFor(this.item().stage)} para ${labelFor(this.selectedStage())}. A mudança ficará registrada no histórico.`
   );
@@ -219,13 +240,20 @@ export class CaseCardComponent {
   readonly requestedPage = signal(0);
   readonly historyError = signal('');
 
+  selectStage(stage: string) {
+    if (stage !== this.nextStage()) this.reopenReason.set('');
+    this.nextStage.set(stage);
+  }
+
   changeStage() {
     if (!this.confirmStageOpen()) return;
     this.confirmStageOpen.set(false);
-    if (this.changesBlocked() || this.selectedStage() === this.item().stage) return;
+    if (this.changesBlocked() || !this.validStage()) return;
     const {id, summary, version} = this.item();
+    const reason = this.reopening() ? this.normalizedReopenReason() : undefined;
     this.pending.set('stage');
-    this.mutate(this.api.changeCaseStage(id, this.selectedStage(), summary, version), 'alterar a etapa', 'Etapa registrada no histórico.');
+    this.mutate(this.api.changeCaseStage(id, this.selectedStage(), summary, version, reason),
+      'alterar a etapa', 'Etapa registrada no histórico.');
   }
 
   openTransfer() {
@@ -283,6 +311,9 @@ export class CaseCardComponent {
         this.pending.set(null);
         this.conflict.set(false);
         this.operationError.set('');
+        if (!value.allowedNextStages.includes(this.selectedStage()) ||
+            (this.reopening() && value.stage !== 'CLOSED')) this.selectStage('');
+        this.clearUnavailableTransfer(value);
         this.caseUpdated.emit({value, mutated: false});
         if (this.historyOpen()) this.loadHistory(0);
       },
@@ -316,6 +347,10 @@ export class CaseCardComponent {
     });
   }
 
+  private clearUnavailableTransfer(value: NapneCase) {
+    if (this.transferOpen() && ['CLOSED', 'ARCHIVED'].includes(value.stage)) this.closeTransfer();
+  }
+
   private mutate(request: Observable<NapneCase>, action: string, success: string) {
     this.operationError.set('');
     request.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
@@ -323,7 +358,8 @@ export class CaseCardComponent {
         const operation = this.pending();
         this.pending.set(null);
         if (operation === 'transfer') this.closeTransfer();
-        if (operation === 'stage') this.nextStage.set(null);
+        if (operation === 'stage') this.selectStage('');
+        this.clearUnavailableTransfer(value);
         this.caseUpdated.emit({value, mutated: true});
         this.toast.show(success, 'success');
         if (this.historyOpen()) this.loadHistory(0);
