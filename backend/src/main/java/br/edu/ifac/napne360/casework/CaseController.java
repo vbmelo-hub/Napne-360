@@ -29,10 +29,40 @@ public class CaseController {
 
     @PatchMapping("/cases/{caseId}/stage")
     @PreAuthorize("hasRole('NAPNE')")
-    public CaseService.CaseView changeStage(@PathVariable Long caseId, @Valid @RequestBody CaseService.CaseStageRequest request,
+    public CaseService.CaseView changeStage(@PathVariable String caseId, @Valid @RequestBody CaseService.CaseStageRequest request,
                                             Authentication auth, HttpServletRequest http) {
-        Long studentId = service.studentId(caseId);
-        if (!access.canEditDossier(studentId)) throw new org.springframework.security.access.AccessDeniedException("Access denied");
-        return service.changeStage(caseId, request, auth, http);
+        return service.changeStage(caseId(caseId), request, auth, http);
+    }
+
+    @GetMapping("/cases/{caseId}")
+    @PreAuthorize("hasRole('NAPNE')")
+    public CaseService.CaseView get(@PathVariable String caseId) { return service.get(caseId(caseId)); }
+
+    @GetMapping("/cases/{caseId}/responsible-candidates")
+    @PreAuthorize("hasRole('NAPNE')")
+    public List<CaseService.ResponsibleCandidate> candidates(@PathVariable String caseId) { return service.candidates(caseId(caseId)); }
+
+    @PatchMapping("/cases/{caseId}/responsible")
+    @PreAuthorize("hasRole('NAPNE')")
+    public CaseService.CaseView transfer(@PathVariable String caseId, @Valid @RequestBody CaseService.ResponsibleRequest request,
+                                         Authentication auth, HttpServletRequest http) {
+        return service.transfer(caseId(caseId), request, auth, http);
+    }
+
+    @GetMapping("/cases/{caseId}/history")
+    @PreAuthorize("hasRole('NAPNE')")
+    public CaseService.HistoryPage history(@PathVariable String caseId, @RequestParam(required = false) String page,
+                                           @RequestParam(required = false) String size) {
+        return service.history(caseId(caseId), page == null ? 0 : pageNumber(page), size == null ? 20 : pageNumber(size));
+    }
+
+    private long caseId(String value) {
+        if (!value.matches("[1-9][0-9]*")) throw new IllegalArgumentException("Identificador inválido.");
+        return Long.parseLong(value);
+    }
+
+    private int pageNumber(String value) {
+        if (!value.matches("[0-9]+")) throw new IllegalArgumentException("Paginação inválida.");
+        return Integer.parseInt(value);
     }
 }
