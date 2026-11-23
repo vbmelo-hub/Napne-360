@@ -23,7 +23,25 @@ export class StudentsComponent implements OnInit{
   readonly result=signal<Page<StudentSummary>|null>(null);readonly students=computed(()=>this.result()?.content??[]);readonly totalElements=computed(()=>this.result()?.totalElements??0);readonly totalPages=computed(()=>Math.max(this.result()?.totalPages??1,1));readonly pageNumber=computed(()=>this.result()?.number??0);readonly courses=signal<Course[]>([]);readonly loading=signal(false);readonly saving=signal(false);readonly showForm=signal(false);readonly error=signal('');readonly search=this.fb.nonNullable.control('');readonly label=labelFor;readonly tone=toneFor;
   readonly form=this.fb.group({registration:['',Validators.required],courseId:['',Validators.required],civilName:['',Validators.required],socialName:[''],birthDate:[''],institutionalEmail:['',Validators.email],phone:['']});
   ngOnInit(){this.load(0);if(this.auth.hasRole('NAPNE'))this.api.courses().subscribe({next:v=>this.courses.set(v),error:()=>this.toast.show('Não foi possível carregar os cursos.','error')});}
-  load(page=0){this.loading.set(true);this.error.set('');this.api.students(this.search.value.trim(),page).subscribe({next:p=>{this.result.set(p);this.loading.set(false);},error:e=>{this.loading.set(false);this.error.set(errorMessage(e.status,'carregar os estudantes'));}});}
+  private studentsRequest = 0;
+
+  load(page = 0) {
+    const request = ++this.studentsRequest;
+    this.loading.set(true);
+    this.error.set('');
+    this.api.students(this.search.value.trim(), page).subscribe({
+      next: result => {
+        if (request !== this.studentsRequest) return;
+        this.result.set(result);
+        this.loading.set(false);
+      },
+      error: error => {
+        if (request !== this.studentsRequest) return;
+        this.loading.set(false);
+        this.error.set(errorMessage(error.status, 'carregar os estudantes'));
+      }
+    });
+  }
   searchStudents(){this.load(0)}clearSearch(){this.search.setValue('');this.load(0)}closeForm(){if(!this.saving())this.showForm.set(false)}
   create(){this.form.markAllAsTouched();if(this.form.invalid)return;this.saving.set(true);const raw=this.form.getRawValue();this.api.createStudent({...raw,courseId:Number(raw.courseId),birthDate:raw.birthDate||null}).subscribe({next:()=>{this.form.reset();this.saving.set(false);this.showForm.set(false);this.toast.show('Estudante cadastrado com sucesso.','success');this.load(0);},error:e=>{this.saving.set(false);this.toast.show(errorMessage(e.status,'salvar o estudante'),'error');}})}
   initials(name:string){return name.split(' ').filter(Boolean).slice(0,2).map(v=>v[0]).join('').toUpperCase()}

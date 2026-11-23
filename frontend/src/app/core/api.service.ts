@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Attachment, Campus, CareRecord, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiCreateRequest, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
+import { Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiCreateRequest, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
@@ -19,7 +19,22 @@ export class ApiService {
   dossierHistory(id:number) { return this.http.get<{version:number,fields:Record<string,unknown>,author:string,occurredAt:string}[]>(`/api/v1/students/${id}/dossier/history`); }
   cases(id: number) { return this.http.get<NapneCase[]>(`/api/v1/students/${id}/cases`); }
   createCase(id: number, value: object) { return this.http.post<NapneCase>(`/api/v1/students/${id}/cases`, value); }
-  changeCaseStage(id: number, stage: string, summary: string | null) { return this.http.patch<NapneCase>(`/api/v1/cases/${id}/stage`, {stage, summary}); }
+  getCase(id: number) { return this.http.get<NapneCase>(`/api/v1/cases/${id}`); }
+  changeCaseStage(id: number, stage: string, summary: string | null, version: number, reason?: string) {
+    return this.http.patch<NapneCase>(`/api/v1/cases/${id}/stage`, {
+      stage, summary, version, ...(reason === undefined ? {} : {reason})
+    });
+  }
+  caseResponsibleCandidates(id: number) {
+    return this.http.get<CaseResponsibleCandidate[]>(`/api/v1/cases/${id}/responsible-candidates`);
+  }
+  changeCaseResponsible(id: number, value: {responsibleId: number; version: number; reason?: string | null}) {
+    return this.http.patch<NapneCase>(`/api/v1/cases/${id}/responsible`, value);
+  }
+  caseHistory(id: number, page: number) {
+    const params = new HttpParams().set('page', page).set('size', 20);
+    return this.http.get<Page<CaseHistoryView>>(`/api/v1/cases/${id}/history`, {params});
+  }
   records(id: number) { return this.http.get<CareRecord[]>(`/api/v1/students/${id}/records`); }
   createRecord(id: number, value: object) { return this.http.post<CareRecord>(`/api/v1/students/${id}/records`, value); }
   updateRecord(studentId: number, recordId: string, value: object) { return this.http.put<CareRecord>(`/api/v1/students/${studentId}/records/${recordId}`, value); }
