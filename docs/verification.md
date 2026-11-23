@@ -1,5 +1,7 @@
 # Registro de verificação
 
+Registro da primeira entrega de acompanhamento/upload em 2026-11-17: [evidências e limites](verification/2026-11-17-primeira-entrega.md). A [matriz de aceite priorizada](acceptance-matrix.md) preserva os diagnósticos iniciais; não é uma declaração de homologação integral.
+
 Verificação executada em 11/09/2026 na branch `codex/implementacao-completa-napne-360`, usando dados exclusivamente fictícios.
 
 | Verificação | Resultado |
