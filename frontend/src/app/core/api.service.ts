@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiCreateRequest, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
+import { Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiCreateRequest, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
@@ -76,6 +76,12 @@ export class ApiService {
   setUserRoles(id:number,roles:string[]) { return this.http.put<UserView>(`/api/v1/admin/users/${id}/roles`,{roles}); }
   resetPassword(id:number,password:string) { return this.http.post(`/api/v1/admin/users/${id}/password`,{password}); }
   references(kind:ReferenceKind) { return this.http.get<ReferenceOption[]>('/api/v1/catalog/references',{params:{kind}}); }
+  adminCaseStages() {
+    return this.http.get<CaseStageConfiguration>('/api/v1/admin/case-stages');
+  }
+  updateCaseStages(configuration: CaseStageConfigurationUpdate) {
+    return this.http.put<CaseStageConfiguration>('/api/v1/admin/case-stages', configuration);
+  }
   adminReferences() { return this.http.get<ReferenceEntryAdmin[]>('/api/v1/admin/references'); }
   createReference(value: object) { return this.http.post<ReferenceEntryAdmin>('/api/v1/admin/references', value); }
   updateReference(id: number, value: object) { return this.http.put<ReferenceEntryAdmin>(`/api/v1/admin/references/${id}`, value); }

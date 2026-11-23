@@ -9,6 +9,10 @@ import { errorMessage, labelFor, toneFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 
+function availableStages(item: NapneCase) {
+  return item.stageOptions ?? item.allowedNextStages.map(code => ({ code, label: labelFor(code) }));
+}
+
 @Component({
   selector: 'app-case-card',
   imports: [DatePipe, ReactiveFormsModule, ConfirmDialogComponent],
@@ -16,7 +20,7 @@ import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
   template: `
     <article class="case-card" [attr.aria-labelledby]="'case-' + item().id">
       <div class="case-main">
-        <span [class]="'badge badge--' + tone(item().stage)">{{label(item().stage)}}</span>
+        <span [class]="'badge badge--' + tone(item().stage)">{{currentStageLabel()}}</span>
         <h3 [id]="'case-' + item().id">{{item().source}}</h3>
         <p>{{item().summary || 'Sem resumo informado.'}}</p>
         <small>
@@ -27,13 +31,13 @@ import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
       </div>
 
       <div class="case-action">
-        @if (item().allowedNextStages.length) {
+        @if (stageOptions().length) {
           <label>
             Próxima etapa
             <select #stageSelect [disabled]="changesBlocked()" (change)="selectStage(stageSelect.value)">
               <option value="" [selected]="!selectedStage()">Selecione</option>
-              @for (stage of item().allowedNextStages; track stage) {
-                <option [value]="stage" [selected]="stage === selectedStage()">{{label(stage)}}</option>
+              @for (stage of stageOptions(); track stage.code) {
+                <option [value]="stage.code" [selected]="stage.code === selectedStage()">{{stage.label}}</option>
               }
             </select>
           </label>
@@ -133,10 +137,10 @@ import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
                   <small>{{entry.actor}} · {{entry.occurredAt | date:'dd/MM/yyyy, HH:mm'}}</small>
                   @switch (entry.type) {
                     @case ('OPENED') {
-                      <p>{{label(entry.toStage)}} · Responsável: {{entry.toResponsible}}</p>
+                      <p>{{entry.toStageLabel ?? label(entry.toStage)}} · Responsável: {{entry.toResponsible}}</p>
                     }
                     @case ('STAGE_CHANGED') {
-                      <p>{{label(entry.fromStage)}} → {{label(entry.toStage)}}</p>
+                      <p>{{entry.fromStageLabel ?? label(entry.fromStage)}} → {{entry.toStageLabel ?? label(entry.toStage)}}</p>
                     }
                     @case ('RESPONSIBLE_CHANGED') {
                       <p>{{entry.fromResponsible}} → {{entry.toResponsible}}</p>
@@ -169,10 +173,11 @@ import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
     :host + :host { border-top: 1px solid var(--border); }
     .case-card { display: grid; grid-template-columns: 1fr minmax(13rem,18rem); gap: 1rem 1.5rem; padding: 1.25rem 0; }
     .case-main { min-width: 0; overflow-wrap: anywhere; }
+    .case-main .badge { max-width: 100%; white-space: normal; }
     .case-main h3 { margin: .65rem 0 .25rem; }
     .case-main p { margin-bottom: .6rem; }
     .case-main p, small { color: var(--ink-600); }
-    .case-action { display: grid; align-content: start; gap: .6rem; }
+    .case-action { display: grid; align-content: start; gap: .6rem; min-width: 0; }
     .case-panel { grid-column: 1 / -1; min-width: 0; }
     .case-panel h4 { margin: 0 0 .6rem; }
     .case-panel fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
@@ -182,6 +187,7 @@ import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
     .revisions small { display: block; }
     .revisions p { margin: .25rem 0 0; }
     .history-reason { white-space: pre-wrap; }
+    app-confirm-dialog { overflow-wrap: anywhere; }
     @media (max-width: 700px) { .case-card { grid-template-columns: 1fr; } }
   `]
 })
@@ -209,10 +215,10 @@ export class CaseCardComponent {
 
   readonly confirmStageOpen = signal(false);
   private readonly nextStage = signal('');
-  readonly selectedStage = computed(() => {
-    const stage = this.nextStage();
-    return this.item().allowedNextStages.includes(stage) ? stage : '';
-  });
+  readonly currentStageLabel = computed(() => this.item().stageLabel ?? labelFor(this.item().stage));
+  readonly stageOptions = computed(() => availableStages(this.item()));
+  private readonly selectedOption = computed(() => this.stageOptions().find(stage => stage.code === this.nextStage()));
+  readonly selectedStage = computed(() => this.selectedOption()?.code ?? '');
   readonly reopening = computed(() => this.item().stage === 'CLOSED' && this.selectedStage() === 'SCREENING');
   readonly reopenReason = signal('');
   private readonly normalizedReopenReason = computed(() => this.reopenReason().trim());
@@ -221,7 +227,7 @@ export class CaseCardComponent {
     !!this.selectedStage() && (!this.reopening() || (!!this.normalizedReopenReason() && !this.reopenReasonTooLong()))
   );
   readonly stageDescription = computed(() =>
-    `O caso será alterado de ${labelFor(this.item().stage)} para ${labelFor(this.selectedStage())}. A mudança ficará registrada no histórico.`
+    `O caso será alterado de ${this.currentStageLabel()} para ${this.selectedOption()?.label ?? ''}. A mudança ficará registrada no histórico.`
   );
 
   readonly transferOpen = signal(false);
@@ -311,7 +317,7 @@ export class CaseCardComponent {
         this.pending.set(null);
         this.conflict.set(false);
         this.operationError.set('');
-        if (!value.allowedNextStages.includes(this.selectedStage()) ||
+        if (!availableStages(value).some(stage => stage.code === this.selectedStage()) ||
             (this.reopening() && value.stage !== 'CLOSED')) this.selectStage('');
         this.clearUnavailableTransfer(value);
         this.caseUpdated.emit({value, mutated: false});

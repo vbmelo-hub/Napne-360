@@ -133,8 +133,51 @@ describe('Casos no acompanhamento do estudante', () => {
     expect(button(card, 'Registrar etapa').disabled).toBeTrue();
   });
 
+  it('exibe os nomes e a ordem atuais e mantém os nomes registrados no histórico', () => {
+    const configuredCase = {
+      ...currentCase, stageLabel: 'Entrada atual', allowedNextStages: ['SCREENING', 'CUSTOM_1', 'CLOSED'],
+      stageOptions: [
+        { code: 'CUSTOM_1', label: 'Apoio externo' },
+        { code: 'SCREENING', label: 'Avaliação inicial' },
+        { code: 'CLOSED', label: 'Conclusão' }
+      ]
+    };
+    setup('NAPNE', configuredCase);
+    const [card] = openCases();
+    expect(card.querySelector('.badge')?.textContent?.trim()).toBe('Entrada atual');
+    expect(Array.from(card.querySelectorAll<HTMLOptionElement>('select option'), option => option.textContent?.trim()))
+      .toEqual(['Selecione', 'Apoio externo', 'Avaliação inicial', 'Conclusão']);
+    field<HTMLSelectElement>(card, 'select', 'CUSTOM_1');
+    click(card, 'Registrar etapa');
+    const confirmation = fixture.nativeElement.querySelector('[role="alertdialog"]') as HTMLElement;
+    expect(confirmation.textContent).toContain('de Entrada atual para Apoio externo');
+    click(confirmation, 'Cancelar');
+
+    click(card, 'Consultar histórico');
+    const entry = {
+      id: 1, caseId: 50, version: 0, type: 'OPENED', actorId: 2, actor: 'Pessoa inicial',
+      fromStage: null, toStage: 'RECEIVED', fromStageLabel: null, toStageLabel: 'Entrada anterior',
+      fromResponsibleId: null, fromResponsible: null, toResponsibleId: 2, toResponsible: 'Pessoa inicial',
+      occurredAt: '2026-11-17T12:00:00Z', reason: null
+    };
+    http.expectOne(caseUrl + '/history?page=0&size=20').flush({
+      content: [{
+        ...entry, id: 2, version: 1, type: 'STAGE_CHANGED',
+        fromStage: 'CUSTOM_1', fromStageLabel: 'Nome anterior da etapa', toStageLabel: undefined
+      }, entry],
+      totalElements: 2, totalPages: 1, number: 0, size: 20
+    });
+    fixture.detectChanges();
+    expect(card.querySelector('.revisions')?.textContent).toContain('Nome anterior da etapa → Recebido');
+    expect(card.querySelector('.revisions')?.textContent).toContain('Entrada anterior · Responsável');
+  });
+
   it('exige motivo normalizado ao reabrir e limpa o rascunho após sucesso', () => {
-    setup('NAPNE', closedCase);
+    const renamedClosedCase = {
+      ...closedCase, stageLabel: 'Conclusão do atendimento',
+      stageOptions: [{ code: 'SCREENING', label: 'Avaliação inicial' }, { code: 'ARCHIVED', label: 'Arquivo' }]
+    };
+    setup('NAPNE', renamedClosedCase);
     const [card] = openCases();
     expect(Array.from(card.querySelectorAll<HTMLOptionElement>('select option'), option => option.value).filter(Boolean))
       .toEqual(closedCase.allowedNextStages);

@@ -54,11 +54,28 @@ export interface Dossier {
   redacted: boolean;
 }
 
+export interface CaseStageOption {
+  code: string;
+  label: string;
+}
+
+export interface CaseStageConfiguration {
+  version: number;
+  stages: CaseStageOption[];
+}
+
+export interface CaseStageConfigurationUpdate {
+  version: number;
+  stages: { code: string | null; label: string }[];
+}
+
 export interface NapneCase {
   id: number;
   studentId: number;
   stage: string;
   allowedNextStages: string[];
+  stageLabel?: string;
+  stageOptions?: CaseStageOption[];
   source: string;
   openedAt: string;
   closedAt: string | null;
@@ -80,6 +97,8 @@ export interface CaseHistoryView {
   type: 'OPENED' | 'STAGE_CHANGED' | 'RESPONSIBLE_CHANGED';
   fromStage: string | null;
   toStage: string | null;
+  fromStageLabel?: string | null;
+  toStageLabel?: string | null;
   fromResponsibleId: number | null;
   fromResponsible: string | null;
   toResponsibleId: number | null;
