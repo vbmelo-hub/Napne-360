@@ -99,10 +99,11 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     const apiSpy = jasmine.createSpyObj<ApiService>('ApiService', [
       'student', 'dossier', 'cases', 'records', 'peis', 'timeline',
       'attachments', 'studentSubjects', 'studentTeachers', 'courses',
-      'createRecord', 'updateRecord'
+      'createRecord', 'updateRecord', 'references'
     ]);
     const toastSpy = jasmine.createSpyObj<ToastService>('ToastService', ['show']);
 
+    apiSpy.references.and.returnValue(of([]));
     apiSpy.student.and.returnValue(of(mockStudent));
     apiSpy.dossier.and.returnValue(of(mockDossier));
     apiSpy.cases.and.returnValue(of([]));

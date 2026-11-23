@@ -35,10 +35,15 @@ export interface StudentDetails extends StudentSummary {
   version: number;
 }
 
+export interface EducationalNeeds extends Record<string, unknown> {
+  category?: string;
+  categoryId?: number | null;
+}
+
 export interface Dossier {
   studentId: number;
   identification: Record<string, unknown>;
-  educationalNeeds: Record<string, unknown>;
+  educationalNeeds: EducationalNeeds;
   healthAndSupport: Record<string, unknown>;
   familyContext: Record<string, unknown>;
   schoolHistory: Record<string, unknown>;
@@ -92,6 +97,8 @@ export interface Pei {
   subjectId: number;
   teacherId: number | null;
   academicTerm: string;
+  academicTermId?: number | null;
+  academicTermLabel?: string | null;
   revision: number;
   status: string;
   content: Record<string, unknown>;
@@ -126,6 +133,20 @@ export interface Course { id: number; name: string; code: string; campusId: numb
 export interface Subject { id: number; name: string; code: string; workloadHours: number; courseId: number; }
 export interface Campus { id: number; name: string; code: string; active: boolean; }
 export interface UserView { id: number; name: string; email: string; active: boolean; campusId: number | null; roles: string[]; }
+
+export type ReferenceKind = 'NEED_CATEGORY' | 'ACADEMIC_TERM';
+
+export interface ReferenceOption {
+  id: number;
+  code: string;
+  label: string;
+}
+
+export interface PeiCreateRequest {
+  subjectId: number;
+  teacherId: number;
+  academicTermId: number;
+}
 
 export interface ReferenceEntryAdmin {
   id: number;

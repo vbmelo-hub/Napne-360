@@ -7,7 +7,7 @@ export const DOSSIER_FIELDS: Record<string, CareField[]> = {
     {key:'courseChoice',label:'Escolha do curso e expectativas'}
   ],
   educationalNeeds: [
-    {key:'category',label:'Categorias de necessidades educacionais'},
+    {key:'category',label:'Categoria de necessidade educacional'},
     {key:'specificNeeds',label:'Necessidades de apoio e acessibilidade'},
     {key:'documents',label:'Documentos apresentados'}
   ],

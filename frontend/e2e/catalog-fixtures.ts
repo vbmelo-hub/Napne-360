@@ -1,0 +1,85 @@
+import { execFileSync } from 'node:child_process';
+import { expect, type APIRequestContext, type Page } from '@playwright/test';
+
+export async function loginApi(request: APIRequestContext, role: string) {
+  const response = await request.post('/api/v1/auth/login', {
+    data: { email: `${role}@napne.local`, password: 'Napne360!Demo' }
+  });
+  expect(response.status()).toBe(200);
+  return response.json();
+}
+
+export async function loginUi(page: Page, role: string) {
+  // Logout revokes every session for the account, including API fixture tokens.
+  // Reset only this browser page's storage, then reload to create a fresh AuthService.
+  if (/^https?:/.test(page.url())) await page.evaluate(() => sessionStorage.removeItem('napne360.session'));
+  await page.goto('/login');
+  await page.getByLabel('E-mail institucional', { exact: true }).fill(`${role}@napne.local`);
+  await page.getByLabel('Senha', { exact: true }).fill('Napne360!Demo');
+  const response = page.waitForResponse(r => r.url().endsWith('/api/v1/auth/login') && r.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  expect((await response).status()).toBe(200);
+  await expect(page.getByRole('heading', {
+    name: role === 'admin' ? 'Estrutura institucional em um só lugar' : 'Acompanhamento NAPNE', exact: true
+  })).toBeVisible();
+}
+
+export async function catalogFixture(request: APIRequestContext) {
+  const napne = await loginApi(request, 'napne');
+  const admin = await loginApi(request, 'admin');
+  const teacher = await loginApi(request, 'professor');
+  const headers = { Authorization: `Bearer ${napne.token}` };
+  const adminHeaders = { Authorization: `Bearer ${admin.token}` };
+  const teacherHeaders = { Authorization: `Bearer ${teacher.token}` };
+  const courses = await (await request.get('/api/v1/catalog/courses', { headers })).json();
+  const subjects = await (await request.get('/api/v1/catalog/subjects', { headers, params: { courseId: courses[0].id } })).json();
+  const post = async (path: string, data: object, auth = headers) => {
+    const response = await request.post(`/api/v1${path}`, { headers: auth, data });
+    expect(response.status(), `${path}: ${await response.text()}`).toBe(200);
+    return response.json();
+  };
+  const student = await post('/students', {
+    courseId: courses[0].id, registration: `TEST-CATALOG-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    civilName: 'Pessoa Fictícia Catálogo', socialName: 'Teste de Catálogo'
+  });
+  await post('/admin/assignments', {
+    studentId: student.id, userId: teacher.id, subjectId: subjects[0].id, assignmentType: 'TEACHER'
+  }, adminHeaders);
+  const path = `/api/v1/students/${student.id}`;
+  const dossier = async () => (await request.get(`${path}/dossier`, { headers })).json();
+  const saveDossier = async (data: object) => {
+    const response = await request.put(`${path}/dossier`, { headers, data });
+    expect(response.status(), await response.text()).toBe(200);
+    return response.json();
+  };
+  const entry = (kind: string, label: string) => post('/admin/references', {
+    kind, code: `TEST-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, label
+  }, adminHeaders);
+  return { student, course: courses[0], teacher, subject: subjects[0], headers, adminHeaders, teacherHeaders, path, post, dossier, saveDossier, entry };
+}
+
+/** Old records cannot be created through the new API. Touch only this newly created TEST student. */
+export function makeLegacyFixture(student: { id: number; registration: string }, peiId: string) {
+  if (!Number.isSafeInteger(student.id) || student.id <= 0 || !student.registration.startsWith('TEST-CATALOG-')) {
+    throw new Error('Fixture de legado exige estudante fictício recém-criado.');
+  }
+  const docker = process.env['NAPNE_E2E_DOCKER'] || 'docker';
+  const compose = ['compose'];
+  if (process.env['NAPNE_E2E_COMPOSE_PROJECT']) compose.push('-p', process.env['NAPNE_E2E_COMPOSE_PROJECT']);
+  const container = execFileSync(docker, [...compose, 'ps', '-q', 'mongo'], { encoding: 'utf8', timeout: 30_000 }).trim();
+  if (!container || container.includes('\n')) throw new Error('Container Mongo isolado não identificado.');
+  // Arguments and JavaScript literals are passed separately; no shell interpolation is used.
+  const script = `
+    const studentId = NumberLong(${JSON.stringify(String(student.id))});
+    const dossier = db.student_dossiers.updateOne({studentId}, {$set: {educationalNeeds: {
+      category: 'Categoria legada fictícia', notes: 'Notas legadas fictícias', extra: 'Extra preservado'
+    }}});
+    const peiId = ${JSON.stringify(peiId)};
+    const pei = db.pei_documents.updateOne({$or: [{_id: peiId}, {_id: ObjectId(peiId)}], studentId}, {
+      $set: {academicTerm: 'LEGACY-FICTICIO'}, $unset: {academicTermId: '', academicTermLabel: ''}
+    });
+    if (dossier.matchedCount !== 1 || pei.matchedCount !== 1) throw new Error('Fixture histórica não localizada');
+    print('Fixture histórica fictícia preparada');
+  `;
+  execFileSync(docker, ['exec', container, 'mongosh', 'napne360_documents', '--quiet', '--eval', script], { stdio: 'pipe', timeout: 30_000 });
+}

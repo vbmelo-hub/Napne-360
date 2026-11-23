@@ -8,6 +8,9 @@ for (const role of ['napne','professor','tutor','cotep','coordenacao','gestao'])
     await page.getByRole('button',{name:'Entrar',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Acompanhamento NAPNE',exact:true})).toBeVisible();
     await page.locator('a[href="/estudantes"]').filter({hasText:'Estudantes acompanhados'}).click();
+    // Repeated fictional fixtures can move the seed student beyond the first page.
+    await page.getByRole('textbox',{name:'Buscar estudante',exact:true}).fill('Alex Exemplo');
+    await page.getByRole('button',{name:'Buscar',exact:true}).click();
     const row=page.getByRole('row').filter({hasText:'Alex Exemplo'});
     await expect(row).toBeVisible();
     await row.getByRole('link',{name:'Abrir acompanhamento',exact:true}).click();
