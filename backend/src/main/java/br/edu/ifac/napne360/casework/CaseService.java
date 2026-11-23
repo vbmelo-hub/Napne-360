@@ -41,39 +41,46 @@ public class CaseService {
     private final CaseHistoryRepository history;
     private final UserAccountRepository users;
     private final AccessGuard access;
+    private final CaseStageConfigurationService stageConfiguration;
 
     @Transactional(readOnly = true)
     public List<CaseView> list(Student student) {
-        if (!currentUser.require().getRoles().contains(br.edu.ifac.napne360.identity.RoleName.NAPNE)) return List.of();
-        return cases.findByStudentIdOrderByOpenedAtDesc(student.getId()).stream().map(this::view).toList();
+        if (!currentUser.require().getRoles().contains(RoleName.NAPNE)) return List.of();
+        var catalogue = stageConfiguration.current();
+        return cases.findByStudentIdOrderByOpenedAtDesc(student.getId()).stream()
+                .map(value -> view(value, catalogue)).toList();
     }
 
     @Transactional
     public CaseView create(Student student, CaseRequest request, Authentication auth, HttpServletRequest http) {
         requireCampusAccess(student.getId());
         UserAccount user = currentUser.require();
+        var catalogue = stageConfiguration.current();
         NapneCase value = cases.saveAndFlush(NapneCase.builder().student(student).source(request.source().trim())
                 .summary(request.summary()).responsible(user).build());
-        recordHistory(value, CaseHistory.Type.OPENED, null, null, user, value.getOpenedAt(), null);
+        recordHistory(value, CaseHistory.Type.OPENED, null, null, user, value.getOpenedAt(), null, catalogue);
         timeline.append(student.getId(), "CASE_OPENED", "Caso NAPNE aberto", user.getName(), TimelineVisibility.RESTRICTED,
-                Map.of("caseId", value.getId(), "stage", value.getStage().name()));
+                Map.of("caseId", value.getId(), "stage", value.getStage().code()));
         audit.record(auth, http, "CREATE", "NAPNE_CASE", value.getId(), "SUCCESS", null);
-        return view(value);
+        return view(value, catalogue);
     }
 
     @Transactional
     public CaseView changeStage(Long caseId, CaseStageRequest request, Authentication auth, HttpServletRequest http) {
         NapneCase value = requireCase(caseId);
         requireVersion(value, request.version());
+        var catalogue = stageConfiguration.current();
         CaseStage previous = value.getStage();
         CaseStage next = request.stage();
-        if (previous == next && Objects.equals(value.getSummary(), request.summary())) return view(value);
-        boolean allowed = previous == next ? previous.isActive() : previous.allowedNextStages().contains(next);
+        boolean sameStage = previous.equals(next);
+        if (sameStage && Objects.equals(value.getSummary(), request.summary())) return view(value, catalogue);
+        boolean allowed = sameStage ? previous.isActive()
+                : catalogue.nextOptions(previous).stream().anyMatch(option -> option.code().equals(next));
         if (!allowed) throw new IllegalArgumentException("A alteração não é permitida nesta etapa do caso.");
 
         String reason = null;
-        if (previous == CaseStage.CLOSED && next == CaseStage.SCREENING) {
-            reason = trimReopenReason(request.reason());
+        if (previous.equals(CaseStage.CLOSED) && next.equals(CaseStage.SCREENING)) {
+            reason = CaseText.trimBrowserWhitespace(request.reason());
             if (reason.isEmpty() || reason.length() > 500)
                 throw new IllegalArgumentException("Informe um motivo de reabertura de até 500 caracteres.");
         }
@@ -83,14 +90,14 @@ public class CaseService {
         Instant occurredAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         value.setStage(next);
         value.setSummary(request.summary());
-        if (next == CaseStage.CLOSED) value.setClosedAt(occurredAt);
+        if (next.equals(CaseStage.CLOSED)) value.setClosedAt(occurredAt);
         else if (next.isActive()) value.setClosedAt(null);
         value = cases.saveAndFlush(value);
-        recordHistory(value, CaseHistory.Type.STAGE_CHANGED, previous, value.getResponsible(), user, occurredAt, reason);
+        recordHistory(value, CaseHistory.Type.STAGE_CHANGED, previous, value.getResponsible(), user, occurredAt, reason, catalogue);
         timeline.append(value.getStudent().getId(), "CASE_STAGE_CHANGED", "Etapa do caso atualizada", user.getName(),
-                TimelineVisibility.RESTRICTED, Map.of("caseId", value.getId(), "from", previous.name(), "to", next.name()));
-        audit.record(auth, http, "UPDATE_STAGE", "NAPNE_CASE", value.getId(), "SUCCESS", previous + " -> " + next);
-        return view(value);
+                TimelineVisibility.RESTRICTED, Map.of("caseId", value.getId(), "from", previous.code(), "to", next.code()));
+        audit.record(auth, http, "UPDATE_STAGE", "NAPNE_CASE", value.getId(), "SUCCESS", previous.code() + " -> " + next.code());
+        return view(value, catalogue);
     }
 
     @Transactional(readOnly = true)
@@ -99,7 +106,9 @@ public class CaseService {
     }
 
     @Transactional(readOnly = true)
-    public CaseView get(Long caseId) { return view(requireCase(caseId)); }
+    public CaseView get(Long caseId) {
+        return view(requireCase(caseId), stageConfiguration.current());
+    }
 
     @Transactional(readOnly = true)
     public List<ResponsibleCandidate> candidates(Long caseId) {
@@ -120,16 +129,18 @@ public class CaseService {
         if (!next.isActive() || !next.getRoles().contains(RoleName.NAPNE) || next.getCampus() == null
                 || !next.getCampus().getId().equals(value.getStudent().getCampus().getId()))
             throw new IllegalArgumentException("O responsável deve ser NAPNE ativo do mesmo campus.");
+        var catalogue = stageConfiguration.current();
         UserAccount previous = value.getResponsible();
-        if (previous.getId().equals(next.getId())) return view(value);
+        if (previous.getId().equals(next.getId())) return view(value, catalogue);
         UserAccount actor = currentUser.require();
         value.setResponsible(next);
         value = cases.saveAndFlush(value);
-        recordHistory(value, CaseHistory.Type.RESPONSIBLE_CHANGED, value.getStage(), previous, actor, Instant.now(), request.reason());
+        recordHistory(value, CaseHistory.Type.RESPONSIBLE_CHANGED, value.getStage(), previous, actor,
+                Instant.now(), request.reason(), catalogue);
         timeline.append(value.getStudent().getId(), "CASE_RESPONSIBLE_CHANGED", "Responsável pelo caso atualizado", actor.getName(),
                 TimelineVisibility.RESTRICTED, Map.of("caseId", value.getId(), "fromResponsibleId", previous.getId(), "toResponsibleId", next.getId()));
         audit.record(auth, http, "UPDATE_RESPONSIBLE", "NAPNE_CASE", value.getId(), "SUCCESS", null);
-        return view(value);
+        return view(value, catalogue);
     }
 
     @Transactional(readOnly = true)
@@ -140,22 +151,13 @@ public class CaseService {
         var values = history.findByNapneCaseId(caseId, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "version", "id")));
         return new HistoryPage(values.getContent().stream().map(entry -> new CaseHistoryView(entry.getId(), caseId, entry.getVersion(), entry.getType(),
                 entry.getFromStage(), entry.getToStage(), entry.getFromResponsibleId(), entry.getFromResponsible(),
-                entry.getToResponsibleId(), entry.getToResponsible(), entry.getActorId(), entry.getActor(), entry.getOccurredAt(), entry.getReason())).toList(),
+                entry.getToResponsibleId(), entry.getToResponsible(), entry.getActorId(), entry.getActor(), entry.getOccurredAt(), entry.getReason(),
+                historyLabel(entry.getFromStage(), entry.getFromStageLabel()), historyLabel(entry.getToStage(), entry.getToStageLabel()))).toList(),
                 values.getTotalElements(), values.getTotalPages(), values.getNumber(), values.getSize());
     }
 
-    private static String trimReopenReason(String reason) {
-        if (reason == null) return "";
-        int start = 0;
-        int end = reason.length();
-        while (start < end && isTrimSpace(reason.charAt(start))) start++;
-        while (end > start && isTrimSpace(reason.charAt(end - 1))) end--;
-        return reason.substring(start, end);
-    }
-
-    private static boolean isTrimSpace(char value) {
-        // Match String.trim() in the browser, including non-breaking spaces and the BOM.
-        return Character.isSpaceChar(value) || (value >= '\t' && value <= '\r') || value == '\uFEFF';
+    private static String historyLabel(CaseStage stage, String snapshot) {
+        return snapshot == null ? CaseStageCatalogue.originalLabel(stage) : snapshot;
     }
 
     private NapneCase requireCase(Long caseId) {
@@ -173,19 +175,23 @@ public class CaseService {
     }
 
     private void recordHistory(NapneCase value, CaseHistory.Type type, CaseStage fromStage, UserAccount from,
-                               UserAccount actor, Instant occurredAt, String reason) {
+                               UserAccount actor, Instant occurredAt, String reason, CaseStageCatalogue catalogue) {
         // Flush history before cross-store effects: a SQL constraint failure rolls back the case and emits no success event.
         history.saveAndFlush(CaseHistory.builder().napneCase(value).version(value.getVersion()).type(type)
-                .fromStage(fromStage).toStage(value.getStage()).fromResponsibleId(from == null ? null : from.getId())
+                .fromStage(fromStage).toStage(value.getStage())
+                .fromStageLabel(catalogue.label(fromStage)).toStageLabel(catalogue.label(value.getStage()))
+                .fromResponsibleId(from == null ? null : from.getId())
                 .fromResponsible(from == null ? null : from.getName()).toResponsibleId(value.getResponsible().getId())
                 .toResponsible(value.getResponsible().getName()).actorId(actor.getId()).actor(actor.getName())
                 .occurredAt(occurredAt).reason(reason).build());
     }
 
-    private CaseView view(NapneCase value) {
-        return new CaseView(value.getId(), value.getStudent().getId(), value.getStage(), value.getSource(), value.getOpenedAt(),
+    private CaseView view(NapneCase value, CaseStageCatalogue catalogue) {
+        var stage = value.getStage();
+        var options = catalogue.nextOptions(stage);
+        return new CaseView(value.getId(), value.getStudent().getId(), stage, value.getSource(), value.getOpenedAt(),
                 value.getClosedAt(), value.getResponsible().getId(), value.getResponsible().getName(), value.getSummary(), value.getVersion(),
-                value.getStage().allowedNextStages());
+                options.stream().map(CaseStageCatalogue.Option::code).toList(), catalogue.label(stage), options);
     }
 
     public record CaseRequest(@NotBlank String source, String summary) {}
@@ -196,8 +202,10 @@ public class CaseService {
     public record ResponsibleCandidate(Long id, String name) {}
     public record CaseHistoryView(Long id, Long caseId, long version, CaseHistory.Type type, CaseStage fromStage, CaseStage toStage,
                                   Long fromResponsibleId, String fromResponsible, Long toResponsibleId, String toResponsible,
-                                  Long actorId, String actor, Instant occurredAt, String reason) {}
+                                  Long actorId, String actor, Instant occurredAt, String reason,
+                                  String fromStageLabel, String toStageLabel) {}
     public record HistoryPage(List<CaseHistoryView> content, long totalElements, int totalPages, int number, int size) {}
     public record CaseView(Long id, Long studentId, CaseStage stage, String source, Instant openedAt, Instant closedAt,
-                           Long responsibleId, String responsible, String summary, long version, List<CaseStage> allowedNextStages) {}
+                           Long responsibleId, String responsible, String summary, long version, List<CaseStage> allowedNextStages,
+                           String stageLabel, List<CaseStageCatalogue.Option> stageOptions) {}
 }

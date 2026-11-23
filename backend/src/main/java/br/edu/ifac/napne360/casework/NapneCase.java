@@ -16,7 +16,7 @@ public class NapneCase {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "student_id", nullable = false)
     private Student student;
-    @Enumerated(EnumType.STRING)
+    @Convert(converter = CaseStageConverter.class)
     @Column(nullable = false, length = 40)
     @Builder.Default
     private CaseStage stage = CaseStage.RECEIVED;

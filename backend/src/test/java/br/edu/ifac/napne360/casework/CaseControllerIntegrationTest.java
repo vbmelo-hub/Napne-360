@@ -8,11 +8,12 @@ import br.edu.ifac.napne360.timeline.TimelineService;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,10 +28,14 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
@@ -45,6 +50,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class CaseControllerIntegrationTest {
+    private static final String STAGES = "/api/v1/admin/case-stages";
+    private boolean seededStageConfiguration;
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired CampusRepository campuses;
@@ -155,9 +162,9 @@ class CaseControllerIntegrationTest {
         assertThat(snapshot()).isEqualTo(before); assertThat(historyCount()).isZero(); verifyNoInteractions(timeline, audit);
     }
 
-    @ParameterizedTest @EnumSource(value = CaseStage.class, names = {"CLOSED", "ARCHIVED"})
-    void terminalCasesRefuseTransferButAllowHistory(CaseStage state) throws Exception {
-        legacy.setStage(state); legacy.setClosedAt(Instant.parse("2026-02-01T10:00:00Z")); cases.saveAndFlush(legacy);
+    @ParameterizedTest @ValueSource(strings = {"CLOSED", "ARCHIVED"})
+    void terminalCasesRefuseTransferButAllowHistory(String state) throws Exception {
+        legacy.setStage(new CaseStage(state)); legacy.setClosedAt(Instant.parse("2026-02-01T10:00:00Z")); cases.saveAndFlush(legacy);
         var before = snapshot();
         perform(patch(responsiblePath()).content(transferBody(candidate.getId(), before.get("VERSION").toString(), null)), actor).andExpect(status().isConflict());
         assertThat(snapshot()).isEqualTo(before); history(legacy.getId(), 0, 20); verifyNoInteractions(timeline, audit);
@@ -171,16 +178,17 @@ class CaseControllerIntegrationTest {
         assertThat(snapshot()).isEqualTo(closed); assertThat(historyCount()).isEqualTo(1); verifyNoInteractions(timeline, audit);
     }
 
-    @ParameterizedTest @EnumSource(CaseStage.class)
-    void exposesOnlyAllowedDestinationsForEveryStage(CaseStage stage) throws Exception {
-        legacy.setStage(stage);
+    @ParameterizedTest @ValueSource(strings = {"RECEIVED", "SCREENING", "WELCOMING", "CASE_STUDY", "GUIDANCE_ISSUED",
+            "ACTION_PLAN", "PEI", "FOLLOW_UP", "CLOSED", "ARCHIVED"})
+    void exposesOnlyAllowedDestinationsForEveryStage(String stage) throws Exception {
+        legacy.setStage(new CaseStage(stage));
         cases.saveAndFlush(legacy);
         var active = List.of("RECEIVED", "SCREENING", "WELCOMING", "CASE_STUDY", "GUIDANCE_ISSUED",
                 "ACTION_PLAN", "PEI", "FOLLOW_UP", "CLOSED");
         List<String> expected = switch (stage) {
-            case CLOSED -> List.of("SCREENING", "ARCHIVED");
-            case ARCHIVED -> List.of();
-            default -> active.stream().filter(next -> !stage.name().equals(next)).toList();
+            case "CLOSED" -> List.of("SCREENING", "ARCHIVED");
+            case "ARCHIVED" -> List.of();
+            default -> active.stream().filter(next -> !stage.equals(next)).toList();
         };
         perform(get("/api/v1/cases/" + legacy.getId()), actor).andExpect(status().isOk())
                 .andExpect(jsonPath("$.allowedNextStages").value(is(expected)));
@@ -258,9 +266,10 @@ class CaseControllerIntegrationTest {
         var before = snapshot();
         var otherCampus = campuses.saveAndFlush(Campus.builder().name("Outro campus").code(token + "-2").build());
         var otherNapne = account("NAPNE de outro campus", otherCampus, true, Set.of(RoleName.NAPNE));
-        for (CaseStage target : CaseStage.values()) {
-            if (target == CaseStage.SCREENING || target == CaseStage.ARCHIVED) continue;
-            perform(patch(stagePath()).content(stageBody(target.name(), "Resumo alterado", 1, "Motivo fictício")), actor)
+        for (var option : CaseStageCatalogue.DEFAULTS.stages()) {
+            var target = option.code();
+            if (target.equals(CaseStage.SCREENING) || target.equals(CaseStage.ARCHIVED)) continue;
+            perform(patch(stagePath()).content(stageBody(target.code(), "Resumo alterado", 1, "Motivo fictício")), actor)
                     .andExpect(status().isBadRequest());
         }
         perform(patch(stagePath()).content(stageBody("SCREENING", "Resumo reservado", 1, "Motivo fictício")), otherNapne)
@@ -277,8 +286,8 @@ class CaseControllerIntegrationTest {
         perform(patch(stagePath()).content(stageBody("ARCHIVED", "Resumo reservado", 1)), actor).andExpect(status().isOk());
         var before = snapshot();
         clearInvocations(timeline, audit);
-        for (CaseStage target : CaseStage.values()) {
-            perform(patch(stagePath()).content(stageBody(target.name(), "Resumo alterado", 2, "Motivo fictício")), actor)
+        for (var option : CaseStageCatalogue.DEFAULTS.stages()) {
+            perform(patch(stagePath()).content(stageBody(option.code().code(), "Resumo alterado", 2, "Motivo fictício")), actor)
                     .andExpect(status().isBadRequest());
         }
         perform(patch(stagePath()).content(stageBody("ARCHIVED", "Resumo reservado", 2)), actor)
@@ -385,6 +394,244 @@ class CaseControllerIntegrationTest {
     @Test void missingCaseIs404AndAnonymousCannotUseTheNewEndpoints() throws Exception {
         perform(get("/api/v1/cases/" + Long.MAX_VALUE), actor).andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/cases/" + legacy.getId())).andExpect(status().isUnauthorized());
+    }
+
+    @AfterEach void removeStageConfigurationFixture() {
+        if (seededStageConfiguration) sql.update("delete from case_stage_configuration where id=1");
+    }
+
+    @Test void stageCatalogueDefaultsAreAvailableWithoutFlyway() throws Exception {
+        var defaults = stageCatalogue(admin());
+        assertThat(defaults.get("version").asLong()).isZero();
+        assertThat(textFields(defaults.get("stages"), "code")).containsExactly("RECEIVED", "SCREENING", "WELCOMING",
+                "CASE_STUDY", "GUIDANCE_ISSUED", "ACTION_PLAN", "PEI", "FOLLOW_UP", "CLOSED", "ARCHIVED");
+        assertThat(textFields(defaults.get("stages"), "label")).containsExactly("Recebido", "Triagem", "Acolhimento",
+                "Estudo de caso", "Orientações emitidas", "Plano de ação", "PEI", "Acompanhamento", "Encerrado", "Arquivado");
+    }
+
+    @Test void stageCatalogueIsRestrictedToAdmin() throws Exception {
+        var owner = admin();
+        var defaults = stageCatalogue(owner);
+        perform(get(STAGES), actor).andExpect(status().isForbidden());
+        perform(put(STAGES).content(defaults.toString()), actor).andExpect(status().isForbidden());
+        mvc.perform(get(STAGES)).andExpect(status().isUnauthorized());
+        mvc.perform(put(STAGES).contentType(MediaType.APPLICATION_JSON).content(defaults.toString()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"blank", "null-label", "duplicate-label", "duplicate-code",
+            "unknown-code", "missing-code", "terminal-order", "active-after-terminal", "null-entry", "null-version",
+            "fractional-version", "string-version", "missing-create-code", "non-text-label"})
+    void invalidStageConfigurationLeavesCatalogueUnchanged(String invalid) throws Exception {
+        var owner = admin();
+        var before = seedStageCatalogue(owner);
+        ObjectNode request = before.deepCopy();
+        var stages = (com.fasterxml.jackson.databind.node.ArrayNode) request.get("stages");
+        var first = (ObjectNode) stages.get(0);
+        switch (invalid) {
+            case "blank" -> first.put("label", "\u00A0 \t");
+            case "null-label" -> first.putNull("label");
+            case "duplicate-label" -> first.put("label", "  tRIAGEM ");
+            case "duplicate-code" -> stages.insert(0, first.deepCopy());
+            case "unknown-code" -> first.put("code", "CUSTOM_" + "a".repeat(32));
+            case "missing-code" -> stages.remove(0);
+            case "terminal-order" -> stages.add(stages.remove(stages.size() - 2));
+            case "active-after-terminal" -> stages.add(stages.remove(0));
+            case "null-entry" -> stages.insertNull(0);
+            case "null-version" -> request.putNull("version");
+            case "fractional-version" -> request.put("version", 0.5);
+            case "string-version" -> request.put("version", "0");
+            case "missing-create-code" -> stages.insert(0, json.createObjectNode().put("label", "Visita técnica"));
+            case "non-text-label" -> first.put("label", 7);
+            default -> throw new AssertionError(invalid);
+        }
+        perform(put(STAGES).content(request.toString()), owner).andExpect(status().isBadRequest());
+        assertThat(stageCatalogue(owner)).isEqualTo(before);
+    }
+
+    @Test void evenAnUnchangedSaveAdvancesTheCatalogueVersion() throws Exception {
+        var owner = admin();
+        var initial = seedStageCatalogue(owner);
+        perform(put(STAGES).content(initial.toString()), owner).andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(1));
+        perform(put(STAGES).content(initial.toString()), owner).andExpect(status().isConflict());
+        assertThat(stageCatalogue(owner).get("stages")).isEqualTo(initial.get("stages"));
+    }
+
+    @Test void concurrentStageConfigurationWritesRejectOneStaleVersion() throws Exception {
+        var owner = admin();
+        var first = seedStageCatalogue(owner);
+        var second = first.deepCopy();
+        stage(first, "WELCOMING").put("label", "Primeiro acolhimento");
+        stage(second, "WELCOMING").put("label", "Segundo acolhimento");
+        var start = new CountDownLatch(1);
+        var ready = new CountDownLatch(2);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var firstResult = executor.submit(() -> sendConcurrentStageConfiguration(first, owner, ready, start));
+            var secondResult = executor.submit(() -> sendConcurrentStageConfiguration(second, owner, ready, start));
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            int firstStatus = firstResult.get(15, TimeUnit.SECONDS);
+            int secondStatus = secondResult.get(15, TimeUnit.SECONDS);
+            assertThat(List.of(firstStatus, secondStatus)).containsExactlyInAnyOrder(200, 409);
+            var saved = stageCatalogue(owner);
+            assertThat(saved.get("version").asLong()).isEqualTo(1);
+            assertThat(stage(saved, "WELCOMING").get("label"))
+                    .isEqualTo(stage(firstStatus == 200 ? first : second, "WELCOMING").get("label"));
+        }
+    }
+
+    @Test void configuredStageOrderReachesCaseDetailAndStudentCases() throws Exception {
+        var owner = admin();
+        var config = seedStageCatalogue(owner);
+        var stages = (com.fasterxml.jackson.databind.node.ArrayNode) config.get("stages");
+        stage(config, "WELCOMING").put("label", "  Acolhimento inicial  ");
+        stages.insert(0, stages.remove(2));
+        stages.insert(1, json.createObjectNode().putNull("code").put("label", "Visita técnica"));
+        stages.insert(2, json.createObjectNode().putNull("code").put("label", "Reunião pedagógica"));
+        JsonNode saved = result(perform(put(STAGES).content(config.toString()), owner)
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(saved.get("version").asLong()).isEqualTo(1);
+        String visit = saved.get("stages").get(1).get("code").asText();
+        String meeting = saved.get("stages").get(2).get("code").asText();
+        assertThat(visit).matches("CUSTOM_[0-9a-f]{32}").isNotEqualTo(meeting);
+        assertThat(meeting).matches("CUSTOM_[0-9a-f]{32}");
+        assertThat(stageCatalogue(owner)).isEqualTo(saved);
+
+        JsonNode detail = caseDetail();
+        var expectedCodes = List.of("WELCOMING", visit, meeting, "SCREENING", "CASE_STUDY",
+                "GUIDANCE_ISSUED", "ACTION_PLAN", "PEI", "FOLLOW_UP", "CLOSED");
+        assertThat(textValues(detail.get("allowedNextStages"))).containsExactlyElementsOf(expectedCodes);
+        assertThat(textFields(detail.get("stageOptions"), "code")).containsExactlyElementsOf(expectedCodes);
+        assertThat(textFields(detail.get("stageOptions"), "label")).containsExactly("Acolhimento inicial", "Visita técnica",
+                "Reunião pedagógica", "Triagem", "Estudo de caso", "Orientações emitidas", "Plano de ação", "PEI", "Acompanhamento", "Encerrado");
+
+        var listed = result(perform(get("/api/v1/students/" + student.getId() + "/cases"), actor)
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).get(0);
+        assertThat(listed.get("stage").asText()).isEqualTo("RECEIVED");
+        assertThat(listed.get("stageLabel").asText()).isEqualTo("Recebido");
+        assertThat(listed.get("stageOptions")).isEqualTo(detail.get("stageOptions"));
+    }
+
+    @Test void customStagesPersistAndHistoryRetainsTheLabelsAtEachMutation() throws Exception {
+        var owner = admin();
+        var config = seedStageCatalogue(owner);
+        var stages = (com.fasterxml.jackson.databind.node.ArrayNode) config.get("stages");
+        stage(config, "RECEIVED").put("label", "Recepção");
+        stage(config, "WELCOMING").put("label", "Acolhimento inicial");
+        stages.insert(2, json.createObjectNode().putNull("code").put("label", "Visita técnica"));
+        var updated = result(perform(put(STAGES).content(config.toString()), owner)
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        String custom = updated.get("stages").get(2).get("code").asText();
+
+        String createPath = "/api/v1/students/" + student.getId() + "/cases";
+        var opened = result(perform(post(createPath).content("{\"source\":\"Encaminhamento\"}"), actor)
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(opened.get("stageLabel").asText()).isEqualTo("Recepção");
+        var opening = history(opened.get("id").asLong(), 0, 20).get("content").get(0);
+        assertThat(opening.get("fromStageLabel").isNull()).isTrue();
+        assertThat(opening.get("toStageLabel").asText()).isEqualTo("Recepção");
+
+        perform(patch(stagePath()).content(stageBody("WELCOMING", "Resumo reservado", 0)), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.stageLabel").value("Acolhimento inicial"));
+        perform(patch(stagePath()).content(stageBody(custom, "Resumo reservado", 1)), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.stage").value(custom))
+                .andExpect(jsonPath("$.stageLabel").value("Visita técnica"));
+        assertThat(snapshot().get("STAGE")).isEqualTo(custom);
+
+        ObjectNode rename = (ObjectNode) updated.deepCopy();
+        stage(rename, custom).put("label", "Visita de acompanhamento");
+        perform(put(STAGES).content(rename.toString()), owner).andExpect(status().isOk());
+        assertThat(caseDetail().get("stageLabel").asText()).isEqualTo("Visita de acompanhamento");
+        perform(patch(responsiblePath()).content(transferBody(candidate.getId(), "2", null)), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.stageLabel").value("Visita de acompanhamento"));
+
+        var entries = history(legacy.getId(), 0, 20).get("content");
+        assertThat(entries.get(0).get("fromStageLabel").asText()).isEqualTo("Visita de acompanhamento");
+        assertThat(entries.get(0).get("toStageLabel").asText()).isEqualTo("Visita de acompanhamento");
+        assertThat(entries.get(1).get("fromStageLabel").asText()).isEqualTo("Acolhimento inicial");
+        assertThat(entries.get(1).get("toStage").asText()).isEqualTo(custom);
+        assertThat(entries.get(1).get("toStageLabel").asText()).isEqualTo("Visita técnica");
+        assertThat(entries.get(2).get("fromStageLabel").asText()).isEqualTo("Recepção");
+
+        perform(patch(stagePath()).content(stageBody(custom, "Resumo atualizado", 3)), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(4));
+        perform(patch(stagePath()).content(stageBody("CLOSED", "Resumo atualizado", 4)), actor)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.allowedNextStages").value(is(List.of("SCREENING", "ARCHIVED"))));
+        perform(patch(stagePath()).content(stageBody(custom, "Resumo atualizado", 5, "Motivo fictício")), actor)
+                .andExpect(status().isBadRequest());
+        perform(patch(stagePath()).content(stageBody("SCREENING", "Resumo atualizado", 5, "Motivo fictício")), actor)
+                .andExpect(status().isOk());
+    }
+
+    @Test void unknownCustomStageCannotEnterCase() throws Exception {
+        var custom = "CUSTOM_" + "a".repeat(32);
+        perform(patch(stagePath()).content(stageBody(custom, "Resumo reservado", 0)), actor)
+                .andExpect(status().isBadRequest());
+        assertThat(snapshot().get("STAGE")).isEqualTo("RECEIVED");
+        assertThat(historyCount()).isZero();
+    }
+
+    @Test void legacyHistoryLabelsUseOriginalDefaultsAfterConfigurationChanges() throws Exception {
+        var owner = admin();
+        var config = seedStageCatalogue(owner);
+        sql.update("insert into case_history(case_id,version,type,from_stage,to_stage,to_responsible_id,to_responsible,actor_id,actor,occurred_at)"
+                        + " values (?,0,'STAGE_CHANGED','RECEIVED','WELCOMING',?,?,?,?,current_timestamp)",
+                legacy.getId(), actor.getId(), actor.getName(), actor.getId(), actor.getName());
+        stage(config, "RECEIVED").put("label", "Recepção");
+        stage(config, "WELCOMING").put("label", "Acolhimento inicial");
+        perform(put(STAGES).content(config.toString()), owner).andExpect(status().isOk());
+        assertThat(caseDetail().get("stageLabel").asText()).isEqualTo("Recepção");
+        var entry = history(legacy.getId(), 0, 20).get("content").get(0);
+        assertThat(entry.get("fromStageLabel").asText()).isEqualTo("Recebido");
+        assertThat(entry.get("toStageLabel").asText()).isEqualTo("Acolhimento");
+    }
+
+    private UserAccount admin() { return account("Administrador fictício", null, true, Set.of(RoleName.ADMIN)); }
+
+    private ObjectNode stageCatalogue(UserAccount owner) throws Exception {
+        return (ObjectNode) result(perform(get(STAGES), owner).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+    }
+
+    private ObjectNode seedStageCatalogue(UserAccount owner) throws Exception {
+        var defaults = stageCatalogue(owner);
+        sql.update("insert into case_stage_configuration (id, version, stages_json) values (1, 0, ?)",
+                defaults.get("stages").toString());
+        seededStageConfiguration = true;
+        return defaults;
+    }
+
+    private int sendConcurrentStageConfiguration(ObjectNode config, UserAccount owner,
+                                                  CountDownLatch ready, CountDownLatch start) throws Exception {
+        ready.countDown();
+        if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("PUT concorrente não iniciado");
+        return perform(put(STAGES).content(config.toString()), owner).andReturn().getResponse().getStatus();
+    }
+
+    private JsonNode caseDetail() throws Exception {
+        return result(perform(get("/api/v1/cases/" + legacy.getId()), actor)
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+    }
+
+    private static ObjectNode stage(JsonNode catalogue, String code) {
+        for (var choice : catalogue.get("stages")) {
+            if (choice.get("code").asText().equals(code)) return (ObjectNode) choice;
+        }
+        throw new AssertionError("Etapa ausente: " + code);
+    }
+
+    private static List<String> textFields(JsonNode array, String field) {
+        var values = new ArrayList<String>();
+        array.forEach(node -> values.add(node.get(field).asText()));
+        return values;
+    }
+
+    private static List<String> textValues(JsonNode array) {
+        var values = new ArrayList<String>();
+        array.forEach(node -> values.add(node.asText()));
+        return values;
     }
 
     private UserAccount account(String name, Campus where, boolean active, Set<RoleName> roles) {

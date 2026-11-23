@@ -24,10 +24,14 @@ public class CaseHistory {
     private long version;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 30, updatable = false)
     private Type type;
-    @Enumerated(EnumType.STRING) @Column(length = 40, updatable = false)
+    @Convert(converter = CaseStageConverter.class) @Column(length = 40, updatable = false)
     private CaseStage fromStage;
-    @Enumerated(EnumType.STRING) @Column(nullable = false, length = 40, updatable = false)
+    @Convert(converter = CaseStageConverter.class) @Column(nullable = false, length = 40, updatable = false)
     private CaseStage toStage;
+    @Column(columnDefinition = "LONGTEXT", updatable = false)
+    private String fromStageLabel;
+    @Column(columnDefinition = "LONGTEXT", updatable = false)
+    private String toStageLabel;
     @Column(updatable = false)
     private Long fromResponsibleId;
     @Column(length = 160, updatable = false)
