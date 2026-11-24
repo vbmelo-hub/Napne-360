@@ -26,6 +26,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -59,6 +61,8 @@ class CaseControllerIntegrationTest {
     @Autowired UserAccountRepository users;
     @Autowired StudentRepository students;
     @Autowired NapneCaseRepository cases;
+    @Autowired CaseStageConfigurationRepository stageConfigurations;
+    @Autowired PlatformTransactionManager transactionManager;
     @Autowired JdbcTemplate sql;
     @MockitoBean TimelineService timeline;
     @MockitoBean AuditService audit;
@@ -421,7 +425,7 @@ class CaseControllerIntegrationTest {
 
     @ParameterizedTest @ValueSource(strings = {"blank", "null-label", "duplicate-label", "duplicate-code",
             "unknown-code", "missing-code", "terminal-order", "active-after-terminal", "null-entry", "null-version",
-            "fractional-version", "string-version", "missing-create-code", "non-text-label"})
+            "fractional-version", "string-version", "missing-create-code", "non-text-label", "overlong-label"})
     void invalidStageConfigurationLeavesCatalogueUnchanged(String invalid) throws Exception {
         var owner = admin();
         var before = seedStageCatalogue(owner);
@@ -443,10 +447,23 @@ class CaseControllerIntegrationTest {
             case "string-version" -> request.put("version", "0");
             case "missing-create-code" -> stages.insert(0, json.createObjectNode().put("label", "Visita técnica"));
             case "non-text-label" -> first.put("label", 7);
+            case "overlong-label" -> first.put("label", "\u00A0" + "😀".repeat(50) + "a\uFEFF");
             default -> throw new AssertionError(invalid);
         }
         perform(put(STAGES).content(request.toString()), owner).andExpect(status().isBadRequest());
         assertThat(stageCatalogue(owner)).isEqualTo(before);
+    }
+
+    @Test void stageLabelAcceptsOneHundredUtf16UnitsAfterTrimming() throws Exception {
+        var owner = admin();
+        var request = seedStageCatalogue(owner);
+        String label = "😀".repeat(50);
+        stage(request, "RECEIVED").put("label", "\u00A0" + label + "\uFEFF");
+
+        perform(put(STAGES).content(request.toString()), owner).andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(1))
+                .andExpect(jsonPath("$.stages[0].label").value(label));
+        assertThat(stage(stageCatalogue(owner), "RECEIVED").get("label").asText()).isEqualTo(label);
     }
 
     @Test void evenAnUnchangedSaveAdvancesTheCatalogueVersion() throws Exception {
@@ -456,6 +473,27 @@ class CaseControllerIntegrationTest {
                 .andExpect(jsonPath("$.version").value(1));
         perform(put(STAGES).content(initial.toString()), owner).andExpect(status().isConflict());
         assertThat(stageCatalogue(owner).get("stages")).isEqualTo(initial.get("stages"));
+    }
+
+    @Test void repositoryRejectsASecondWriteUsingTheSameVersion() throws Exception {
+        var owner = admin();
+        var first = seedStageCatalogue(owner);
+        var second = first.deepCopy();
+        stage(first, "WELCOMING").put("label", "Primeiro acolhimento");
+        stage(second, "WELCOMING").put("label", "Segundo acolhimento");
+        long version = first.get("version").asLong();
+        var transaction = new TransactionTemplate(transactionManager);
+
+        int firstWrite = transaction.execute(status ->
+                stageConfigurations.updateIfCurrent(1, version, first.get("stages").toString()));
+        assertThat(firstWrite).isEqualTo(1);
+        int secondWrite = transaction.execute(status ->
+                stageConfigurations.updateIfCurrent(1, version, second.get("stages").toString()));
+        assertThat(secondWrite).isZero();
+
+        var saved = stageCatalogue(owner);
+        assertThat(saved.get("version").asLong()).isEqualTo(1);
+        assertThat(saved.get("stages")).isEqualTo(first.get("stages"));
     }
 
     @Test void concurrentStageConfigurationWritesRejectOneStaleVersion() throws Exception {

@@ -57,6 +57,9 @@ public class CaseStageConfigurationService {
             String label = entry.label().textValue();
             if (label == null) throw new IllegalArgumentException("Informe um nome para cada etapa.");
             label = CaseText.trimBrowserWhitespace(label);
+            if (label.length() > 100) {
+                throw new IllegalArgumentException("O nome da etapa deve ter até 100 caracteres.");
+            }
             if (label.isEmpty() || !labels.add(label)) {
                 throw new IllegalArgumentException("Informe nomes únicos para as etapas.");
             }
