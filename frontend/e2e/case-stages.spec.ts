@@ -21,7 +21,9 @@ test('ADMIN configura uma etapa que o NAPNE usa e cujo nome fica registrado no h
     expect(response.status()).toBe(200);
     return await response.json() as CaseStageConfiguration;
   };
-  const nameField = (position: number) => page.getByRole('textbox', { name: 'Nome da etapa ' + position, exact: true });
+  const nameField = (position: number) => page.getByRole('textbox', {
+    name: new RegExp('^Nome da etapa ' + position + '(?: [*])?$')
+  });
   const saveSettings = async () => {
     const saving = responseFor('PUT', adminUrl);
     await page.getByRole('button', { name: 'Salvar etapas', exact: true }).click();
