@@ -2,6 +2,7 @@ package br.edu.ifac.napne360.document;
 
 import br.edu.ifac.napne360.security.AccessGuard;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -30,7 +31,7 @@ public class DossierController {
     @PutMapping
     @PreAuthorize("@accessGuard.canEditDossier(#studentId)")
     public DossierService.DossierView save(@PathVariable Long studentId,
-                                           @RequestBody DossierService.DossierRequest request,
+                                           @Valid @RequestBody DossierService.DossierRequest request,
                                            Authentication auth, HttpServletRequest http) {
         access.requireView(studentId);
         return service.save(studentId, request, auth, http);

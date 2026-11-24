@@ -1,20 +1,30 @@
 package br.edu.ifac.napne360.document;
 
 import br.edu.ifac.napne360.audit.AuditService;
+import br.edu.ifac.napne360.common.ApiExceptionHandler;
 import br.edu.ifac.napne360.identity.*;
+import br.edu.ifac.napne360.security.AccessGuard;
 import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.timeline.TimelineService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.*;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class DossierCatalogTest {
     final DossierRepository dossiers = mock(DossierRepository.class);
@@ -25,6 +35,7 @@ class DossierCatalogTest {
     final ObjectMapper json = Jackson2ObjectMapperBuilder.json().build();
     DossierService service;
     DossierDocument document;
+    MockMvc mvc;
 
     @BeforeEach void setup() {
         service = new DossierService(dossiers, currentUser, timeline, audit, new ReferenceCatalogService(entries));
@@ -33,6 +44,69 @@ class DossierCatalogTest {
         when(dossiers.findByStudentId(1L)).thenReturn(Optional.of(document));
         when(currentUser.require()).thenReturn(UserAccount.builder().name("NAPNE").email("napne@example.test").roles(Set.of(RoleName.NAPNE)).build());
         lenient().when(dossiers.save(any())).thenAnswer(i -> i.getArgument(0));
+        mvc = MockMvcBuilders.standaloneSetup(new DossierController(service, mock(AccessGuard.class), dossiers))
+                .setControllerAdvice(new ApiExceptionHandler())
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(json))
+                .build();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "identification,false", "identification,true",
+            "educationalNeeds,false", "educationalNeeds,true",
+            "healthAndSupport,false", "healthAndSupport,true",
+            "familyContext,false", "familyContext,true",
+            "schoolHistory,false", "schoolHistory,true",
+            "strengths,false", "strengths,true",
+            "difficulties,false", "difficulties,true",
+            "initialInterventions,false", "initialInterventions,true"
+    })
+    void putRejectsMissingOrNullSectionBeforeAnyEffects(String section, boolean explicitNull) throws Exception {
+        document.setIdentification(Map.of("notes", "Identificação anterior"));
+        document.getHistory().add(new DossierDocument.Revision(2L, Map.of(), "napne@example.test",
+                java.time.Instant.parse("2026-11-23T12:00:00Z")));
+        JsonNode before = json.valueToTree(document);
+        ObjectNode body = completePutBody().put("version", 3);
+        if (explicitNull) body.putNull(section);
+        else body.remove(section);
+
+        var result = mvc.perform(put("/api/v1/students/1/dossier")
+                .contentType(MediaType.APPLICATION_JSON).content(body.toString())).andReturn();
+
+        org.junit.jupiter.api.Assertions.assertAll(
+                () -> assertThat(result.getResponse().getStatus()).isEqualTo(400),
+                () -> assertThat(json.<JsonNode>valueToTree(document)).isEqualTo(before),
+                () -> verifyNoInteractions(dossiers, entries, timeline, audit));
+    }
+
+    @Test void putAcceptsEmptySectionsAndNullInitialVersion() throws Exception {
+        when(dossiers.findByStudentId(1L)).thenReturn(Optional.empty());
+
+        mvc.perform(put("/api/v1/students/1/dossier").contentType(MediaType.APPLICATION_JSON)
+                        .content(completePutBody().putNull("version").toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.identification").isEmpty())
+                .andExpect(jsonPath("$.educationalNeeds").isEmpty());
+        verify(dossiers).save(argThat(saved -> saved.getStudentId().equals(1L) && saved.getHistory().isEmpty()));
+    }
+
+    @Test void completePutWithObsoleteVersionReturnsConflictWithoutEffects() throws Exception {
+        JsonNode before = json.valueToTree(document);
+        mvc.perform(put("/api/v1/students/1/dossier").contentType(MediaType.APPLICATION_JSON)
+                        .content(completePutBody().put("version", 2).toString()))
+                .andExpect(status().isConflict());
+        assertThat(json.<JsonNode>valueToTree(document)).isEqualTo(before);
+        verify(dossiers, never()).save(any());
+        verifyNoInteractions(entries, timeline, audit);
+    }
+
+    private ObjectNode completePutBody() {
+        ObjectNode body = json.createObjectNode();
+        for (String section : List.of("identification", "educationalNeeds", "healthAndSupport",
+                "familyContext", "schoolHistory", "strengths", "difficulties", "initialInterventions")) {
+            body.putObject(section);
+        }
+        return body;
     }
 
     // Removing validation must allow invalid input to mutate history and the stored document.

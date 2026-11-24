@@ -8,6 +8,7 @@ import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.timeline.TimelineService;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -75,10 +76,15 @@ public class DossierService {
         return source == null ? new LinkedHashMap<>() : new LinkedHashMap<>(source);
     }
 
-    public record DossierRequest(Map<String, Object> identification, Map<String, Object> educationalNeeds,
-                                 Map<String, Object> healthAndSupport, Map<String, Object> familyContext,
-                                 Map<String, Object> schoolHistory, Map<String, Object> strengths,
-                                 Map<String, Object> difficulties, Map<String, Object> initialInterventions, Long version) {}
+    public record DossierRequest(@NotNull Map<String, Object> identification,
+                                 @NotNull Map<String, Object> educationalNeeds,
+                                 @NotNull Map<String, Object> healthAndSupport,
+                                 @NotNull Map<String, Object> familyContext,
+                                 @NotNull Map<String, Object> schoolHistory,
+                                 @NotNull Map<String, Object> strengths,
+                                 @NotNull Map<String, Object> difficulties,
+                                 @NotNull Map<String, Object> initialInterventions,
+                                 Long version) {}
     public record DossierView(String id, Long studentId, Map<String, Object> identification,
                               Map<String, Object> educationalNeeds, Map<String, Object> healthAndSupport,
                               Map<String, Object> familyContext, Map<String, Object> schoolHistory,

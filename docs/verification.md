@@ -1,5 +1,13 @@
 # Registro de verificação
 
+## CA06 — gravação e concorrência do dossiê
+
+Em 2026-11-24, a branch `codex/napne-ca06-dossie`, a partir de `2442fcd`, foi validada com 235 testes de backend e a jornada `dossier-concurrency.spec.ts` em MySQL 8 e MongoDB 7 isolados, com dados fictícios.
+
+O PUT mantém a exigência de versão atual e agora exige as oito seções como objetos. Uma seção ausente ou nula retorna HTTP 400 sem alterar conteúdo, versão, histórico, linha do tempo ou auditoria. Um objeto vazio é aceito. O teste de contrato reproduziu antes da correção a aceitação indevida das 16 combinações de omissão e valor nulo.
+
+No navegador, dois NAPNEs do mesmo campus carregaram a mesma versão. O primeiro salvamento retornou 200. A segunda sessão recebeu 409 e manteve o texto digitado. Após recarregar, o conteúdo vencedor permaneceu e o histórico exibiu uma única revisão, com autoria, data e comparação. Um PUT sem uma das seções foi recusado, e as três consultas de dossiê, histórico e linha do tempo permaneceram iguais.
+
 ## CA08 — vínculo entre acompanhamentos e casos
 
 Em 2026-11-23, a branch local `codex/napne-ca08-vinculos`, a partir de `3b386b5`, foi validada com JDK 21, Angular 20, MySQL 8, MongoDB 7 e dados fictícios. `mvn verify` aprovou 217 testes. A suíte Angular aprovou 51 testes, e lint e build de produção passaram. A suíte Playwright completa aprovou 20 cenários.
