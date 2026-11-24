@@ -13,7 +13,7 @@ import java.util.Map;
 
 @Document("care_records")
 @CompoundIndex(name = "student_type_created", def = "{'studentId': 1, 'type': 1, 'createdAt': -1}")
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder(toBuilder = true)
 public class CareRecordDocument {
     @Id
     private String id;

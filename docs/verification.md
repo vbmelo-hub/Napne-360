@@ -1,5 +1,13 @@
 # Registro de verificação
 
+## CA08 — vínculo entre acompanhamentos e casos
+
+Em 2026-11-23, a branch local `codex/napne-ca08-vinculos`, a partir de `3b386b5`, foi validada com JDK 21, Angular 20, MySQL 8, MongoDB 7 e dados fictícios. `mvn verify` aprovou 217 testes. A suíte Angular aprovou 51 testes, e lint e build de produção passaram. A suíte Playwright completa aprovou 20 cenários.
+
+A jornada nova exercitou registro sem caso mesmo com um caso ativo, escolha entre dois casos ativos do mesmo estudante, recusa de caso incompatível ou perfil sem permissão, proteção do vínculo para outros perfis e edição após arquivamento. Um teste Java com duas transações em H2 confirmou que a criação aguarda um encerramento concorrente e devolve HTTP 400 sem gravar o registro, o evento ou a auditoria. A prova concorrente usou doubles para os efeitos externos ao banco relacional.
+
+## Verificações anteriores
+
 Registro da primeira entrega de acompanhamento/upload em 2026-11-17: [evidências e limites](verification/2026-11-17-primeira-entrega.md). A [matriz de aceite priorizada](acceptance-matrix.md) preserva os diagnósticos iniciais; não é uma declaração de homologação integral.
 
 Verificação executada em 11/09/2026 na branch `codex/implementacao-completa-napne-360`, usando dados exclusivamente fictícios.

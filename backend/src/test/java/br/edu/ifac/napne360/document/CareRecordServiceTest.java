@@ -34,6 +34,9 @@ import org.springframework.http.converter.json.MappingJackson2HttpMessageConvert
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -59,6 +62,7 @@ class CareRecordServiceTest {
     @Mock NapneCaseRepository cases;
     @Mock DocumentTemplateRepository templates;
     @Mock TimelineRepository events;
+    @Mock PlatformTransactionManager transactionManager;
     private final ObjectMapper json = Jackson2ObjectMapperBuilder.json().build();
     private CareRecordService service;
     private MockMvc mvc;
@@ -67,13 +71,15 @@ class CareRecordServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new CareRecordService(records, currentUser, new TimelineService(events), audit, access, cases, templates);
+        lenient().when(transactionManager.getTransaction(any())).thenAnswer(call -> new SimpleTransactionStatus());
+        service = new CareRecordService(records, currentUser, new TimelineService(events), audit, access, cases,
+                templates, new TransactionTemplate(transactionManager));
         mvc = MockMvcBuilders.standaloneSetup(new CareRecordController(service, access))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(json)).build();
         user = UserAccount.builder().name("Docente de teste").email("autor@example.test")
                 .roles(Set.of(RoleName.TEACHER)).build();
-        when(currentUser.require()).thenReturn(user);
+        lenient().when(currentUser.require()).thenReturn(user);
         record = CareRecordDocument.builder().id("r1").studentId(1L).subjectId(2L)
                 .type(CareRecordType.TEACHER_FEEDBACK).title("Rascunho anterior")
                 .content(new LinkedHashMap<>(Map.of("notes", "Texto anterior", "extra", Map.of("flag", true))))
@@ -132,8 +138,6 @@ class CareRecordServiceTest {
         user.setRoles(Set.of(role));
         record.setType(type);
         record.setCaseId(7L);
-        when(cases.findById(7L)).thenReturn(Optional.of(NapneCase.builder()
-                .student(Student.builder().id(1L).build()).build()));
         allowUpdate();
         when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         Instant beforeUpdate = Instant.now();
@@ -147,7 +151,8 @@ class CareRecordServiceTest {
         assertThat(result.getStatus()).isEqualTo(RecordStatus.ACTIVE);
         assertThat(result.getContent()).containsExactlyInAnyOrderEntriesOf(Map.of("notes", "Texto revisado", "extra", Map.of("flag", true)));
         assertThat(result.getStudentId()).isEqualTo(1L);
-        assertThat(result.getCaseId()).isEqualTo(7L);
+        assertThat(result.getCaseId()).isEqualTo(role == RoleName.NAPNE ? 7L : null);
+        assertThat(record.getCaseId()).isEqualTo(7L);
         assertThat(result.getSubjectId()).isEqualTo(2L);
         assertThat(result.getType()).isEqualTo(type);
         assertThat(result.getCreatedBy()).isEqualTo("autor@example.test");
@@ -215,11 +220,21 @@ class CareRecordServiceTest {
         assertThat(record.getCreatedBy()).isEqualTo("outro@example.test");
     }
 
-    @Test
-    void anotherAuthorCannotReviseBeforeMutation() throws Exception {
-        allowUpdate();
+    @ParameterizedTest
+    @ValueSource(longs = {7L, 99L})
+    void anotherAuthorGetsForbiddenWhetherCaseIdMatchesOrNot(long caseId) throws Exception {
+        when(records.findById("r1")).thenReturn(Optional.of(record));
+        lenient().when(access.canWritePedagogical(1L)).thenReturn(true);
+        lenient().when(access.canViewSubject(1L, 2L)).thenReturn(true);
         record.setCreatedBy("outro@example.test");
-        assertRejectedUnchanged(AccessDeniedException.class, 1L, payload());
+        record.setCaseId(7L);
+        var before = json.<JsonNode>valueToTree(record);
+        mvc.perform(put("/api/v1/students/1/records/r1").contentType(MediaType.APPLICATION_JSON)
+                        .content(payload().put("caseId", caseId).toString()))
+                .andExpect(status().isForbidden());
+        assertThat(json.<JsonNode>valueToTree(record)).isEqualTo(before);
+        verify(records, never()).save(any());
+        verifyNoInteractions(events, audit);
     }
 
     @Test
@@ -231,7 +246,8 @@ class CareRecordServiceTest {
     @ParameterizedTest
     @ValueSource(strings = {"type", "caseId", "subjectId"})
     void linksCannotBeChangedBeforeMutation(String field) throws Exception {
-        when(records.findById("r1")).thenReturn(Optional.of(record));
+        if (field.equals("caseId")) allowUpdate();
+        else when(records.findById("r1")).thenReturn(Optional.of(record));
         ObjectNode payload = payload();
         if (field.equals("type")) payload.put(field, "TUTOR_OBSERVATION");
         else payload.put(field, 99L);
@@ -242,7 +258,23 @@ class CareRecordServiceTest {
     void revokedSubjectCannotBeRevisedBeforeMutation() throws Exception {
         when(records.findById("r1")).thenReturn(Optional.of(record));
         when(access.canWritePedagogical(1L)).thenReturn(true);
-        assertRejectedUnchanged(AccessDeniedException.class, 1L, payload());
+        assertRejectedUnchanged(AccessDeniedException.class, 1L, payload().put("caseId", 99L));
+    }
+
+    @Test
+    void fractionalCaseIdCannotBeTruncatedToExistingLinkOnUpdate() throws Exception {
+        record.setCaseId(7L);
+        lenient().when(records.findById("r1")).thenReturn(Optional.of(record));
+        lenient().when(access.canWritePedagogical(1L)).thenReturn(true);
+        lenient().when(access.canViewSubject(1L, 2L)).thenReturn(true);
+        lenient().when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        var before = json.<JsonNode>valueToTree(record);
+
+        mvc.perform(put("/api/v1/students/1/records/r1").contentType(MediaType.APPLICATION_JSON)
+                        .content(payload().put("caseId", 7.5).toString()))
+                .andExpect(status().isBadRequest());
+        assertThat(json.<JsonNode>valueToTree(record)).isEqualTo(before);
+        verifyNoInteractions(currentUser, records, cases, events, audit);
     }
 
     @Test
@@ -293,6 +325,116 @@ class CareRecordServiceTest {
         assertThat(event.getValue().getVisibility()).isEqualTo(TimelineVisibility.PEDAGOGICAL);
         assertThat(event.getValue().getData()).containsExactlyInAnyOrderEntriesOf(
                 Map.of("recordId", "new-record", "type", "TEACHER_FEEDBACK", "subjectId", 2L));
+    }
+
+    @Test
+    void napneCanCreateLinkedRecordForActiveCaseWithoutAddingCaseToTimelineEvent() {
+        user.setRoles(Set.of(RoleName.NAPNE));
+        Student student = Student.builder().id(1L).build();
+        NapneCase activeCase = NapneCase.builder().id(7L).student(student)
+                .stage(new br.edu.ifac.napne360.casework.CaseStage("CUSTOM_0123456789abcdef0123456789abcdef")).build();
+        when(access.canWritePedagogical(1L)).thenReturn(true);
+        when(cases.findByIdAndStudentIdForLink(7L, 1L)).thenReturn(Optional.of(activeCase));
+        when(records.save(any())).thenAnswer(invocation -> {
+            CareRecordDocument created = invocation.getArgument(0);
+            created.setId("linked-record");
+            return created;
+        });
+        var request = new CareRecordService.CareRecordRequest(7L, null, CareRecordType.CASE_STUDY,
+                RecordStatus.ACTIVE, "Encaminhamento", Map.of("notes", "nota"), null);
+
+        CareRecordDocument created = service.create(1L, request, null, null);
+
+        assertThat(created.getCaseId()).isEqualTo(7L);
+        verify(cases).findByIdAndStudentIdForLink(7L, 1L);
+        verify(cases, never()).findById(7L);
+        var event = ArgumentCaptor.forClass(TimelineEventDocument.class);
+        verify(events).save(event.capture());
+        assertThat(event.getValue().getData()).doesNotContainKey("caseId");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"missing", "other-student", "closed", "archived"})
+    void creationRejectsInvalidOrTerminalLinkedCaseBeforeAnyWrite(String scenario) {
+        user.setRoles(Set.of(RoleName.NAPNE));
+        when(access.canWritePedagogical(1L)).thenReturn(true);
+        if (!scenario.equals("missing")) {
+            Long owner = scenario.equals("other-student") ? 2L : 1L;
+            var stage = switch (scenario) {
+                case "closed" -> br.edu.ifac.napne360.casework.CaseStage.CLOSED;
+                case "archived" -> br.edu.ifac.napne360.casework.CaseStage.ARCHIVED;
+                default -> br.edu.ifac.napne360.casework.CaseStage.RECEIVED;
+            };
+            if (owner.equals(1L)) when(cases.findByIdAndStudentIdForLink(7L, 1L)).thenReturn(Optional.of(NapneCase.builder().id(7L)
+                    .student(Student.builder().id(owner).build()).stage(stage).build()));
+        }
+        var request = new CareRecordService.CareRecordRequest(7L, null, CareRecordType.CASE_STUDY,
+                RecordStatus.ACTIVE, "Encaminhamento", Map.of(), null);
+        lenient().when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertThatThrownBy(() -> service.create(1L, request, null, null)).isInstanceOf(IllegalArgumentException.class);
+
+        verify(records, never()).save(any());
+        verify(cases).findByIdAndStudentIdForLink(7L, 1L);
+        verifyNoInteractions(events, audit);
+    }
+
+    @Test
+    void nonNapneCannotCreateLinkedRecord() {
+        user.setRoles(Set.of(RoleName.COTEP));
+        when(access.canWritePedagogical(1L)).thenReturn(true);
+        var request = new CareRecordService.CareRecordRequest(7L, null, CareRecordType.PEDAGOGICAL_GUIDANCE,
+                RecordStatus.ACTIVE, "Encaminhamento", Map.of(), null);
+
+        assertThatThrownBy(() -> service.create(1L, request, null, null)).isInstanceOf(AccessDeniedException.class);
+
+        verify(records, never()).save(any());
+        verify(cases, never()).findByIdAndStudentIdForLink(any(), any());
+        verifyNoInteractions(events, audit);
+    }
+
+    @Test
+    void nonNapneListRedactsCaseIdOnCopiesOnly() {
+        record.setCaseId(7L);
+        when(records.findByStudentIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(record));
+        when(access.canViewSubject(1L, 2L)).thenReturn(true);
+
+        List<CareRecordDocument> result = service.list(1L, null);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().getCaseId()).isNull();
+        assertThat(record.getCaseId()).isEqualTo(7L);
+        assertThat(result.getFirst()).isNotSameAs(record);
+    }
+
+    @Test
+    void napneListDoesNotHidePersistedCaseLink() {
+        user.setRoles(Set.of(RoleName.NAPNE));
+        record.setCaseId(7L);
+        record.setType(CareRecordType.CASE_STUDY);
+        when(records.findByStudentIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(record));
+
+        List<CareRecordDocument> result = service.list(1L, null);
+
+        assertThat(result).containsExactly(record);
+        assertThat(result.getFirst().getCaseId()).isEqualTo(7L);
+    }
+
+    @Test
+    void nonNapneUpdateAcceptsRedactedNullAndReturnsRedactedCopy() throws Exception {
+        record.setCaseId(7L);
+        allowUpdate();
+        when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        ObjectNode payload = payload();
+        payload.putNull("caseId");
+
+        CareRecordDocument result = service.update(1L, "r1", request(payload), null, null);
+
+        assertThat(record.getCaseId()).isEqualTo(7L);
+        assertThat(result.getCaseId()).isNull();
+        assertThat(result).isNotSameAs(record);
+        assertThat(result.getVersion()).isEqualTo(4L);
+        assertThat(result.getHistory()).hasSize(2);
     }
 
     private void allowUpdate() {

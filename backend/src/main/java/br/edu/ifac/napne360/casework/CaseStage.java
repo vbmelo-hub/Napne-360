@@ -34,7 +34,7 @@ public record CaseStage(String code) {
     @JsonValue
     public String code() { return code; }
 
-    boolean isActive() {
+    public boolean isActive() {
         return !equals(CLOSED) && !equals(ARCHIVED);
     }
 

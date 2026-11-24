@@ -7,7 +7,7 @@ import { StudentDetailComponent } from './student-detail.component';
 import { ApiService } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
 import { ToastService } from '../core/toast.service';
-import { CareRecord, Dossier, SessionUser, StudentDetails } from '../core/models';
+import { CareRecord, Dossier, NapneCase, SessionUser, StudentDetails } from '../core/models';
 
 interface AuthServiceTestAccess {
   state: { set(user: SessionUser | null): void };
@@ -150,6 +150,89 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     (authService as unknown as AuthServiceTestAccess).state.set(user);
     fixture.detectChanges();
   }
+
+  function careCase(id: number, overrides: Partial<NapneCase> = {}): NapneCase {
+    return {
+      id, studentId: 1, source: 'Coordenação', stage: 'RECEIVED', stageLabel: 'Recebido',
+      allowedNextStages: [], openedAt: '2026-11-23T12:00:00Z', closedAt: null,
+      responsible: 'NAPNE Member', responsibleId: 2, summary: null, version: 0, ...overrides
+    };
+  }
+
+  function caseSelect(): HTMLSelectElement | null {
+    return fixture.nativeElement.querySelector('select[formControlName="caseId"]');
+  }
+
+  it('mantém o vínculo opcional mesmo com um caso ativo e envia somente a escolha explícita', () => {
+    const active = careCase(50);
+    const custom = careCase(51, { source: 'Solicitação do estudante', stage: 'CUSTOM_123', stageLabel: 'Visita inicial' });
+    component.cases.set([active]);
+    component.tab.set('records');
+    fixture.detectChanges();
+
+    const select = caseSelect();
+    expect(select).not.toBeNull();
+    expect(select?.value).toBe('');
+    apiService.createRecord.and.returnValue(of({ ...mockRecord, id: 'new-unlinked', caseId: null }));
+    component.recordForm.controls.title.setValue('Registro geral');
+    component.saveRecord();
+    expect(apiService.createRecord).toHaveBeenCalledWith(1, jasmine.objectContaining({ caseId: null }));
+
+    component.cases.set([
+      active, custom, careCase(52, { stage: 'CLOSED' }), careCase(53, { stage: 'ARCHIVED' }),
+      careCase(54, { studentId: 2 })
+    ]);
+    fixture.detectChanges();
+    expect(Array.from(select?.options ?? []).map(option => option.value)).toEqual(['', '50', '51']);
+    expect(select?.options[2].textContent).toContain('Caso #51 · Solicitação do estudante · Visita inicial · 23/11/2026');
+    if (!select) return;
+    select.value = '51';
+    select.dispatchEvent(new Event('change'));
+    apiService.createRecord.and.returnValue(of({ ...mockRecord, id: 'new-linked', caseId: 51, title: 'Visita' }));
+    component.recordForm.controls.title.setValue('Visita');
+    component.saveRecord();
+    expect(apiService.createRecord).toHaveBeenCalledWith(1, jasmine.objectContaining({ caseId: 51 }));
+    fixture.detectChanges();
+    expect(select.value).toBe('');
+  });
+
+  it('exibe o vínculo arquivado no cartão e na edição para NAPNE e oculta o vínculo dos demais perfis', () => {
+    component.cases.set([careCase(50, { stage: 'ARCHIVED', stageLabel: 'Arquivado' })]);
+    component.editRecord(mockRecord);
+    fixture.detectChanges();
+
+    expect(caseSelect()).toBeNull();
+    expect(fixture.nativeElement.querySelector('select[formControlName="status"]').closest('form').textContent).toContain('Caso #50 · Coordenação · Arquivado');
+    expect(fixture.nativeElement.querySelector('[data-record-id="rec-1"]').textContent).toContain('Caso #50 · Coordenação · Arquivado');
+
+    component.cancelRecordEdit();
+    setSessionUser({ token: 'jwt-docente', id: 7, name: 'Docente', email: 'docente@example.test', campusId: 1, roles: ['TEACHER'] });
+    expect(caseSelect()).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-record-id="rec-1"]').textContent).not.toContain('Caso #50');
+  });
+
+  it('atualiza as opções ao recusar um caso encerrado durante o preenchimento e mantém o texto', () => {
+    component.cases.set([careCase(50)]);
+    component.tab.set('records');
+    fixture.detectChanges();
+
+    const select = caseSelect();
+    expect(select).not.toBeNull();
+    if (!select) return;
+    select.value = '50';
+    select.dispatchEvent(new Event('change'));
+    component.recordForm.controls.title.setValue('Texto a preservar');
+    apiService.createRecord.and.returnValue(throwError(() => ({ status: 400 })));
+    apiService.cases.and.returnValue(of([careCase(50, { stage: 'CLOSED' })]));
+    component.saveRecord();
+    fixture.detectChanges();
+
+    expect(apiService.createRecord).toHaveBeenCalledTimes(1);
+    expect(component.recordForm.controls.title.value).toBe('Texto a preservar');
+    expect(select.value).toBe('');
+    expect(Array.from(select.options).map(option => option.value)).toEqual(['']);
+    expect(toastService.show).toHaveBeenCalledWith('O caso escolhido já não está ativo. Confira o vínculo antes de salvar.', 'error');
+  });
 
   it('permite iniciar edição de acompanhamento, preenchendo campos e preservando vínculos', () => {
     expect(component.editingRecord()).toBeNull();

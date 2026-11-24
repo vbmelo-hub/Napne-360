@@ -1,6 +1,9 @@
 package br.edu.ifac.napne360.casework;
 
 import br.edu.ifac.napne360.audit.AuditService;
+import br.edu.ifac.napne360.document.CareRecordDocument;
+import br.edu.ifac.napne360.document.CareRecordRepository;
+import br.edu.ifac.napne360.document.DocumentTemplateRepository;
 import br.edu.ifac.napne360.identity.*;
 import br.edu.ifac.napne360.student.Student;
 import br.edu.ifac.napne360.student.StudentRepository;
@@ -27,8 +30,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +45,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -66,6 +72,8 @@ class CaseControllerIntegrationTest {
     @Autowired JdbcTemplate sql;
     @MockitoBean TimelineService timeline;
     @MockitoBean AuditService audit;
+    @MockitoBean CareRecordRepository records;
+    @MockitoBean DocumentTemplateRepository templates;
     Campus campus;
     UserAccount actor;
     UserAccount candidate;
@@ -82,6 +90,75 @@ class CaseControllerIntegrationTest {
         student = students.saveAndFlush(Student.builder().campus(campus).course(course).registration(token).civilName("Pessoa fictícia").build());
         legacy = cases.saveAndFlush(NapneCase.builder().student(student).responsible(actor).source("Legado")
                 .summary("Resumo reservado").openedAt(Instant.parse("2026-01-01T10:00:00Z")).build());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void careRecordCreateUsesJpaTransactionOnlyForLinkedSave(boolean linked) throws Exception {
+        when(templates.findByDocumentTypeAndActiveTrueOrderByUpdatedAtDesc("CASE_STUDY")).thenAnswer(call -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("template lookup").isFalse();
+            return List.of();
+        });
+        when(records.save(any(CareRecordDocument.class))).thenAnswer(call -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("Mongo save").isEqualTo(linked);
+            CareRecordDocument saved = call.getArgument(0);
+            saved.setId("r1");
+            assertThat(saved.getCaseId()).isEqualTo(linked ? legacy.getId() : null);
+            return saved;
+        });
+        doAnswer(call -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("timeline").isFalse();
+            return null;
+        }).when(timeline).append(eq(student.getId()), eq("CARE_RECORD_CREATED"), anyString(), anyString(), any(), anyMap());
+        doAnswer(call -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("audit entry").isFalse();
+            return null;
+        }).when(audit).record(any(), any(), eq("CREATE"), eq("CARE_RECORD"), eq("r1"), eq("SUCCESS"), eq("CASE_STUDY"));
+
+        perform(careRecordPost(linked ? legacy.getId().toString() : "null"), actor).andExpect(status().isOk());
+        var effects = inOrder(records, timeline, audit);
+        effects.verify(records).save(any(CareRecordDocument.class));
+        effects.verify(timeline).append(eq(student.getId()), eq("CARE_RECORD_CREATED"), anyString(), anyString(), any(), anyMap());
+        effects.verify(audit).record(any(), any(), eq("CREATE"), eq("CARE_RECORD"), eq("r1"), eq("SUCCESS"), eq("CASE_STUDY"));
+    }
+
+    @Test void careRecordLinkWaitsForCaseClosureAndRejectsCommittedTerminalStage() throws Exception {
+        var transaction = new TransactionTemplate(transactionManager);
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var result = transaction.execute(status -> {
+                var closingCase = cases.findById(legacy.getId()).orElseThrow();
+                closingCase.setStage(CaseStage.CLOSED);
+                closingCase.setClosedAt(Instant.now());
+                cases.saveAndFlush(closingCase);
+                var pending = executor.submit(() -> perform(careRecordPost(legacy.getId().toString()), actor)
+                        .andReturn().getResponse().getStatus());
+                await().pollInSameThread().pollInterval(Duration.ofMillis(20)).atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                        assertThat(sql.queryForObject("""
+                                select count(*) from information_schema.sessions
+                                where blocker_id = session_id()
+                                """, Integer.class)).isEqualTo(1));
+                return pending;
+            });
+            assertThat(result.get(10, TimeUnit.SECONDS)).isEqualTo(400);
+        }
+        assertThat(cases.findById(legacy.getId()).orElseThrow().getStage()).isEqualTo(CaseStage.CLOSED);
+        verifyNoInteractions(records, timeline, audit);
+    }
+
+    @Test void careRecordCreateRejectsFractionalCaseIdBeforeSave() throws Exception {
+        when(records.save(any(CareRecordDocument.class))).thenAnswer(call -> {
+            CareRecordDocument saved = call.getArgument(0);
+            saved.setId("r1");
+            return saved;
+        });
+
+        perform(careRecordPost(legacy.getId() + ".5"), actor).andExpect(status().isBadRequest());
+        verifyNoInteractions(records, timeline, audit);
+    }
+
+    private MockHttpServletRequestBuilder careRecordPost(String caseIdJson) {
+        return post("/api/v1/students/" + student.getId() + "/records")
+                .content("{\"caseId\":" + caseIdJson + ",\"type\":\"CASE_STUDY\",\"title\":\"Registro fictício\"}");
     }
 
     @ParameterizedTest @ValueSource(strings = {"{}", "{\"version\":null}", "{\"version\":1}", "{\"version\":-1}"})

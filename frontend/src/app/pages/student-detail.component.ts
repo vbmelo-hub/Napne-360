@@ -82,8 +82,25 @@ import { CaseCardComponent } from './case-card.component';
 
     @if(tab()==='records'){
       <div class="section-header"><div><span class="eyebrow">Prática pedagógica</span><h2>Acompanhamento</h2><p>Registros organizados por tipo, autoria e situação.</p></div></div>
-      @if(canCreateRecord()||editingRecord()){<form class="card stack create-panel" [formGroup]="recordForm" (ngSubmit)="saveRecord()"><div class="section-header"><div><h2 id="record-form-heading" tabindex="-1">{{editingRecord()?'Editar registro':'Novo registro'}}</h2><p>{{editingRecord()?'Atualize as informações pedagógicas. Os vínculos com componente e caso são preservados.':'O formulário exibe somente os campos pertinentes ao tipo escolhido.'}}</p></div></div><fieldset [disabled]="actionBusy()" class="record-form-fields"><div class="grid two"><label class="required">Tipo<select formControlName="type" [attr.disabled]="editingRecord()?'':null"><option value="">Selecione</option>@if(editingRecord()&&!hasRecordType(editingRecord()!.type)){<option [value]="editingRecord()!.type">{{label(editingRecord()!.type)}}</option>}@for(option of recordTypes();track option.value){<option [value]="option.value">{{option.label}}</option>}</select></label><label class="required">Título<input formControlName="title"></label></div><label>Componente curricular<select formControlName="subjectId" [attr.disabled]="editingRecord()?'':null"><option value="">Sem componente específico</option>@for(subject of subjects();track subject.id){<option [value]="subject.id">{{subject.name}}</option>}</select></label><div class="grid two" [formGroup]="structuredRecord">@for(field of activeRecordFields();track field.key){<label>{{field.label}}<textarea [formControlName]="field.key"></textarea></label>}</div><label>Comentários adicionais<textarea formControlName="notes" placeholder="Registre somente informações necessárias à finalidade pedagógica."></textarea></label><label>Situação<select formControlName="status"><option value="DRAFT">Rascunho</option><option value="ACTIVE">Finalizado</option></select></label></fieldset><div class="record-actions"><button type="submit" [disabled]="recordForm.invalid||actionBusy()">{{editingRecord()?'Salvar alterações':'Salvar registro'}}</button>@if(editingRecord()){<button type="button" class="secondary" (click)="cancelRecordEdit()" [disabled]="actionBusy()">Cancelar edição</button>}</div></form>}
-      <section class="records-grid">@if(records().length===0){<div class="empty-state card"><span class="empty-state-mark">0</span><h3>Nenhum registro pedagógico</h3><p>Os registros autorizados para este estudante aparecerão aqui.</p></div>}@for(item of records();track item.id){<article class="card record-card" [attr.data-record-id]="item.id"><div class="record-head"><div><span class="eyebrow">{{label(item.type)}}</span><h3>{{item.title}}</h3></div><div class="record-badges"><span [class]="'badge badge--'+tone(item.status)">{{label(item.status)}}</span>@if(canEditRecord(item)){<button type="button" class="secondary compact" (click)="editRecord(item)" [disabled]="actionBusy()">Editar</button>}</div></div><div class="record-content">@for(field of recordFields[item.type];track field.key){@if(item.content[field.key]){<p><strong>{{field.label}}</strong><span>{{item.content[field.key]}}</span></p>}}@if(item.content['notes']){<p><strong>Comentários adicionais</strong><span>{{item.content['notes']}}</span></p>}</div>@if(item.history&&item.history.length>0){<details class="record-history"><summary>Histórico de versões ({{item.history.length}})</summary><div class="history-revisions">@for(rev of item.history;track rev.occurredAt){<article class="revision-card"><header class="revision-header"><strong>Versão {{rev.version!==null&&rev.version!==undefined?rev.version:'anterior'}}: {{rev.title}}</strong><span [class]="'badge badge--'+tone(rev.status)">{{label(rev.status)}}</span></header><small>{{rev.author}} · {{rev.occurredAt|date:'dd/MM/yyyy, HH:mm'}}</small><div class="revision-content">@for(field of recordFields[item.type];track field.key){@if(rev.content[field.key]){<p><strong>{{field.label}}:</strong> <span>{{rev.content[field.key]}}</span></p>}}@if(rev.content['notes']){<p><strong>Comentários adicionais:</strong> <span>{{rev.content['notes']}}</span></p>}</div></article>}</div></details>}<footer>{{item.createdBy}} · {{item.updatedAt|date:'dd/MM/yyyy, HH:mm'}}@if(item.version!==null&&item.version!==undefined){ · v{{item.version}}}</footer></article>}</section>
+      @if(canCreateRecord()||editingRecord()){<form class="card stack create-panel" [formGroup]="recordForm" (ngSubmit)="saveRecord()"><div class="section-header"><div><h2 id="record-form-heading" tabindex="-1">{{editingRecord()?'Editar registro':'Novo registro'}}</h2><p>{{editingRecord()?'Atualize as informações pedagógicas. Os vínculos do registro são preservados.':'O formulário exibe somente os campos pertinentes ao tipo escolhido.'}}</p></div></div><fieldset [disabled]="actionBusy()" class="record-form-fields"><div class="grid two"><label class="required">Tipo<select formControlName="type" [attr.disabled]="editingRecord()?'':null"><option value="">Selecione</option>@if(editingRecord()&&!hasRecordType(editingRecord()!.type)){<option [value]="editingRecord()!.type">{{label(editingRecord()!.type)}}</option>}@for(option of recordTypes();track option.value){<option [value]="option.value">{{option.label}}</option>}</select></label><label class="required">Título<input formControlName="title"></label></div><label>Componente curricular<select formControlName="subjectId" [attr.disabled]="editingRecord()?'':null"><option value="">Sem componente específico</option>@for(subject of subjects();track subject.id){<option [value]="subject.id">{{subject.name}}</option>}</select></label>
+        @if(auth.hasRole('NAPNE')){
+          @if(editingRecord();as record){
+            @if(record.caseId;as caseId){<p><strong>Caso vinculado</strong><br>{{recordCaseLabel(caseId)}}</p>}
+          }@else{
+            <label>Caso vinculado (opcional)
+              <select formControlName="caseId">
+                <option value="">Sem caso vinculado</option>
+                @for(item of activeRecordCases();track item.id){
+                  <option [value]="item.id">{{caseLabel(item)}} · {{item.openedAt|date:'dd/MM/yyyy'}}</option>
+                }
+              </select>
+            </label>
+          }
+        }
+        <div class="grid two" [formGroup]="structuredRecord">@for(field of activeRecordFields();track field.key){<label>{{field.label}}<textarea [formControlName]="field.key"></textarea></label>}</div><label>Comentários adicionais<textarea formControlName="notes" placeholder="Registre somente informações necessárias à finalidade pedagógica."></textarea></label><label>Situação<select formControlName="status"><option value="DRAFT">Rascunho</option><option value="ACTIVE">Finalizado</option></select></label></fieldset><div class="record-actions"><button type="submit" [disabled]="recordForm.invalid||actionBusy()">{{editingRecord()?'Salvar alterações':'Salvar registro'}}</button>@if(editingRecord()){<button type="button" class="secondary" (click)="cancelRecordEdit()" [disabled]="actionBusy()">Cancelar edição</button>}</div></form>}
+      <section class="records-grid">@if(records().length===0){<div class="empty-state card"><span class="empty-state-mark">0</span><h3>Nenhum registro pedagógico</h3><p>Os registros autorizados para este estudante aparecerão aqui.</p></div>}@for(item of records();track item.id){<article class="card record-card" [attr.data-record-id]="item.id"><div class="record-head"><div><span class="eyebrow">{{label(item.type)}}</span><h3>{{item.title}}</h3></div><div class="record-badges"><span [class]="'badge badge--'+tone(item.status)">{{label(item.status)}}</span>@if(canEditRecord(item)){<button type="button" class="secondary compact" (click)="editRecord(item)" [disabled]="actionBusy()">Editar</button>}</div></div>
+        @if(auth.hasRole('NAPNE')&&item.caseId;as caseId){<p>{{recordCaseLabel(caseId)}}</p>}
+        <div class="record-content">@for(field of recordFields[item.type];track field.key){@if(item.content[field.key]){<p><strong>{{field.label}}</strong><span>{{item.content[field.key]}}</span></p>}}@if(item.content['notes']){<p><strong>Comentários adicionais</strong><span>{{item.content['notes']}}</span></p>}</div>@if(item.history&&item.history.length>0){<details class="record-history"><summary>Histórico de versões ({{item.history.length}})</summary><div class="history-revisions">@for(rev of item.history;track rev.occurredAt){<article class="revision-card"><header class="revision-header"><strong>Versão {{rev.version!==null&&rev.version!==undefined?rev.version:'anterior'}}: {{rev.title}}</strong><span [class]="'badge badge--'+tone(rev.status)">{{label(rev.status)}}</span></header><small>{{rev.author}} · {{rev.occurredAt|date:'dd/MM/yyyy, HH:mm'}}</small><div class="revision-content">@for(field of recordFields[item.type];track field.key){@if(rev.content[field.key]){<p><strong>{{field.label}}:</strong> <span>{{rev.content[field.key]}}</span></p>}}@if(rev.content['notes']){<p><strong>Comentários adicionais:</strong> <span>{{rev.content['notes']}}</span></p>}</div></article>}</div></details>}<footer>{{item.createdBy}} · {{item.updatedAt|date:'dd/MM/yyyy, HH:mm'}}@if(item.version!==null&&item.version!==undefined){ · v{{item.version}}}</footer></article>}</section>
     }
 
     @if(tab()==='pei'){
@@ -132,7 +149,10 @@ export class StudentDetailComponent implements OnInit{
   readonly id=Number(this.route.snapshot.paramMap.get('id'));readonly tabs=[{id:'dossier',label:'Dossiê'},{id:'cases',label:'Casos'},{id:'records',label:'Acompanhamento'},{id:'pei',label:'PEI'},{id:'documents',label:'Documentos'},{id:'timeline',label:'Linha do tempo'}];readonly dossierFields=DOSSIER_FIELDS;readonly recordFields=RECORD_FIELDS;readonly dossierSections=[{key:'identification',label:'Identificação e demanda'},{key:'educationalNeeds',label:'Necessidades educacionais'},{key:'healthAndSupport',label:'Saúde e serviços de apoio'},{key:'familyContext',label:'Contexto familiar e autonomia'},{key:'schoolHistory',label:'História escolar'},{key:'strengths',label:'Potencialidades'},{key:'difficulties',label:'Dificuldades'},{key:'initialInterventions',label:'Intervenções e acompanhamento'}];readonly label=labelFor;readonly tone=toneFor;
   readonly structuredDossier=new FormRecord<FormControl<string>>(Object.fromEntries(Object.entries(DOSSIER_FIELDS).flatMap(([section,fields])=>fields.map(field=>[section+'.'+field.key,new FormControl('',{nonNullable:true})]))));readonly structuredRecord=new FormRecord<FormControl<string>>(Object.fromEntries(Object.values(RECORD_FIELDS).flat().map(field=>[field.key,new FormControl('',{nonNullable:true})])));
   readonly student=signal<StudentDetails|null>(null);readonly dossier=signal<Dossier|null>(null);readonly cases=signal<NapneCase[]>([]);readonly records=signal<CareRecord[]>([]);readonly editingRecord=signal<CareRecord|null>(null);readonly peis=signal<Pei[]>([]);readonly timeline=signal<TimelineEvent[]>([]);readonly subjects=signal<Subject[]>([]);readonly courses=signal<Course[]>([]);readonly attachments=signal<Attachment[]>([]);readonly teachers=signal<{id:number,name:string,subjectId:number}[]>([]);readonly loading=signal(true);readonly loadError=signal('');readonly tab=signal('dossier');readonly timelineFilter=signal('');readonly selectedFile=signal<File|null>(null);readonly editStudentOpen=signal(false);readonly studentSaving=signal(false);readonly actionBusy=signal(false);readonly dossierSaving=signal(false);readonly dossierDirty=signal(false);readonly historyVisible=signal(false);readonly historyLoading=signal(false);readonly dossierHistory=signal<{version:number,fields:Record<string,unknown>,author:string,occurredAt:string}[]>([]);
-  readonly attachmentCategory=this.fb.nonNullable.control('Laudo ou documento');readonly previousAttachment=this.fb.nonNullable.control('');readonly studentEditForm=this.fb.nonNullable.group({courseId:['',Validators.required],civilName:['',Validators.required],socialName:[''],birthDate:[''],institutionalEmail:['',Validators.email],phone:['']});readonly dossierForm=this.fb.nonNullable.group({identification:[''],educationalNeeds:[''],healthAndSupport:[''],familyContext:[''],schoolHistory:[''],strengths:[''],difficulties:[''],initialInterventions:['']});readonly caseForm=this.fb.nonNullable.group({source:['',Validators.required],summary:['']});readonly recordForm=this.fb.nonNullable.group({type:['',Validators.required],title:['',Validators.required],notes:[''],subjectId:[''],status:['DRAFT']});readonly peiForm=this.fb.nonNullable.group({subjectId:['',Validators.required],academicTermId:['',Validators.required],teacherId:['',Validators.required]});
+  readonly attachmentCategory=this.fb.nonNullable.control('Laudo ou documento');readonly previousAttachment=this.fb.nonNullable.control('');readonly studentEditForm=this.fb.nonNullable.group({courseId:['',Validators.required],civilName:['',Validators.required],socialName:[''],birthDate:[''],institutionalEmail:['',Validators.email],phone:['']});readonly dossierForm=this.fb.nonNullable.group({identification:[''],educationalNeeds:[''],healthAndSupport:[''],familyContext:[''],schoolHistory:[''],strengths:[''],difficulties:[''],initialInterventions:['']});readonly caseForm=this.fb.nonNullable.group({source:['',Validators.required],summary:['']});readonly recordForm=this.fb.nonNullable.group({type:['',Validators.required],title:['',Validators.required],notes:[''],subjectId:[''],caseId:[''],status:['DRAFT']});readonly peiForm=this.fb.nonNullable.group({subjectId:['',Validators.required],academicTermId:['',Validators.required],teacherId:['',Validators.required]});
+  readonly activeRecordCases = computed(() => this.cases().filter(item =>
+    item.studentId === this.id && item.stage !== 'CLOSED' && item.stage !== 'ARCHIVED'
+  ));
   readonly categoryControl=this.fb.nonNullable.control('');
   readonly needCategories=signal<ReferenceOption[]>([]);
   readonly academicTerms=signal<ReferenceOption[]>([]);
@@ -206,6 +226,15 @@ export class StudentDetailComponent implements OnInit{
     this.cases.update(items=>items.map(item=>item.id===value.id?value:item));
     if(mutated)this.refreshTimeline();
   }
+  caseLabel(item: NapneCase): string {
+    return `Caso #${item.id} · ${item.source} · ${item.stageLabel ?? this.label(item.stage)}`;
+  }
+
+  recordCaseLabel(id: number): string {
+    const item = this.cases().find(item => item.id === id && item.studentId === this.id);
+    return item ? this.caseLabel(item) : `Caso #${id}`;
+  }
+
   hasRecordType(type:string):boolean{return this.recordTypes().some(t=>t.value===type)}
   canEditRecord(item:CareRecord):boolean{
     if(this.auth.hasRole('NAPNE'))return true;
@@ -241,7 +270,7 @@ export class StudentDetailComponent implements OnInit{
   }
   cancelRecordEdit(){
     this.editingRecord.set(null);
-    this.recordForm.reset({type:this.recordTypes()[0]?.value??'',title:'',notes:'',subjectId:'',status:'DRAFT'});
+    this.recordForm.reset({type:this.recordTypes()[0]?.value??'',title:'',notes:'',subjectId:'',caseId:'',status:'DRAFT'});
     this.structuredRecord.reset();
   }
   saveRecord(){
@@ -266,18 +295,49 @@ export class StudentDetailComponent implements OnInit{
         }
       });
     }else{
+      const caseId = this.auth.hasRole('NAPNE') && v.caseId ? Number(v.caseId) : null;
+      if (caseId !== null && !this.activeRecordCases().some(item => item.id === caseId)) {
+        this.clearUnavailableRecordCase();
+        return;
+      }
       const content={notes:v.notes,...structured};
       this.actionBusy.set(true);
-      this.api.createRecord(this.id,{type:v.type,title:v.title,status:v.status,subjectId:v.subjectId?Number(v.subjectId):null,content}).subscribe({
+      this.api.createRecord(this.id,{type:v.type,title:v.title,status:v.status,subjectId:v.subjectId?Number(v.subjectId):null,caseId,content}).subscribe({
         next:r=>{
           this.records.update(a=>[r,...a]);
           this.cancelRecordEdit();
           this.done('Registro pedagógico salvo.');
         },
-        error:e=>this.failed(e.status,'salvar o registro')
+        error: e => {
+          if (e.status === 400 && caseId !== null) {
+            this.refreshRecordCasesAfterRejection(caseId);
+          } else {
+            this.failed(e.status, 'salvar o registro');
+          }
+        }
       });
     }
   }
+  private refreshRecordCasesAfterRejection(caseId: number) {
+    this.api.cases(this.id).subscribe({
+      next: cases => {
+        this.cases.set(cases);
+        if (this.activeRecordCases().some(item => item.id === caseId)) {
+          this.failed(400, 'salvar o registro');
+        } else {
+          this.actionBusy.set(false);
+          this.clearUnavailableRecordCase();
+        }
+      },
+      error: e => this.failed(e.status, 'atualizar a lista de casos')
+    });
+  }
+
+  private clearUnavailableRecordCase() {
+    this.recordForm.controls.caseId.reset();
+    this.toast.show('O caso escolhido já não está ativo. Confira o vínculo antes de salvar.', 'error');
+  }
+
   createRecord(){this.saveRecord()}
   createPei(){
     if(!this.canCreatePei()||this.peiForm.invalid||this.actionBusy()||this.termsLoading()||this.termsError())return;
