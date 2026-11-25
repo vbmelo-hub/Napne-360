@@ -1,5 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideHttpClient } from '@angular/common/http';
+import { HttpHeaders, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter, Router, type ParamMap } from '@angular/router';
 import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
@@ -46,6 +46,24 @@ describe('PeiEditorComponent — ações D04', () => {
     fixture = TestBed.createComponent(PeiEditorComponent);
     fixture.detectChanges();
     return fixture.nativeElement as HTMLElement;
+  }
+
+  function jumpToSection(dom: HTMLElement, sectionId: string) {
+    const link = Array.from(dom.querySelectorAll<HTMLAnchorElement>('.editor-nav a')).find(item => item.hash === `#${sectionId}`)!;
+    const section = dom.querySelector<HTMLElement>(`#${sectionId}`)!;
+    const scroll = spyOn(section, 'scrollIntoView');
+    let navigationPrevented = false;
+    dom.addEventListener('click', event => {
+      navigationPrevented = event.defaultPrevented;
+      event.preventDefault();
+    }, { once: true });
+    const before = window.location.href;
+    link.click();
+    expect(navigationPrevented).toBeTrue();
+    expect(new URL(link.href).pathname).toBe(window.location.pathname);
+    expect(window.location.href).toBe(before);
+    expect(scroll).toHaveBeenCalled();
+    expect(document.activeElement).toBe(section.querySelector('h2, h3'));
   }
 
   it('salva DRAFT por ação EDIT com content e storageVersion, e exige envio explícito', () => {
@@ -117,6 +135,210 @@ describe('PeiEditorComponent — ações D04', () => {
     expect(fixture.componentInstance.form.controls.generalObjectives.value).toBe('Rascunho local após conflito');
     expect(fixture.componentInstance.form.dirty).toBeTrue();
     expect(dom.querySelector('[role="alert"]')?.textContent).toContain('rascunho continua no formulário');
+  });
+
+  it('navega pelo índice legado sem sair do editor ou perder o rascunho', () => {
+    const dom = open();
+    const objective = dom.querySelector<HTMLTextAreaElement>('[formControlName="generalObjectives"]')!;
+    objective.value = 'Alteração local legada';
+    objective.dispatchEvent(new Event('input', { bubbles: true }));
+    jumpToSection(dom, 'objectives');
+    expect(objective.value).toBe('Alteração local legada');
+    expect(fixture.componentInstance.form.dirty).toBeTrue();
+  });
+
+  describe('formulário oficial do Anexo I', () => {
+    const peiUrl = '/api/v1/students/1/peis/pei-1';
+    const modelUrl = '/api/v1/pei/anexo-i';
+    const official = {
+      ...draft, formVersion: 'IFAC_76_2025', content: {
+        student: 'Estudante fictício', course: 'Curso fictício', subject: 'Componente fictício', workloadHours: 40,
+        teacherName: 'Docente fictício', generalObjectives: 'Objetivo atual', specificObjectives: ['Primeiro'],
+        contents: [{ description: 'Conteúdo mantido', workloadHours: 12, priority: true }],
+        assessmentInstruments: [{ description: 'Atividade oral', justification: 'Expressão oral' }],
+        basicBibliography: [{ title: 'Obra A', author: 'Autora A', edition: '1', location: 'Rio Branco', publisher: 'Editora A', year: '2020', lt: 'Sim' }],
+        complementaryBibliography: [], skillsInventory: { oralCommunication1: 'REALIZA_COM_AJUDA', digitalTechnologies4: 'NAO_OBSERVADO' },
+        observations: '', location: '', documentDate: ''
+      }
+    };
+    const model = {
+      version: 'IFAC_76_2025', title: 'Plano de Ensino Individualizado - PEI',
+      labels: {
+        annex: 'ANEXO I', course: 'CURSO:', subject: 'COMPONENTE CURRICULAR:', teacherName: 'PROFESSOR(ES):',
+        student: 'ALUNO(A):', academicTerm: 'PERÍODO LETIVO:', workloadHours: 'CARGA HORÁRIA:', objectives: 'OBJETIVOS',
+        generalObjectives: 'Objetivos Gerais:', specificObjectives: 'Objetivos Específicos:', eliminatedObjectives: 'Objetivos Gerais Eliminados:',
+        alternativeObjectives: 'Objetivos Específicos Alternativos:', complementaryObjectives: 'Objetivos Específicos Complementares:',
+        professionalSkills: 'HABILIDADES E COMPETÊNCIAS PROFISSIONAIS A SEREM DESENVOLVIDAS', syllabus: 'EMENTA',
+        prerequisites: 'PRÉ-REQUISITO (SE HOUVER)', contents: 'CONTEÚDOS', contentHours: 'CARGA HORÁRIA',
+        teachingStrategies: 'ESTRATÉGIA DE ENSINO FACILITADORAS DA APRENDIZAGEM', methodologicalResources: 'RECURSOS METODOLÓGICOS',
+        assessment: 'AVALIAÇÃO DA APRENDIZAGEM', assessmentCriteria: 'CRITÉRIOS', assessmentInstruments: 'INSTRUMENTOS',
+        recoveryProposal: 'PROPOSTA DE RECUPERAÇÃO DIFERENCIADA', basicBibliography: 'Bibliografia Básica (títulos, periódicos, etc.)',
+        complementaryBibliography: 'Bibliografia Complementar (títulos, periódicos, etc.)', bibliographyTitle: 'Título/Periódico',
+        bibliographyAuthor: 'Autor', bibliographyEdition: 'Ed.', bibliographyLocation: 'Local', bibliographyPublisher: 'Editora',
+        bibliographyYear: 'Ano', bibliographyLt: 'LT', skillsInventory: 'INVENTÁRIO DE HABILIDADES E COMPETÊNCIAS – IFAC',
+        observations: 'Observações:', signature: 'Assinatura do Docente Responsável:', location: 'Local:', documentDate: 'Data:'
+      },
+      instructions: { specificObjectives: 'Elencar de 2 a 4 objetivos específicos originais da disciplina.' },
+      inventoryGroups: [
+        { id: 'oralCommunication', label: 'COMUNICAÇÃO ORAL', indicators: [
+          { id: 'oralCommunication1', label: 'Expressa ideias com clareza e coerência em diferentes contextos', hasOptions: true }
+        ] },
+        { id: 'digitalTechnologies', label: 'DOMÍNIO DE TECNOLOGIAS DIGITAIS', indicators: [
+          { id: 'digitalTechnologies4', label: 'Aplica noções de segurança e ética no uso de tecnologias digitais', hasOptions: true },
+          { id: 'digitalTechnologies5', label: 'Demonstra autonomia no uso de softwares aplicados ao curso técnico', hasOptions: false }
+        ] }
+      ],
+      ratings: [
+        { value: 'REALIZA_COM_AJUDA', label: 'Realiza com ajuda' }, { value: 'REALIZA_SEM_AJUDA', label: 'Realiza sem ajuda' },
+        { value: 'NAO_REALIZA', label: 'Não realiza' }, { value: 'NAO_OBSERVADO', label: 'Não foi observado' }
+      ]
+    };
+    let http: HttpTestingController;
+
+    beforeEach(() => {
+      TestBed.overrideProvider(ApiService, { useFactory: () => new ApiService() });
+      http = TestBed.inject(HttpTestingController);
+    });
+
+    afterEach(() => http.verify());
+
+    function openOfficial(value = official) {
+      fixture = TestBed.createComponent(PeiEditorComponent);
+      fixture.detectChanges();
+      http.expectOne(peiUrl).flush(value);
+      http.expectOne({ url: modelUrl, method: 'GET' }).flush(model);
+      fixture.detectChanges();
+      return fixture.nativeElement as HTMLElement;
+    }
+
+    function button(dom: HTMLElement, name: string) {
+      return Array.from(dom.querySelectorAll('button')).find(item => item.textContent?.trim() === name)!;
+    }
+
+    function type(dom: HTMLElement, selector: string, value: string) {
+      const field = dom.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)!;
+      field.value = value;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      fixture.detectChanges();
+    }
+
+    it('apresenta a identificação e as instruções do catálogo, com opções só para indicadores avaliáveis', () => {
+      const dom = openOfficial();
+      const sheet = dom.querySelector('app-pei-annex-i')!;
+      expect(sheet.textContent).toContain('Plano de Ensino Individualizado - PEI');
+      expect(sheet.textContent).toContain('Estudante fictício');
+      expect(sheet.textContent).toContain('Elencar de 2 a 4 objetivos específicos originais da disciplina.');
+      expect(sheet.querySelectorAll('input[type="radio"]').length).toBe(8);
+      expect(sheet.querySelectorAll('input[type="radio"][name="oralCommunication1"]').length).toBe(4);
+      expect(sheet.querySelectorAll('input[type="radio"][name="digitalTechnologies4"]').length).toBe(4);
+      expect(sheet.querySelector('[data-indicator="oralCommunication1"] input[value="REALIZA_COM_AJUDA"]:checked')).not.toBeNull();
+      expect(sheet.querySelector('[data-indicator="digitalTechnologies5"]')?.textContent).toContain('Demonstra autonomia');
+      expect(sheet.querySelector('[data-indicator="digitalTechnologies5"] input')).toBeNull();
+    });
+
+    it('edita quadros e indicadores sem reenviar os campos de identificação', () => {
+      const dom = openOfficial();
+      expect(dom.querySelector<HTMLTextAreaElement>('#generalObjectives')?.value).toBe('Objetivo atual');
+      type(dom, '#annex-contents input[type="number"]', '15');
+      type(dom, '#annex-assessment [aria-label="Justificativa 1"]', 'Alternativa textual');
+      type(dom, '#observations', 'Observação fictícia');
+      dom.querySelector<HTMLInputElement>('[data-indicator="oralCommunication1"] input[value="REALIZA_SEM_AJUDA"]')!.click();
+      button(dom, 'Salvar rascunho').click();
+
+      const save = http.expectOne({ url: peiUrl, method: 'PUT' });
+      expect(save.request.body.version).toBe(7);
+      expect(save.request.body.content).toEqual(jasmine.objectContaining({
+        specificObjectives: ['Primeiro'], contents: [{ description: 'Conteúdo mantido', workloadHours: 15, priority: true }],
+        assessmentInstruments: [{ description: 'Atividade oral', justification: 'Alternativa textual' }],
+        basicBibliography: official.content.basicBibliography,
+        skillsInventory: { oralCommunication1: 'REALIZA_SEM_AJUDA', digitalTechnologies4: 'NAO_OBSERVADO' },
+        observations: 'Observação fictícia'
+      }));
+      expect(save.request.body.content.teacherName).toBeUndefined();
+      expect(save.request.body.content.student).toBeUndefined();
+      save.flush(official);
+    });
+
+    it('avisa sobre alterações locais e baixa a revisão persistida com o nome enviado pela API', () => {
+      const dom = openOfficial();
+      const click = spyOn(HTMLAnchorElement.prototype, 'click').and.callFake(function (this: HTMLAnchorElement) {
+        expect(this.download).toBe('pei-revisao-2-rascunho.pdf');
+        expect(this.href).toMatch(/^blob:/);
+      });
+      type(dom, '#generalObjectives', 'Alteração não salva');
+      button(dom, 'Baixar PDF').click();
+      fixture.detectChanges();
+      const dialog = dom.querySelector<HTMLElement>('[role="alertdialog"]')!;
+      expect(dialog.textContent).toContain('alterações locais');
+      http.expectNone(`${peiUrl}/pdf`);
+
+      button(dialog, 'Baixar revisão salva').click();
+      const pdf = http.expectOne({ url: `${peiUrl}/pdf`, method: 'GET' });
+      expect(pdf.request.responseType).toBe('blob');
+      pdf.flush(new Blob(['%PDF-1.4'], { type: 'application/pdf' }), {
+        headers: new HttpHeaders({ 'Content-Disposition': 'attachment; filename="pei-revisao-2-rascunho.pdf"' })
+      });
+      expect(click).toHaveBeenCalledTimes(1);
+      expect(dom.querySelector<HTMLTextAreaElement>('#generalObjectives')?.value).toBe('Alteração não salva');
+    });
+
+    it('mantém o formato anterior em revisões legadas e não requisita o catálogo oficial', () => {
+      fixture = TestBed.createComponent(PeiEditorComponent);
+      fixture.detectChanges();
+      http.expectOne(peiUrl).flush(draft);
+      fixture.detectChanges();
+      const dom = fixture.nativeElement as HTMLElement;
+      http.expectNone(modelUrl);
+      expect(dom.querySelector<HTMLTextAreaElement>('[formControlName="generalObjectives"]')?.value).toBe('Objetivo atual');
+      expect(dom.querySelector('app-pei-annex-i')).toBeNull();
+      expect(dom.textContent).not.toContain('Baixar PDF');
+    });
+
+    it('navega pelo índice do Anexo I sem descartar edições locais', () => {
+      const dom = openOfficial();
+      type(dom, '#generalObjectives', 'Alteração local do Anexo I');
+      jumpToSection(dom, 'annex-assessment');
+      expect(dom.querySelector<HTMLTextAreaElement>('#generalObjectives')?.value).toBe('Alteração local do Anexo I');
+      expect(button(dom, 'Enviar para revisão').disabled).toBeTrue();
+    });
+
+    it('aguarda o catálogo antes de permitir enviar a revisão oficial', () => {
+      fixture = TestBed.createComponent(PeiEditorComponent);
+      fixture.detectChanges();
+      http.expectOne(peiUrl).flush(official);
+      const catalog = http.expectOne(modelUrl);
+      fixture.detectChanges();
+      const dom = fixture.nativeElement as HTMLElement;
+      const send = button(dom, 'Enviar para revisão');
+      expect(send.disabled).toBeTrue();
+      fixture.componentInstance.performAction('SUBMIT');
+      http.expectNone(`${peiUrl}/submit`);
+      expect(button(dom, 'Baixar PDF').disabled).toBeFalse();
+
+      catalog.flush(model);
+      fixture.detectChanges();
+      expect(send.disabled).toBeFalse();
+    });
+
+    it('permite aprovar a revisão oficial somente após carregar a definição, inclusive após erro', () => {
+      fixture = TestBed.createComponent(PeiEditorComponent);
+      fixture.detectChanges();
+      http.expectOne(peiUrl).flush({ ...official, status: 'IN_REVIEW', allowedActions: ['APPROVE'] });
+      http.expectOne(modelUrl).flush({}, { status: 503, statusText: 'Service Unavailable' });
+      fixture.detectChanges();
+      const dom = fixture.nativeElement as HTMLElement;
+      const approve = button(dom, 'Aprovar PEI');
+      expect(approve.disabled).toBeTrue();
+      fixture.componentInstance.requestConfirmation('APPROVE');
+      fixture.componentInstance.confirmAction();
+      fixture.componentInstance.performAction('APPROVE');
+      http.expectNone(`${peiUrl}/approve`);
+
+      button(dom, 'Tentar novamente').click();
+      http.expectOne(modelUrl).flush(model);
+      fixture.detectChanges();
+      expect(approve.disabled).toBeFalse();
+    });
   });
 
   describe('transferência de rascunho', () => {

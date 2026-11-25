@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiCreateRequest, PeiTransferCandidate, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
+import { Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiAnnexI, PeiCreateRequest, PeiTransferCandidate, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
 
 type PeiVersionAction = Exclude<PeiAction, 'EDIT' | 'TRANSFER'>;
 
@@ -47,6 +47,10 @@ export class ApiService {
   }
   peis(id: number) { return this.http.get<Pei[]>(`/api/v1/students/${id}/peis`); }
   pei(studentId: number, id: string) { return this.http.get<Pei>(`/api/v1/students/${studentId}/peis/${id}`); }
+  peiAnnexI() { return this.http.get<PeiAnnexI>('/api/v1/pei/anexo-i'); }
+  downloadPeiPdf(studentId: number, id: string) {
+    return this.http.get(`/api/v1/students/${studentId}/peis/${id}/pdf`, { observe: 'response', responseType: 'blob' });
+  }
   createPei(studentId: number, value: PeiCreateRequest) { return this.http.post<Pei>(`/api/v1/students/${studentId}/peis`, value); }
   revisePei(studentId: number, id: string, value: {content: Record<string, unknown>; version: number}) {
     return this.http.put<Pei>(`/api/v1/students/${studentId}/peis/${id}`, value);

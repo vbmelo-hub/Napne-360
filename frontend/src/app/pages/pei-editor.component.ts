@@ -1,13 +1,16 @@
+import { DOCUMENT } from '@angular/common';
 import { Component, DestroyRef, ElementRef, Injector, OnInit, afterNextRender, computed, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { EMPTY, Subscription, catchError, switchMap } from 'rxjs';
+import { EMPTY, Subscription, catchError, finalize, switchMap } from 'rxjs';
 import { ApiService } from '../core/api.service';
-import { Pei, PeiAction, PeiTransferCandidate } from '../core/models';
+import { PEI_ANNEX_I_VERSION, Pei, PeiAction, PeiAnnexI, PeiTransferCandidate } from '../core/models';
 import { errorMessage, labelFor, toneFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
+import { buildPeiAnnexIForm, peiAnnexIContent, PeiAnnexIForm } from './pei-annex-i-form';
+import { PeiAnnexIComponent } from './pei-annex-i.component';
 
 type ConfirmedPeiAction = Extract<PeiAction, 'RETURN' | 'APPROVE' | 'ARCHIVE'>;
 type RequestedPeiAction = Exclude<PeiAction, 'EDIT' | 'TRANSFER'>;
@@ -16,7 +19,7 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
 
 @Component({
   standalone: true,
-  imports: [ReactiveFormsModule, RouterLink, ConfirmDialogComponent],
+  imports: [ReactiveFormsModule, RouterLink, ConfirmDialogComponent, PeiAnnexIComponent],
   template: `
     <a [routerLink]="['/estudantes', studentId()]" class="back-link">← Voltar ao acompanhamento</a>
     @if (loading()) {
@@ -58,10 +61,35 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
       <form class="editor-layout" [formGroup]="form" (ngSubmit)="save()">
         <aside class="editor-nav card">
           <strong>Seções do documento</strong>
-          @for (section of sections; track section.id) { <a [href]="'#' + section.id">{{ section.label }}</a> }
+          @if (officialForm()) {
+            @if (annexModel(); as model) {
+              @for (section of annexSections; track section.id) {
+                @let id = 'annex-' + section.id;
+                <a [href]="sectionHref(id)" (click)="jumpToSection($event, id)">{{ model.labels[section.key] }}</a>
+              }
+            }
+          } @else {
+            @for (section of sections; track section.id) {
+              <a [href]="sectionHref(section.id)" (click)="jumpToSection($event, section.id)">{{ section.label }}</a>
+            }
+          }
           <div class="document-state"><span>Estado atual</span><strong>{{ peiStatusLabel(value.status) }}</strong><small>Revisão {{ value.revision }}</small></div>
         </aside>
         <div class="editor-main stack">
+          @if (officialForm()) {
+            @if (annexModel(); as model) {
+              @if (annexForm(); as official) {
+                <app-pei-annex-i [model]="model" [form]="official" [pei]="value" [editable]="canEdit()" [saving]="saving()" />
+              }
+            } @else if (annexError()) {
+              <div class="error" role="alert">
+                <p>{{ annexError() }}</p>
+                <button type="button" class="secondary" (click)="loadAnnexModel()">Tentar novamente</button>
+              </div>
+            } @else {
+              <p role="status">Carregando formulário do Anexo I…</p>
+            }
+          } @else {
           <fieldset class="pei-fields" [disabled]="!canEdit() || saving()">
             <section class="card form-section" id="overview">
               <div class="section-header"><div><span class="eyebrow">01 · Visão geral</span><h2>Direcionamento pedagógico</h2><p>Defina o objetivo central e as competências profissionais.</p></div></div>
@@ -95,23 +123,32 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
               }</div>
             </section>
           </fieldset>
-          @if (hasAction('SUBMIT') && form.dirty) {
+          }
+          @if (hasAction('SUBMIT') && isDirty()) {
             <p class="field-hint" role="status">Salve o rascunho antes de enviá-lo para revisão.</p>
           }
           <div class="editor-actions">
-            <div><strong>{{ form.dirty ? 'Alterações ainda não salvas' : 'Revisão atual salva' }}</strong><small>{{ form.dirty ? 'Salve o rascunho antes de enviar ou iniciar outra ação.' : 'As ações disponíveis seguem o estado desta versão.' }}</small></div>
-            @if (canEdit()) { <button type="submit" [disabled]="saving()">@if (saving()) { <span class="spinner"></span> }Salvar rascunho</button> }
-            @if (hasAction('SUBMIT')) { <button type="button" (click)="performAction('SUBMIT')" [disabled]="saving() || form.dirty">Enviar para revisão</button> }
-            @if (hasAction('START_REVISION')) { <button type="button" (click)="performAction('START_REVISION')" [disabled]="saving() || form.dirty">Iniciar nova revisão</button> }
-            @if (hasAction('RETURN')) { <button type="button" class="secondary" (click)="requestConfirmation('RETURN')" [disabled]="saving() || form.dirty">Devolver para ajustes</button> }
-            @if (hasAction('APPROVE')) { <button type="button" class="approve" (click)="requestConfirmation('APPROVE')" [disabled]="saving() || form.dirty">Aprovar PEI</button> }
-            @if (hasAction('ARCHIVE')) { <button type="button" class="secondary" (click)="requestConfirmation('ARCHIVE')" [disabled]="saving() || form.dirty">Arquivar PEI</button> }
+            <div><strong>{{ isDirty() ? 'Alterações ainda não salvas' : 'Revisão atual salva' }}</strong><small>{{ isDirty() ? 'Salve o rascunho antes de enviar ou iniciar outra ação.' : 'As ações disponíveis seguem o estado desta versão.' }}</small></div>
+            @if (canEdit()) { <button type="submit" [disabled]="saving() || !documentReady()">@if (saving()) { <span class="spinner"></span> }Salvar rascunho</button> }
+            @if (hasAction('SUBMIT')) { <button type="button" (click)="performAction('SUBMIT')" [disabled]="saving() || isDirty() || !documentReady()">Enviar para revisão</button> }
+            @if (hasAction('START_REVISION')) { <button type="button" (click)="performAction('START_REVISION')" [disabled]="saving() || isDirty()">Iniciar nova revisão</button> }
+            @if (hasAction('RETURN')) { <button type="button" class="secondary" (click)="requestConfirmation('RETURN')" [disabled]="saving() || isDirty()">Devolver para ajustes</button> }
+            @if (hasAction('APPROVE')) { <button type="button" class="approve" (click)="requestConfirmation('APPROVE')" [disabled]="saving() || isDirty() || !documentReady()">Aprovar PEI</button> }
+            @if (hasAction('ARCHIVE')) { <button type="button" class="secondary" (click)="requestConfirmation('ARCHIVE')" [disabled]="saving() || isDirty()">Arquivar PEI</button> }
             @if (hasAction('TRANSFER')) { <button type="button" class="secondary" (click)="openTransfer()" [disabled]="!canOpenTransfer()">Transferir rascunho</button> }
+            @if (officialForm()) {
+              <button type="button" class="secondary" (click)="requestPdf()" [disabled]="saving() || downloadingPdf()">
+                {{ downloadingPdf() ? 'Baixando PDF…' : 'Baixar PDF' }}
+              </button>
+            }
           </div>
         </div>
       </form>
     }
     <app-confirm-dialog [open]="pendingAction() !== null" [title]="confirmationTitle()" [description]="confirmationDescription()" [confirmLabel]="confirmationLabel()" [danger]="pendingAction() === 'ARCHIVE'" (confirmed)="confirmAction()" (cancelled)="cancelConfirmation()" />
+    <app-confirm-dialog [open]="confirmPdfOpen()" title="Baixar PDF da revisão salva?"
+      description="Há alterações locais no formulário. O PDF contém somente os dados da última gravação desta revisão."
+      confirmLabel="Baixar revisão salva" (confirmed)="downloadPdf()" (cancelled)="confirmPdfOpen.set(false)" />
     <app-confirm-dialog [open]="transferOpen()" title="Transferir rascunho do PEI?"
       description="O conteúdo e a autoria serão mantidos. O docente escolhido poderá editar e enviar a nova revisão."
       confirmLabel="Confirmar transferência" [busy]="saving()" [confirmDisabled]="!canConfirmTransfer()"
@@ -178,6 +215,8 @@ export class PeiEditorComponent implements OnInit {
   private readonly toast = inject(ToastService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
+  private readonly document = inject(DOCUMENT);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly editorTitle = viewChild<ElementRef<HTMLHeadingElement>>('editorTitle');
 
   readonly sections = [
@@ -185,6 +224,11 @@ export class PeiEditorComponent implements OnInit {
     {id: 'content', label: 'Conteúdo'}, {id: 'strategies', label: 'Estratégias e recursos'},
     {id: 'assessment', label: 'Avaliação'}, {id: 'bibliography', label: 'Bibliografia'},
     {id: 'skills', label: 'Inventário de habilidades'}
+  ];
+  protected readonly annexSections = [
+    { id: 'identification', key: 'annex' }, { id: 'objectives', key: 'objectives' }, { id: 'contents', key: 'contents' },
+    { id: 'assessment', key: 'assessment' }, { id: 'basicBibliography', key: 'basicBibliography' },
+    { id: 'inventory', key: 'skillsInventory' }, { id: 'observations', key: 'observations' }
   ];
   readonly dimensions = [
     {key: 'oralCommunication', label: 'Comunicação oral'}, {key: 'readingAndWriting', label: 'Leitura e produção textual'},
@@ -207,6 +251,13 @@ export class PeiEditorComponent implements OnInit {
   readonly loadError = signal('');
   readonly saving = signal(false);
   readonly conflict = signal(false);
+  protected readonly officialForm = computed(() => this.pei()?.formVersion === PEI_ANNEX_I_VERSION);
+  protected readonly annexModel = signal<PeiAnnexI | null>(null);
+  protected readonly annexForm = signal<PeiAnnexIForm | null>(null);
+  protected readonly documentReady = computed(() => !this.officialForm() || this.annexForm() !== null);
+  protected readonly annexError = signal('');
+  protected readonly confirmPdfOpen = signal(false);
+  protected readonly downloadingPdf = signal(false);
   readonly pendingAction = signal<ConfirmedPeiAction | null>(null);
   readonly transferOpen = signal(false);
   readonly transferCandidates = signal<PeiTransferCandidate[] | null>(null);
@@ -229,6 +280,8 @@ export class PeiEditorComponent implements OnInit {
   readonly canEdit = computed(() => this.hasAction('EDIT'));
   private rawContent: Record<string, unknown> = {};
   private transferCandidatesRequest?: Subscription;
+  private annexLoading = false;
+  private pdfRequest?: Subscription;
 
   readonly form = this.fb.nonNullable.group({
     generalObjectives: ['', Validators.required], specificObjectives: [''], eliminatedObjectives: [''],
@@ -250,6 +303,8 @@ export class PeiEditorComponent implements OnInit {
         this.pei.set(null);
         this.rawContent = {};
         this.form.reset();
+        this.annexForm.set(null);
+        this.resetPdf();
         this.resetTransfer();
         this.cancelConfirmation();
         this.saving.set(false);
@@ -297,14 +352,32 @@ export class PeiEditorComponent implements OnInit {
     return value?.allowedActions?.includes(action) === true && Number.isInteger(value.storageVersion);
   }
 
+  protected sectionHref(id: string) {
+    const { pathname, search } = this.document.location;
+    return `${pathname}${search}#${id}`;
+  }
+
+  protected jumpToSection(event: MouseEvent, id: string) {
+    if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    event.preventDefault();
+    const section = this.host.nativeElement.querySelector<HTMLElement>(`#${id}`);
+    if (!section) return;
+    const heading = section.querySelector<HTMLElement>('h2, h3, th[id], label[for]') ?? section;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+    section.scrollIntoView({ block: 'start' });
+  }
+
   save() {
     const value = this.currentPei();
-    this.form.markAllAsTouched();
-    if (!value || !this.canEdit() || this.saving()) return;
+    const annex = this.annexForm();
+    const form = this.officialForm() ? annex : this.form;
+    form?.markAllAsTouched();
+    if (!value || !form || !this.canEdit() || this.saving()) return;
     this.saving.set(true);
     this.conflict.set(false);
     this.api.revisePei(value.studentId, value.id, {
-      content: this.content(), version: value.storageVersion!
+      content: annex ? peiAnnexIContent(annex) : this.content(), version: value.storageVersion!
     }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: result => {
         if (this.currentPei() !== value) return;
@@ -317,10 +390,80 @@ export class PeiEditorComponent implements OnInit {
     });
   }
 
+  protected isDirty() {
+    return this.officialForm() ? this.annexForm()?.dirty === true : this.form.dirty;
+  }
+
+  protected loadAnnexModel() {
+    if (this.annexLoading || this.annexModel()) return;
+    this.annexLoading = true;
+    this.annexError.set('');
+    this.api.peiAnnexI().pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => { this.annexLoading = false; })
+    ).subscribe({
+      next: model => {
+        if (model.version !== PEI_ANNEX_I_VERSION) {
+          this.annexError.set('A definição recebida não corresponde ao Anexo I desta revisão.');
+          return;
+        }
+        this.annexModel.set(model);
+        const value = this.pei();
+        if (value?.formVersion === PEI_ANNEX_I_VERSION) {
+          this.annexForm.set(buildPeiAnnexIForm(this.fb, model, value.content));
+        }
+      },
+      error: error => this.annexError.set(errorMessage(error.status, 'carregar o formulário do Anexo I'))
+    });
+  }
+
+  protected requestPdf() {
+    if (!this.currentPei() || !this.officialForm() || this.saving() || this.downloadingPdf()) return;
+    if (this.isDirty()) this.confirmPdfOpen.set(true);
+    else this.downloadPdf();
+  }
+
+  protected downloadPdf() {
+    this.confirmPdfOpen.set(false);
+    const value = this.currentPei();
+    if (!value || !this.officialForm() || this.saving() || this.downloadingPdf()) return;
+
+    this.downloadingPdf.set(true);
+    this.pdfRequest = this.api.downloadPeiPdf(value.studentId, value.id).pipe(
+      takeUntilDestroyed(this.destroyRef),
+      finalize(() => this.downloadingPdf.set(false))
+    ).subscribe({
+      next: response => {
+        const pdf = response.body;
+        if (!pdf?.size || pdf.type !== 'application/pdf') {
+          this.toast.show('O servidor não retornou um arquivo PDF.', 'error');
+          return;
+        }
+        const attachment = response.headers.get('Content-Disposition');
+        const filename = attachment?.match(/(?:^|;)\s*filename\s*=\s*"?([\w.-]+\.pdf)"?(?:;|$)/i)?.[1];
+        const fallback = `pei-revisao-${value.revision}${value.status === 'DRAFT' ? '-rascunho' : ''}.pdf`;
+        const url = URL.createObjectURL(pdf);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename ?? fallback;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      },
+      error: error => this.toast.show(errorMessage(error.status, 'baixar o PDF'), 'error')
+    });
+  }
+
+  private resetPdf() {
+    this.confirmPdfOpen.set(false);
+    this.pdfRequest?.unsubscribe();
+    this.pdfRequest = undefined;
+  }
+
   performAction(action: RequestedPeiAction) {
     const value = this.currentPei();
     if (!value || !this.hasAction(action) || this.saving()) return;
-    if (this.form.dirty) {
+    if ((action === 'SUBMIT' || action === 'APPROVE') && !this.documentReady()) return;
+    if (this.isDirty()) {
       this.toast.show('Salve as alterações locais antes de continuar com esta ação.', 'error');
       return;
     }
@@ -344,7 +487,8 @@ export class PeiEditorComponent implements OnInit {
   }
 
   requestConfirmation(action: ConfirmedPeiAction) {
-    if (this.hasAction(action) && !this.form.dirty && !this.saving()) this.pendingAction.set(action);
+    if (action === 'APPROVE' && !this.documentReady()) return;
+    if (this.hasAction(action) && !this.isDirty() && !this.saving()) this.pendingAction.set(action);
   }
 
   confirmAction() {
@@ -356,7 +500,7 @@ export class PeiEditorComponent implements OnInit {
   cancelConfirmation() { this.pendingAction.set(null); }
 
   canOpenTransfer() {
-    return this.hasAction('TRANSFER') && !this.form.dirty && !this.loading() && !this.saving() && !this.transferConflict();
+    return this.hasAction('TRANSFER') && !this.isDirty() && !this.loading() && !this.saving() && !this.transferConflict();
   }
 
   openTransfer() {
@@ -389,7 +533,7 @@ export class PeiEditorComponent implements OnInit {
   canConfirmTransfer() {
     const { teacherId, reason } = this.transferForm.getRawValue();
     const normalizedReason = reason.trim();
-    return this.transferOpen() && this.hasAction('TRANSFER') && !this.transferConflict() && !this.form.dirty
+    return this.transferOpen() && this.hasAction('TRANSFER') && !this.transferConflict() && !this.isDirty()
       && !!normalizedReason && normalizedReason.length <= 500
       && this.transferCandidates()?.some(candidate => String(candidate.id) === teacherId) === true;
   }
@@ -467,10 +611,18 @@ export class PeiEditorComponent implements OnInit {
   }
 
   private accept(value: Pei) {
+    this.resetPdf();
     this.pei.set(value);
-    this.rawContent = value.content ?? {};
-    this.fill(value.content ?? {});
-    this.form.markAsPristine();
+    if (this.officialForm()) {
+      const model = this.annexModel();
+      if (model) this.annexForm.set(buildPeiAnnexIForm(this.fb, model, value.content));
+      else this.loadAnnexModel();
+    } else {
+      this.annexForm.set(null);
+      this.rawContent = value.content ?? {};
+      this.fill(this.rawContent);
+      this.form.markAsPristine();
+    }
     this.saving.set(false);
     this.conflict.set(false);
     this.loading.set(false);

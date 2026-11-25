@@ -1,0 +1,325 @@
+:host {
+  display: block;
+  min-width: 0;
+}
+
+.annex-sheet {
+  min-width: 0;
+  max-width: 210mm;
+  margin: 0 auto;
+  padding: clamp(1rem, 3vw, 2.5rem);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: .2rem;
+  box-shadow: var(--shadow-md);
+  line-height: 1.5;
+}
+
+.annex-sheet :is(header, section) {
+  scroll-margin-top: 6rem;
+}
+
+.annex-header {
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+.annex-header p {
+  margin-bottom: .4rem;
+  font-size: .83rem;
+  font-weight: 750;
+  letter-spacing: .06em;
+}
+
+.annex-header h2 {
+  margin: 0;
+  font-size: clamp(1.2rem, 2.5vw, 1.6rem);
+}
+
+.identification {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  border: 1px solid var(--border-strong);
+}
+
+.identification > div {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .2rem .45rem;
+  padding: .35rem .65rem;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.identification > .term {
+  grid-column: auto;
+  border-bottom: 0;
+}
+
+.identification > .term + .term {
+  border-left: 1px solid var(--border-strong);
+}
+
+.identification dt {
+  font-size: .8rem;
+  font-weight: 750;
+}
+
+.identification dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.annex-sheet section {
+  border: 1px solid var(--border-strong);
+  border-top: 0;
+}
+
+.annex-sheet section > .section-title {
+  margin: 0;
+  padding: .4rem .65rem;
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--ink-950);
+  font-size: .85rem;
+  font-weight: 750;
+}
+
+.section-title label {
+  color: inherit;
+  font: inherit;
+}
+
+.section-instruction {
+  margin: 0;
+  padding: .55rem .65rem;
+  border-bottom: 1px solid var(--border-strong);
+  font-size: .85rem;
+}
+
+.section-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.objectives-columns {
+  grid-template-columns: 2fr 3fr;
+}
+
+.section-column + .section-column {
+  border-left: 1px solid var(--border-strong);
+}
+
+.section-column:has(#annex-instruments-title) {
+  padding: .65rem;
+}
+
+.section-column h4 {
+  margin-bottom: .3rem;
+  font-size: .925rem;
+}
+
+.annex-text-field {
+  display: grid;
+  gap: .3rem;
+  padding: .65rem;
+}
+
+.annex-sheet textarea {
+  min-height: 3.9rem;
+  field-sizing: content;
+  overflow-wrap: anywhere;
+}
+
+.annex-sheet :is(input, textarea):disabled {
+  color: var(--ink-950);
+  opacity: 1;
+  cursor: default;
+}
+
+.instruction {
+  margin: 0;
+  color: var(--ink-600);
+  font-size: .84rem;
+}
+
+.annex-sheet :is(th, td) {
+  border-bottom: 1px solid var(--border-strong);
+  padding: .42rem;
+  vertical-align: top;
+}
+
+.annex-sheet :is(th, td) + :is(th, td) {
+  border-left: 1px solid var(--border-strong);
+}
+
+.annex-sheet th {
+  color: var(--ink-950);
+  font-size: .8rem;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.annex-sheet tbody tr:hover {
+  background: transparent;
+}
+
+.annex-sheet tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.curricular-contents th:last-child {
+  width: 9rem;
+}
+
+.priority {
+  font-style: italic;
+}
+
+.table-actions {
+  padding: .55rem .65rem;
+  border-top: 1px solid var(--border-strong);
+}
+
+.instrument {
+  display: grid;
+  gap: .4rem;
+  margin: .5rem 0;
+  padding: .5rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.remove-row {
+  width: fit-content;
+  margin-top: .2rem;
+  min-height: 2rem;
+  padding: .25rem .5rem;
+  font-size: .8rem;
+}
+
+.bibliography-scroll {
+  overflow-x: auto;
+}
+
+.bibliography {
+  min-width: 38rem;
+  table-layout: fixed;
+}
+
+.bibliography th:first-child {
+  width: 22%;
+}
+
+.bibliography th:nth-child(3),
+.bibliography th:nth-last-child(-n + 2) {
+  width: 10%;
+}
+
+.bibliography textarea {
+  min-height: 2.25rem;
+  padding: .35rem;
+  font-size: .86rem;
+}
+
+.inventory-group {
+  padding: .7rem .65rem;
+}
+
+.inventory-group + .inventory-group {
+  border-top: 1px solid var(--border-strong);
+}
+
+.inventory-group h4 {
+  margin-bottom: .45rem;
+  color: var(--ink-950);
+  font-size: .88rem;
+}
+
+.indicator {
+  min-width: 0;
+  margin: 0;
+  padding: .15rem 0 .65rem;
+  border: 0;
+  font-size: .91rem;
+}
+
+.indicator:last-child {
+  padding-bottom: 0;
+}
+
+.indicator legend {
+  width: 100%;
+  padding: 0;
+  font-weight: 600;
+}
+
+.rating-options {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: .9rem;
+  row-gap: .1rem;
+}
+
+.choice {
+  display: inline-flex;
+  align-items: center;
+  gap: .32rem;
+  padding: .2rem 0;
+  font-size: .83rem;
+  font-weight: 500;
+}
+
+.choice input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--primary-700);
+}
+
+.annex-footer .signature {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .4rem;
+  margin: .7rem .65rem;
+  font-size: .9rem;
+  font-weight: 650;
+}
+
+.signature span {
+  flex: 1 1 8rem;
+  min-height: 1rem;
+  border-bottom: 1px solid var(--ink-800);
+}
+
+.closing-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(9rem, 1fr);
+  gap: .75rem;
+  padding: 0 .65rem .65rem;
+}
+
+@media (max-width: 700px) {
+  .annex-sheet {
+    padding: .75rem;
+  }
+
+  .section-columns,
+  .closing-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .section-column + .section-column {
+    border-top: 1px solid var(--border-strong);
+    border-left: 0;
+  }
+
+  .curricular-contents th:last-child {
+    width: 6.75rem;
+    white-space: normal;
+  }
+}

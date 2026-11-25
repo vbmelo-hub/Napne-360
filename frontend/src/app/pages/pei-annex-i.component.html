@@ -1,0 +1,209 @@
+@let labels = model().labels;
+@let instructions = model().instructions;
+
+<fieldset class="annex-sheet" [formGroup]="form()" [disabled]="!editable() || saving()" aria-labelledby="annex-title">
+  <header class="annex-header" id="annex-identification">
+    <p>{{ labels['annex'] }}</p>
+    <h2 id="annex-title">{{ model().title }}</h2>
+  </header>
+
+  <dl class="identification">
+    @for (field of identification(); track field.key) {
+      <div [class.term]="field.key === 'academicTerm' || field.key === 'workloadHours'">
+        <dt>{{ labels[field.key] }}</dt>
+        <dd>{{ field.value ?? '—' }}</dd>
+      </div>
+    }
+  </dl>
+
+  <section id="annex-objectives" aria-labelledby="annex-objectives-title">
+    <h3 class="section-title" id="annex-objectives-title">{{ labels['objectives'] }}</h3>
+    <p class="section-instruction" id="annex-objectives-instruction">{{ instructions['objectives'] }}</p>
+    <div class="section-columns objectives-columns">
+      @for (column of objectiveColumns; track $index) {
+        <div class="section-column">
+          @for (key of column; track key) {
+            <ng-container *ngTemplateOutlet="textField; context: { $implicit: key }" />
+          }
+        </div>
+      }
+    </div>
+  </section>
+
+  @for (key of curricula; track key) {
+    <ng-container *ngTemplateOutlet="textSection; context: { $implicit: key }" />
+  }
+
+  <section id="annex-contents" aria-labelledby="annex-contents-title">
+    <table class="curricular-contents">
+      <thead>
+        <tr>
+          <th id="annex-contents-title" scope="col">{{ labels['contents'] }}</th>
+          <th scope="col">{{ labels['contentHours'] }}</th>
+        </tr>
+      </thead>
+      <tbody formArrayName="contents">
+        <tr>
+          <td colspan="2"><p id="annex-contents-instruction" class="instruction">{{ instructions['contents'] }}</p></td>
+        </tr>
+        @for (row of form().controls.contents.controls; track row; let index = $index) {
+          <tr [formGroupName]="index">
+            <td>
+              <textarea formControlName="description" rows="2" [class.priority]="row.controls.priority.value"
+                [attr.aria-label]="'Conteúdo ' + (index + 1)" aria-describedby="annex-contents-instruction"></textarea>
+              <label class="choice"><input type="checkbox" formControlName="priority" /> Prioritário</label>
+              @if (editable()) {
+                <button type="button" class="secondary compact remove-row" (click)="removeRow('contents', index)"
+                  [attr.aria-label]="'Remover conteúdo ' + (index + 1)">Remover</button>
+              }
+            </td>
+            <td>
+              <input type="number" min="0" step="any" formControlName="workloadHours"
+                [attr.aria-label]="'Carga horária do conteúdo ' + (index + 1)" />
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+    @if (editable()) {
+      <div class="table-actions"><button type="button" class="secondary compact" (click)="addContent()">Adicionar conteúdo</button></div>
+    }
+  </section>
+
+  @for (key of methods; track key) {
+    <ng-container *ngTemplateOutlet="textSection; context: { $implicit: key }" />
+  }
+
+  <section id="annex-assessment" aria-labelledby="annex-assessment-title">
+    <h3 class="section-title" id="annex-assessment-title">{{ labels['assessment'] }}</h3>
+    <div class="section-columns">
+      <div class="section-column">
+        <ng-container *ngTemplateOutlet="textField; context: { $implicit: 'assessmentCriteria' }" />
+      </div>
+      <div class="section-column">
+        <h4 id="annex-instruments-title">{{ labels['assessmentInstruments'] }}</h4>
+        <p class="instruction" id="annex-instruments-instruction">{{ instructions['assessmentInstruments'] }}</p>
+        <div formArrayName="assessmentInstruments" role="group" aria-labelledby="annex-instruments-title"
+          aria-describedby="annex-instruments-instruction">
+          @for (row of form().controls.assessmentInstruments.controls; track row; let index = $index) {
+            <div class="instrument" [formGroupName]="index">
+              <label>
+                Instrumento
+                <textarea formControlName="description" rows="2" [attr.aria-label]="'Instrumento ' + (index + 1)"></textarea>
+              </label>
+              <label>
+                Justificativa
+                <textarea formControlName="justification" rows="2" [attr.aria-label]="'Justificativa ' + (index + 1)"></textarea>
+              </label>
+              @if (editable()) {
+                <button type="button" class="secondary compact remove-row" (click)="removeRow('assessmentInstruments', index)"
+                  [attr.aria-label]="'Remover instrumento ' + (index + 1)">Remover</button>
+              }
+            </div>
+          }
+        </div>
+        @if (editable()) {
+          <button type="button" class="secondary compact" (click)="addInstrument()">Adicionar instrumento</button>
+        }
+      </div>
+    </div>
+  </section>
+
+  <ng-container *ngTemplateOutlet="textSection; context: { $implicit: 'recoveryProposal' }" />
+
+  @for (key of bibliographies; track key) {
+    <section [id]="'annex-' + key" [attr.aria-labelledby]="'title-' + key">
+      <h3 class="section-title" [id]="'title-' + key">{{ labels[key] }}</h3>
+      <div class="bibliography-scroll" tabindex="0" role="region" [attr.aria-labelledby]="'title-' + key">
+        <table class="bibliography" [attr.aria-labelledby]="'title-' + key">
+          <thead>
+            <tr>
+              @for (column of bibliographyColumns; track column.key) {
+                <th scope="col">{{ labels[column.label] }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody [formArrayName]="key">
+            @for (row of form().controls[key].controls; track row; let index = $index) {
+              <tr [formGroupName]="index">
+                @for (column of bibliographyColumns; track column.key) {
+                  <td>
+                    <textarea rows="1" [formControlName]="column.key"
+                      [attr.aria-label]="labels[key] + ', ' + labels[column.label] + ', referência ' + (index + 1)"></textarea>
+                    @if (editable() && column.key === 'title') {
+                      <button type="button" class="secondary compact remove-row" (click)="removeRow(key, index)"
+                        [attr.aria-label]="'Remover referência ' + (index + 1) + ' de ' + labels[key]">Remover</button>
+                    }
+                  </td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      @if (editable()) {
+        <div class="table-actions"><button type="button" class="secondary compact" (click)="addBibliography(key)">Adicionar referência</button></div>
+      }
+    </section>
+  }
+
+  <section id="annex-inventory" aria-labelledby="annex-inventory-title">
+    <h3 class="section-title" id="annex-inventory-title">{{ labels['skillsInventory'] }}</h3>
+    @for (group of model().inventoryGroups; track group.id) {
+      <div class="inventory-group">
+        <h4>{{ group.label }}</h4>
+        @for (indicator of group.indicators; track indicator.id) {
+          @if (indicator.hasOptions) {
+            <fieldset class="indicator" [attr.data-indicator]="indicator.id">
+              <legend>{{ indicator.label }}</legend>
+              <div class="rating-options">
+                @for (rating of model().ratings; track rating.value) {
+                  <label class="choice">
+                    <input type="radio" [name]="indicator.id" [attr.name]="indicator.id" [value]="rating.value" [attr.value]="rating.value"
+                      [formControl]="form().controls.skillsInventory.controls[indicator.id]" />
+                    {{ rating.label }}
+                  </label>
+                }
+              </div>
+            </fieldset>
+          } @else {
+            <p class="indicator" [attr.data-indicator]="indicator.id">{{ indicator.label }}</p>
+          }
+        }
+      </div>
+    }
+  </section>
+
+  <section id="annex-observations" class="annex-footer" [attr.aria-label]="labels['observations']">
+    <ng-container *ngTemplateOutlet="textField; context: { $implicit: 'observations' }" />
+    <p class="signature">{{ labels['signature'] }} <span aria-hidden="true"></span></p>
+    <div class="closing-fields">
+      <label for="location">{{ labels['location'] }}<input id="location" formControlName="location" /></label>
+      <label for="documentDate">{{ labels['documentDate'] }}<input type="date" id="documentDate" formControlName="documentDate" /></label>
+    </div>
+  </section>
+
+  <ng-template #textSection let-key>
+    <section [id]="'annex-' + key" [attr.aria-labelledby]="'label-' + key">
+      <h3 class="section-title"><label [id]="'label-' + key" [for]="key">{{ labels[key] }}</label></h3>
+      <div class="annex-text-field">
+        @if (instructions[key]) {
+          <p class="instruction" [id]="'instruction-' + key">{{ instructions[key] }}</p>
+        }
+        <textarea [id]="key" [formControlName]="key" rows="2"
+          [attr.aria-describedby]="instructions[key] ? 'instruction-' + key : null"></textarea>
+      </div>
+    </section>
+  </ng-template>
+
+  <ng-template #textField let-key>
+    <div class="annex-text-field inline-field">
+      <label [for]="key">{{ labels[key] }}</label>
+      @if (instructions[key]) {
+        <p class="instruction" [id]="'instruction-' + key">{{ instructions[key] }}</p>
+      }
+      <textarea [id]="key" [formControlName]="key" rows="2"
+        [attr.aria-describedby]="instructions[key] ? 'instruction-' + key : null"></textarea>
+    </div>
+  </ng-template>
+</fieldset>

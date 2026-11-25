@@ -150,9 +150,27 @@ export interface Pei {
   reviewedAt: string | null;
   updatedAt: string;
   storageVersion?: number;
+  formVersion?: string | null;
   allowedActions?: PeiAction[];
   transfer?: PeiTransfer;
 }
+
+export const PEI_ANNEX_I_VERSION = 'IFAC_76_2025';
+
+export interface PeiAnnexI {
+  version: string;
+  title: string;
+  labels: Record<string, string>;
+  instructions: Record<string, string>;
+  inventoryGroups: {
+    id: string;
+    label: string;
+    indicators: { id: string; label: string; hasOptions: boolean }[];
+  }[];
+  ratings: { value: PeiSkillRating; label: string }[];
+}
+
+export type PeiSkillRating = 'REALIZA_COM_AJUDA' | 'REALIZA_SEM_AJUDA' | 'NAO_REALIZA' | 'NAO_OBSERVADO';
 
 export type PeiAction = 'EDIT' | 'START_REVISION' | 'SUBMIT' | 'RETURN' | 'APPROVE' | 'ARCHIVE' | 'TRANSFER';
 
