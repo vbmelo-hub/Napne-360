@@ -163,7 +163,9 @@ export class PeiEditorComponent implements OnInit {
 
   ngOnInit() {
     this.route.paramMap.subscribe(params => {
-      this.peiId = String(params.get('peiId'));
+      const requestedPeiId = String(params.get('peiId'));
+      if (requestedPeiId === this.peiId && requestedPeiId === this.pei()?.id) return;
+      this.peiId = requestedPeiId;
       this.loading.set(true);
       this.loadError.set('');
       this.api.pei(this.studentId, this.peiId).subscribe({

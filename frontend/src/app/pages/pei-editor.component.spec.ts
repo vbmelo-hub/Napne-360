@@ -1,7 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { ActivatedRoute, provideRouter } from '@angular/router';
-import { of, throwError } from 'rxjs';
+import { ActivatedRoute, convertToParamMap, provideRouter, Router, type ParamMap } from '@angular/router';
+import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
 import { ApiService } from '../core/api.service';
 import { Pei } from '../core/models';
 import { ToastService } from '../core/toast.service';
@@ -10,6 +10,7 @@ import { PeiEditorComponent } from './pei-editor.component';
 describe('PeiEditorComponent — ações D04', () => {
   let fixture: ComponentFixture<PeiEditorComponent>;
   let api: jasmine.SpyObj<ApiService>;
+  let routeParams: BehaviorSubject<ParamMap>;
   const draft = {
     id: 'pei-1', studentId: 1, subjectId: 100, teacherId: 2, academicTerm: '2026.1',
     revision: 2, status: 'DRAFT', content: { generalObjectives: 'Objetivo atual' },
@@ -24,12 +25,13 @@ describe('PeiEditorComponent — ações D04', () => {
     api.pei.and.returnValue(of(draft));
     api.revisePei.and.returnValue(of({ ...draft, id: 'pei-2', revision: 3 }));
     api.peiAction.and.returnValue(of({ ...draft, status: 'IN_REVIEW' }));
+    routeParams = new BehaviorSubject(convertToParamMap({ studentId: '1', peiId: 'pei-1' }));
     await TestBed.configureTestingModule({
       imports: [PeiEditorComponent],
       providers: [provideHttpClient(), provideRouter([]),
         { provide: ActivatedRoute, useValue: {
-          snapshot: { paramMap: { get: (key: string) => key === 'studentId' ? '1' : 'pei-1' } },
-          paramMap: of({ get: (key: string) => key === 'studentId' ? '1' : 'pei-1' })
+          snapshot: { paramMap: routeParams.value },
+          paramMap: routeParams
         } },
         { provide: ApiService, useValue: api },
         { provide: ToastService, useValue: jasmine.createSpyObj('ToastService', ['show']) }]
@@ -68,6 +70,27 @@ describe('PeiEditorComponent — ações D04', () => {
       version: 7, content: jasmine.objectContaining({ generalObjectives: '' })
     }));
     expect(dom.querySelector('label.required')?.textContent).toContain('necessário para aprovação');
+  });
+
+  it('preserva a edição iniciada durante a navegação para a revisão recém-salva', () => {
+    spyOn(TestBed.inject(Router), 'navigate').and.resolveTo(true);
+    open();
+    const component = fixture.componentInstance;
+    const saved = { ...draft, id: 'pei-2', revision: 3 };
+    const laterResponse = new Subject<Pei>();
+    api.revisePei.and.returnValue(of(saved));
+    api.pei.and.returnValue(laterResponse);
+
+    component.save();
+    routeParams.next(convertToParamMap({ studentId: '1', peiId: 'pei-2' }));
+    const objective = component.form.controls.generalObjectives;
+    objective.setValue('Objetivo digitado após salvar');
+    objective.markAsDirty();
+    laterResponse.next(saved);
+
+    expect(objective.value).toBe('Objetivo digitado após salvar');
+    expect(objective.dirty).toBeTrue();
+    expect(api.pei.calls.count()).toBe(1);
   });
 
   it('deixa estados sem EDIT somente para consulta e exibe as ações permitidas ao NAPNE', () => {

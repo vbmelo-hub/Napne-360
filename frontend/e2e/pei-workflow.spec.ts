@@ -1,5 +1,5 @@
-import { expect, test, type APIResponse } from '@playwright/test';
-import { catalogFixture, loginApi, loginUi } from './catalog-fixtures';
+import { expect, test, type APIRequestContext, type APIResponse } from '@playwright/test';
+import { catalogFixture, evaluateMongo, loginApi, loginUi } from './catalog-fixtures';
 
 type Revision = {
   id: string;
@@ -59,6 +59,7 @@ test('docente salva e envia pelo editor e o NAPNE devolve, aprova e arquiva', as
   await page.getByLabel('Critérios de avaliação', { exact: true }).fill('Critério fictício');
   await page.getByLabel('Instrumentos de avaliação', { exact: true }).fill('Instrumento fictício');
   const saved = await saveCurrent();
+  expect(saved.content['generalObjectives']).toBe('Objetivo geral fictício');
   await submit.click();
   await expect(status).toHaveText('Em revisão');
   await expect(approve).toHaveCount(0);
@@ -165,7 +166,7 @@ test('D04 preserva o vigente até a aprovação da substituta e aplica permissõ
   expect(all.map(item => item.id)).toEqual(expect.arrayContaining([approved.id, archived.id]));
 });
 
-test('CA19 serializa aberturas, edições e aprovações concorrentes sem duplicar revisão ou evento', async ({ request }) => {
+test('CA19 serializa aberturas, edições e aprovações concorrentes sem duplicar revisão ou evento', async ({ request, playwright, baseURL }) => {
   const f = await catalogFixture(request);
   const term = await f.entry('ACADEMIC_TERM', 'Período fictício CA19');
   const path = `${f.path}/peis`;
@@ -178,14 +179,24 @@ test('CA19 serializa aberturas, edições e aprovações concorrentes sem duplic
     return readRevision(responses.find(response => response.ok())!);
   };
   const draft = await race(create(), create());
-  const edit = (generalObjectives: string) => request.put(`${path}/${draft.id}`, {
-    headers: f.teacherHeaders,
+  const edit = (generalObjectives: string, context: APIRequestContext = request, headers = f.teacherHeaders) => context.put(`${path}/${draft.id}`, {
+    headers,
     data: { version: draft.storageVersion, content: {
       ...draft.content, generalObjectives, specificObjectives: ['Alvo'], contents: ['Conteúdo'],
       teachingStrategies: ['Estratégia'], assessmentCriteria: ['Critério'], assessmentInstruments: ['Instrumento']
     } }
   });
-  const saved = await race(edit('Primeira edição fictícia'), edit('Segunda edição fictícia'));
+  const secondSession = await playwright.request.newContext({ baseURL });
+  let saved: Revision;
+  try {
+    const { token } = await loginApi(secondSession, 'professor');
+    const secondHeaders = { Authorization: `Bearer ${token}` };
+    const observed = await readRevision(await secondSession.get(`${path}/${draft.id}`, { headers: secondHeaders }));
+    expect(observed.storageVersion).toBe(draft.storageVersion);
+    saved = await race(edit('Primeira edição fictícia'), edit('Segunda edição fictícia', secondSession, secondHeaders));
+  } finally {
+    await secondSession.dispose();
+  }
   expect(['Primeira edição fictícia', 'Segunda edição fictícia']).toContain(saved.content['generalObjectives']);
   expect((await edit('Repetição que não deve sobrescrever')).status()).toBe(409);
   const submitted = await readRevision(await request.post(`${path}/${saved.id}/submit`, {
@@ -206,4 +217,29 @@ test('CA19 serializa aberturas, edições e aprovações concorrentes sem duplic
   expect(timeline.status()).toBe(200);
   const events = await timeline.json() as { eventType: string }[];
   expect(events.filter(event => event.eventType === 'PEI_APPROVED')).toHaveLength(1);
+
+  const audit = await request.get('/api/v1/audit', {
+    headers: f.headers, params: { resourceType: 'PEI', resourceId: approved.id }
+  });
+  expect(audit.status()).toBe(200);
+  const entries = (await audit.json()).content as { action: string; actor: string; outcome: string; occurredAt: string }[];
+  const approvals = entries.filter(entry => entry.action === 'APPROVE');
+  expect(approvals).toHaveLength(1);
+  expect(approvals[0]).toMatchObject({ actor: approved.reviewedBy, outcome: 'SUCCESS', occurredAt: expect.any(String) });
+
+  const seriesKey = `${f.student.id}:${f.subject.id}:+${term.code}`;
+  const persisted = JSON.parse(evaluateMongo(`
+    const series = db.pei_series.findOne({_id: ${JSON.stringify(seriesKey)}});
+    const indexes = db.pei_series.getIndexes();
+    print(JSON.stringify({series, indexes}));
+  `));
+  expect(persisted.series._id).toBe(seriesKey);
+  expect(persisted.series.revisions).toMatchObject([
+    { _id: draft.id, revision: 1, status: 'SUPERSEDED', content: draft.content },
+    { _id: approved.id, revision: 2, status: 'APPROVED', content: approved.content }
+  ]);
+  expect(persisted.indexes).toEqual(expect.arrayContaining([
+    expect.objectContaining({ key: { _id: 1 } }),
+    expect.objectContaining({ key: { studentId: 1 } })
+  ]));
 });

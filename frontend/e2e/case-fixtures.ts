@@ -93,6 +93,7 @@ export function renameCaseFixtureAccount(account: Account, key: string): string 
 
   const docker = process.env['NAPNE_E2E_DOCKER'] || 'docker';
   const compose = ['compose'];
+  if (process.env['NAPNE_E2E_COMPOSE_FILE']) compose.push('-f', process.env['NAPNE_E2E_COMPOSE_FILE']);
   if (process.env['NAPNE_E2E_COMPOSE_PROJECT']) compose.push('-p', process.env['NAPNE_E2E_COMPOSE_PROJECT']);
   const mysql = 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" --database="$MYSQL_DATABASE" --batch --skip-column-names';
   const sql = "UPDATE app_user SET name = '" + nextName + "' WHERE id = " + account.id +

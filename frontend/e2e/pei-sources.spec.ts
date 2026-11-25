@@ -16,13 +16,14 @@ function readPeiFromMongo(studentId: number, peiId: string) {
   const script = `
     const studentId = NumberLong(${JSON.stringify(String(studentId))});
     const peiId = ${JSON.stringify(peiId)};
-    const ids = ObjectId.isValid(peiId) ? [peiId, ObjectId(peiId)] : [peiId];
-    const series = db.pei_series.findOne({studentId, 'revisions._id': {$in: ids}});
-    const pei = series?.revisions.find(revision => revision._id.toString() === peiId)
-      ?? db.pei_documents.findOne({studentId, _id: {$in: ids}});
+    const series = db.pei_series.findOne(
+      {studentId, 'revisions._id': peiId},
+      {revisions: {$elemMatch: {_id: peiId}}}
+    );
+    const pei = series?.revisions[0];
     if (!pei) throw new Error('PEI fictício não encontrado no Mongo isolado.');
     print(JSON.stringify({
-      id: pei._id.toString(), studentId: Number(pei.studentId), status: pei.status,
+      id: pei._id, studentId: Number(pei.studentId), status: pei.status,
       content: pei.content
     }));
   `;
