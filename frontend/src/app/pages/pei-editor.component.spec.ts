@@ -240,16 +240,15 @@ describe('PeiEditorComponent — ações D04', () => {
       expect(sheet.querySelector('[data-indicator="digitalTechnologies5"] input')).toBeNull();
     });
 
-    it('oferece instruções oficiais sob demanda enquanto o Anexo I pode ser editado', () => {
+    it('exibe a instrução oficial antes dos campos editáveis e a associa ao grupo', () => {
       const dom = openOfficial();
-      const help = dom.querySelector<HTMLDetailsElement>('#help-specificObjectives');
-      expect(help?.open).toBeFalse();
-      const summary = help?.querySelector('summary');
-      expect(summary?.getAttribute('aria-label')).toContain('Objetivos Específicos');
-      summary?.click();
-      expect(help?.open).toBeTrue();
-      expect(help?.textContent).toContain('Elencar de 2 a 4 objetivos específicos originais da disciplina.');
-      expect(specificObjectives(dom).map(field => field.value)).toEqual(['Primeiro', '']);
+      const fields = specificObjectives(dom);
+      const instruction = dom.querySelector('p#instruction-specificObjectives');
+      expect(instruction?.textContent?.trim()).toBe(model.instructions.specificObjectives);
+      expect(instruction?.closest('details')).toBeNull();
+      expect(instruction?.compareDocumentPosition(fields[0])).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(fields[0]?.closest('fieldset')?.getAttribute('aria-describedby')).toContain('instruction-specificObjectives');
+      expect(fields.map(field => field.value)).toEqual(['Primeiro', '']);
     });
 
     it('omite as instruções de preenchimento no Anexo I em consulta', () => {

@@ -20,21 +20,23 @@
     <h3 class="section-title" id="annex-objectives-title">{{ labels['objectives'] }}</h3>
     @if (editable() && instructions['objectives']) {
       <div class="section-instruction">
-        <ng-container *ngTemplateOutlet="fieldHelp; context: { $implicit: 'objectives' }" />
+        <ng-container *ngTemplateOutlet="fieldInstruction; context: { $implicit: 'objectives' }" />
       </div>
     }
     <div class="section-columns objectives-columns">
       <div class="section-column">
         <ng-container *ngTemplateOutlet="textField; context: { $implicit: 'generalObjectives' }" />
         <fieldset class="annex-text-field specific-objectives"
-          [attr.aria-describedby]="editable() ? 'specific-objectives-limit' : null">
+          [attr.aria-describedby]="editable()
+            ? (instructions['specificObjectives'] ? 'specific-objectives-limit instruction-specificObjectives' : 'specific-objectives-limit')
+            : null">
           <legend>{{ labels['specificObjectives'] }}</legend>
           @let objectives = form().controls.specificObjectives;
           @if (editable()) {
             <p id="specific-objectives-limit" class="instruction">
               Preencha de {{ minSpecificObjectives }} a {{ maxSpecificObjectives }} objetivos específicos originais para a aprovação.
             </p>
-            <ng-container *ngTemplateOutlet="fieldHelp; context: { $implicit: 'specificObjectives' }" />
+            <ng-container *ngTemplateOutlet="fieldInstruction; context: { $implicit: 'specificObjectives' }" />
             @if (objectives.length > maxSpecificObjectives) {
               <p class="instruction" role="status">Remova os objetivos excedentes antes da aprovação.</p>
             }
@@ -80,14 +82,15 @@
       <tbody formArrayName="contents">
         @if (editable() && instructions['contents']) {
           <tr>
-            <td colspan="2"><ng-container *ngTemplateOutlet="fieldHelp; context: { $implicit: 'contents' }" /></td>
+            <td colspan="2"><ng-container *ngTemplateOutlet="fieldInstruction; context: { $implicit: 'contents' }" /></td>
           </tr>
         }
         @for (row of form().controls.contents.controls; track row; let index = $index) {
           <tr [formGroupName]="index">
             <td>
               <textarea formControlName="description" rows="2" [class.priority]="row.controls.priority.value"
-                [attr.aria-label]="'Conteúdo ' + (index + 1)"></textarea>
+                [attr.aria-label]="'Conteúdo ' + (index + 1)"
+                [attr.aria-describedby]="editable() && instructions['contents'] ? 'instruction-contents' : null"></textarea>
               <label class="choice"><input type="checkbox" formControlName="priority" /> Prioritário</label>
               @if (editable()) {
                 <button type="button" class="secondary compact remove-row" (click)="removeRow('contents', index)"
@@ -119,8 +122,9 @@
       </div>
       <div class="section-column">
         <h4 id="annex-instruments-title">{{ labels['assessmentInstruments'] }}</h4>
-        <ng-container *ngTemplateOutlet="fieldHelp; context: { $implicit: 'assessmentInstruments' }" />
-        <div formArrayName="assessmentInstruments" role="group" aria-labelledby="annex-instruments-title">
+        <ng-container *ngTemplateOutlet="fieldInstruction; context: { $implicit: 'assessmentInstruments' }" />
+        <div formArrayName="assessmentInstruments" role="group" aria-labelledby="annex-instruments-title"
+          [attr.aria-describedby]="editable() && instructions['assessmentInstruments'] ? 'instruction-assessmentInstruments' : null">
           @for (row of form().controls.assessmentInstruments.controls; track row; let index = $index) {
             <div class="instrument" [formGroupName]="index">
               <label>
@@ -223,8 +227,9 @@
     <section [id]="'annex-' + key" [attr.aria-labelledby]="'label-' + key">
       <h3 class="section-title"><label [id]="'label-' + key" [for]="key">{{ labels[key] }}</label></h3>
       <div class="annex-text-field">
-        <ng-container *ngTemplateOutlet="fieldHelp; context: { $implicit: key }" />
-        <textarea [id]="key" [formControlName]="key" rows="2"></textarea>
+        <ng-container *ngTemplateOutlet="fieldInstruction; context: { $implicit: key }" />
+        <textarea [id]="key" [formControlName]="key" rows="2"
+          [attr.aria-describedby]="editable() && instructions[key] ? 'instruction-' + key : null"></textarea>
       </div>
     </section>
   </ng-template>
@@ -232,17 +237,15 @@
   <ng-template #textField let-key>
     <div class="annex-text-field inline-field">
       <label [for]="key">{{ labels[key] }}</label>
-      <ng-container *ngTemplateOutlet="fieldHelp; context: { $implicit: key }" />
-      <textarea [id]="key" [formControlName]="key" rows="2"></textarea>
+      <ng-container *ngTemplateOutlet="fieldInstruction; context: { $implicit: key }" />
+      <textarea [id]="key" [formControlName]="key" rows="2"
+        [attr.aria-describedby]="editable() && instructions[key] ? 'instruction-' + key : null"></textarea>
     </div>
   </ng-template>
 
-  <ng-template #fieldHelp let-key>
+  <ng-template #fieldInstruction let-key>
     @if (editable() && instructions[key]) {
-      <details class="field-help" [id]="'help-' + key">
-        <summary [attr.aria-label]="'Orientações do Anexo I — ' + labels[key]">Orientações do Anexo I</summary>
-        <p class="instruction">{{ instructions[key] }}</p>
-      </details>
+      <p class="instruction" [id]="'instruction-' + key">{{ instructions[key] }}</p>
     }
   </ng-template>
 </fieldset>

@@ -171,18 +171,6 @@
   font-size: .84rem;
 }
 
-.field-help summary {
-  width: fit-content;
-  color: var(--primary-700);
-  cursor: pointer;
-  font-size: .84rem;
-  font-weight: 680;
-}
-
-.field-help[open] > .instruction {
-  margin-top: .3rem;
-}
-
 .annex-sheet :is(th, td) {
   border-bottom: 1px solid var(--border-strong);
   padding: .42rem;

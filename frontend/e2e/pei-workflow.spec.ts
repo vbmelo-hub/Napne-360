@@ -70,7 +70,7 @@ test('docente salva e envia pelo editor e o NAPNE devolve, aprova e arquiva', as
   await loginUi(page, 'napne');
   await page.goto(`${path}/${saved.id}`);
   await expect(objective).toBeDisabled();
-  await expect(page.locator('details#help-generalObjectives')).toHaveCount(0);
+  await expect(page.locator('#instruction-generalObjectives')).toHaveCount(0);
   await page.getByRole('button', { name: 'Devolver para ajustes', exact: true }).click();
   await confirm('Devolver PEI');
   await expect(status).toHaveText('Rascunho');

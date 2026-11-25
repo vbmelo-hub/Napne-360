@@ -69,12 +69,9 @@ test('docente preenche, reabre e baixa o PEI do Anexo I na revisão salva', asyn
 
   const objective = annex.locator('#generalObjectives');
   const general = 'Desenvolver autonomia na criação de páginas web acessíveis.';
-  const objectiveHelp = annex.locator('details#help-generalObjectives');
-  const guidance = objectiveHelp.getByText(/Descrever o objetivo geral da disciplina/);
-  await expect(objective).toHaveValue('');
-  await expect(guidance).toBeHidden();
-  await objectiveHelp.locator('summary').click();
+  const guidance = annex.locator('p#instruction-generalObjectives');
   await expect(guidance).toBeVisible();
+  await expect(objective).toHaveAccessibleDescription(/Descrever o objetivo geral da disciplina/);
   await expect(objective).toHaveValue('');
   await objective.fill(general);
   await page.locator('.editor-nav').getByText('INVENTÁRIO DE HABILIDADES E COMPETÊNCIAS – IFAC', { exact: true }).click();
