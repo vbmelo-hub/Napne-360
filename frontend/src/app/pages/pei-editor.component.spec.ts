@@ -259,6 +259,24 @@ describe('PeiEditorComponent — ações D04', () => {
       save.flush(official);
     });
 
+    it('preserva itens multilinha das listas sem alteração líquida', () => {
+      const objectives = ['Apresentar a proposta\ncom uma justificativa', 'Comparar as soluções', 'Registrar os testes', 'Explicar o resultado'];
+      const strategies = ['Demonstrar a técnica\r\ncom um exemplo acessível'];
+      const value = { ...official, content: { ...official.content, specificObjectives: objectives, teachingStrategies: strategies } };
+      const dom = openOfficial(value);
+      const originalText = dom.querySelector<HTMLTextAreaElement>('#teachingStrategies')!.value;
+      type(dom, '#teachingStrategies', 'Alteração provisória');
+      type(dom, '#teachingStrategies', originalText);
+      type(dom, '#observations', 'Observação sem mudar os itens das listas');
+      button(dom, 'Salvar rascunho').click();
+
+      const save = http.expectOne({ url: peiUrl, method: 'PUT' });
+      expect(save.request.body.content.specificObjectives).toEqual(objectives);
+      expect(save.request.body.content.teachingStrategies).toEqual(strategies);
+      expect(save.request.body.content.observations).toBe('Observação sem mudar os itens das listas');
+      save.flush(value);
+    });
+
     it('avisa sobre alterações locais e baixa a revisão persistida com o nome enviado pela API', () => {
       const dom = openOfficial();
       const click = spyOn(HTMLAnchorElement.prototype, 'click').and.callFake(function (this: HTMLAnchorElement) {

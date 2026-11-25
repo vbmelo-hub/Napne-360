@@ -8,6 +8,11 @@ export const bibliographyColumns = [
   { key: 'lt', label: 'bibliographyLt' }
 ] as const;
 
+const textListFields = [
+  'specificObjectives', 'eliminatedObjectives', 'alternativeObjectives', 'complementaryObjectives',
+  'professionalSkills', 'teachingStrategies', 'methodologicalResources', 'assessmentCriteria'
+] as const;
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
@@ -72,15 +77,23 @@ export function buildPeiAnnexIForm(fb: FormBuilder, model: PeiAnnexI, content: R
 
 export type PeiAnnexIForm = ReturnType<typeof buildPeiAnnexIForm>;
 
-export function peiAnnexIContent(form: PeiAnnexIForm): Record<string, unknown> {
+function textList(text: string, saved: unknown): string[] {
+  const normalizeLineEndings = (value: string) => value.replace(/\r\n?/g, '\n');
+  const current = normalizeLineEndings(text);
+  // A textarea normaliza as quebras, mas o documento pode conter itens multilinha.
+  if (Array.isArray(saved) && saved.every(item => typeof item === 'string')
+      && current === normalizeLineEndings(saved.join('\n'))) {
+    return saved;
+  }
+  return current.split('\n').map(line => line.trim()).filter(Boolean);
+}
+
+export function peiAnnexIContent(form: PeiAnnexIForm, savedContent: Record<string, unknown>): Record<string, unknown> {
   const value = form.getRawValue();
-  const lines = (text: string) => text.split('\n').map(line => line.trim()).filter(Boolean);
+  const lists = Object.fromEntries(textListFields.map(key => [key, textList(value[key], savedContent[key])]));
   return {
     ...value,
-    specificObjectives: lines(value.specificObjectives), eliminatedObjectives: lines(value.eliminatedObjectives),
-    alternativeObjectives: lines(value.alternativeObjectives), complementaryObjectives: lines(value.complementaryObjectives),
-    professionalSkills: lines(value.professionalSkills), teachingStrategies: lines(value.teachingStrategies),
-    methodologicalResources: lines(value.methodologicalResources), assessmentCriteria: lines(value.assessmentCriteria),
+    ...lists,
     contents: value.contents.filter(row => row.description.trim() || row.workloadHours !== null || row.priority),
     assessmentInstruments: value.assessmentInstruments.filter(row => row.description.trim() || row.justification.trim()),
     basicBibliography: value.basicBibliography.filter(row => Object.values(row).some(text => text.trim())),

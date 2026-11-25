@@ -377,7 +377,7 @@ export class PeiEditorComponent implements OnInit {
     this.saving.set(true);
     this.conflict.set(false);
     this.api.revisePei(value.studentId, value.id, {
-      content: annex ? peiAnnexIContent(annex) : this.content(), version: value.storageVersion!
+      content: annex ? peiAnnexIContent(annex, value.content) : this.content(), version: value.storageVersion!
     }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: result => {
         if (this.currentPei() !== value) return;
