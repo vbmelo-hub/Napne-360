@@ -7,6 +7,7 @@ type Revision = {
   status: string;
   revision: number;
   storageVersion: number;
+  formVersion: string;
   teacherId: number;
   createdBy: string;
   updatedBy: string;
@@ -54,7 +55,7 @@ test('NAPNE transfere rascunho devolvido e novo docente continua o PEI com hist�
     response.request().method() === method && new URL(response.url()).pathname === '/api/v1' + endpoint
   );
   const status = page.locator('.pei-header .badge');
-  const objective = page.getByLabel(/^Objetivo geral/);
+  const objective = page.locator('#generalObjectives');
   const transferButton = page.getByRole('button', { name: 'Transferir rascunho', exact: true });
   const reason = `Motivo fictício de transferência ${fixture.key}`;
 
@@ -64,15 +65,20 @@ test('NAPNE transfere rascunho devolvido e novo docente continua o PEI com hist�
     });
     const complete = await save(firstDraft, {
       ...firstDraft.content,
-      generalObjectives: 'Objetivo fictício do PEI vigente', specificObjectives: ['Objetivo específico fictício'],
-      contents: ['Conteúdo fictício'], teachingStrategies: ['Estratégia fictícia'],
-      assessmentCriteria: ['Critério fictício'], assessmentInstruments: ['Instrumento fictício']
+      generalObjectives: 'Objetivo fictício do PEI vigente',
+      specificObjectives: ['Objetivo específico fictício', 'Segundo objetivo específico fictício'],
+      contents: [{ description: 'Conteúdo fictício', workloadHours: 4, priority: true }],
+      teachingStrategies: ['Estratégia fictícia'], assessmentCriteria: ['Critério fictício'],
+      assessmentInstruments: [{ description: 'Instrumento fictício', justification: 'Justificativa fictícia' }]
     });
     const current = await transition(await transition(complete, 'submit', authorSession.headers), 'approve');
     const replacement = await transition(current, 'revisions', authorSession.headers);
     const edited = await save(replacement, { ...replacement.content, generalObjectives: 'Objetivo fictício do autor' });
     const draft = await transition(await transition(edited, 'submit', authorSession.headers), 'return');
-    expect(draft).toMatchObject({ status: 'DRAFT', teacherId: author.id, createdBy: author.email });
+    expect(draft).toMatchObject({
+      status: 'DRAFT', formVersion: 'IFAC_76_2025', teacherId: author.id,
+      createdBy: author.email, content: { teacherName: author.name }
+    });
     expect(draft.allowedActions).not.toContain('TRANSFER');
     return { current, draft };
   });
@@ -116,9 +122,10 @@ test('NAPNE transfere rascunho devolvido e novo docente continua o PEI com hist�
     expect(next.id).not.toBe(draft.id);
     expect(next).toMatchObject({
       status: 'DRAFT', revision: draft.revision + 1, teacherId: recipient.id,
-      createdBy: author.email, updatedBy: napne.email, content: draft.content,
+      formVersion: draft.formVersion, createdBy: author.email, updatedBy: napne.email,
       transfer: { fromTeacherId: author.id, toTeacherId: recipient.id, transferredBy: napne.email, transferredAt: expect.any(String), reason }
     });
+    expect(next.content).toEqual({ ...draft.content, teacherName: recipient.name });
     await expect(page).toHaveURL(new RegExp(`${editor(next.id)}$`));
     await expect(status).toHaveText('Rascunho');
     await expect(page.getByText(reason)).toBeVisible();
@@ -176,7 +183,7 @@ test('NAPNE transfere rascunho devolvido e novo docente continua o PEI com hist�
     await page.getByRole('button', { name: 'Salvar rascunho', exact: true }).click();
     const saved = await readRevision(await saving);
     expect(saved).toMatchObject({ status: 'DRAFT', teacherId: recipient.id, createdBy: author.email, updatedBy: recipient.email });
-    expect(saved.content).toEqual({ ...draft.content, generalObjectives: newObjective });
+    expect(saved.content).toEqual({ ...transferred.content, generalObjectives: newObjective });
     await expect(page).toHaveURL(new RegExp(`${editor(saved.id)}$`));
     await page.getByRole('button', { name: 'Enviar para revisão', exact: true }).click();
     await expect(status).toHaveText('Em revisão');

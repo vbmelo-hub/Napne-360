@@ -89,7 +89,10 @@ export function makeLegacyFixture(student: { id: number; registration: string },
       subjectId: NumberLong(${JSON.stringify(String(subjectId))}),
       teacherId: NumberLong(${JSON.stringify(String(teacherId))}),
       academicTerm: 'LEGACY-FICTICIO', revision: 1, status: 'DRAFT',
-      content: { generalObjectives: 'Objetivo histórico fictício' },
+      content: {
+        generalObjectives: 'Objetivo histórico fictício',
+        skillsInventory: { oralCommunication: 'REALIZA_COM_AJUDA' }
+      },
       createdBy: 'docente-ficticio@example.test', updatedBy: 'docente-ficticio@example.test',
       createdAt: new Date(), updatedAt: new Date(), storageVersion: NumberLong('0')
     });

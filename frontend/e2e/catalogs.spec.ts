@@ -55,7 +55,9 @@ test('administra catálogos pela interface e preserva snapshots após renomear e
   expect(created.status()).toBe(200);
   expect(created.request().postDataJSON().academicTermId).toBe(term.id);
   const pei = await created.json();
-  expect(pei).toMatchObject({ academicTermId: term.id, academicTerm: term.code, academicTermLabel: termLabel });
+  expect(pei).toMatchObject({
+    academicTermId: term.id, academicTerm: term.code, academicTermLabel: termLabel, formVersion: 'IFAC_76_2025'
+  });
 
   await loginUi(page, 'admin');
   await openReferences(page);
@@ -236,8 +238,20 @@ test('reabre legado sem inventar associação e permite revisão e remoção exp
   expect(revision.academicTerm).toBe('LEGACY-FICTICIO');
   expect(revision.academicTermId).toBeFalsy();
   expect(revision.academicTermLabel).toBeFalsy();
+  expect(revision.formVersion ?? null).toBeNull();
+  expect(revision.content).toMatchObject({
+    generalObjectives: 'Objetivo histórico fictício',
+    skillsInventory: { oralCommunication: 'REALIZA_COM_AJUDA' }
+  });
   await page.reload();
   await page.getByRole('button', { name: 'PEI', exact: true }).click();
   await expect(page.locator('article.pei-row')).toHaveCount(2);
   await expect(page.locator('article.pei-row').first()).toContainText('LEGACY-FICTICIO');
+
+  await loginUi(page, 'professor');
+  await page.goto(`/estudantes/${f.student.id}/pei/${revision.id}`);
+  await expect(page.getByLabel(/^Objetivo geral/)).toHaveValue('Objetivo histórico fictício');
+  await expect(page.getByRole('combobox', { name: 'Comunicação oral', exact: true })).toHaveValue('REALIZA_COM_AJUDA');
+  await expect(page.locator('app-pei-annex-i')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Baixar PDF', exact: true })).toHaveCount(0);
 });

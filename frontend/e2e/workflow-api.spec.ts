@@ -36,7 +36,13 @@ test('caso completo: dossiê, acompanhamento, PEI e negação de acesso',async({
   const draft=await post(studentPath+'/peis',{subjectId:subjects[0].id,teacherId:teacher.id,academicTerm:term.code},teacherHeaders);
   const bypass=await request.put('/api/v1'+studentPath+`/peis/${draft.id}`,{headers:teacherHeaders,data:{version:draft.storageVersion,status:'APPROVED',content:draft.content}});
   expect(bypass.status()).toBe(400);
-  const content={...draft.content,generalObjectives:'Objetivo fictício',specificObjectives:['Objetivo específico'],contents:['Conteúdo'],teachingStrategies:['Exemplos'],assessmentCriteria:['Participação'],assessmentInstruments:['Atividade']};
+  const content={
+    ...draft.content, generalObjectives:'Objetivo fictício',
+    specificObjectives:['Objetivo específico','Segundo objetivo específico'],
+    contents:[{description:'Conteúdo',workloadHours:4,priority:false}],
+    teachingStrategies:['Exemplos'], assessmentCriteria:['Participação'],
+    assessmentInstruments:[{description:'Atividade',justification:'Permite observar a participação'}]
+  };
   const revised=await request.put('/api/v1'+studentPath+`/peis/${draft.id}`,{headers:teacherHeaders,data:{version:draft.storageVersion,content}});
   expect(revised.status()).toBe(200);
   const version=await revised.json();

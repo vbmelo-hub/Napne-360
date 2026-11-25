@@ -118,7 +118,7 @@ test('PEI inicial usa orientação ativa e preserva a privacidade do dossiê no 
 
     await loginUi(page, 'professor');
     await page.goto(`/estudantes/${fixture.student.id}/pei/${created.id}`);
-    const strategyField = page.getByLabel('Estratégias facilitadoras', { exact: true });
+    const strategyField = page.locator('#teachingStrategies');
     await expect(strategyField).toHaveValue(expectedStrategies.join('\n'));
     await expect(page.locator('.pei-header .badge')).toHaveText('Rascunho');
     for (const marker of forbiddenDossierMarkers) await expect(page.locator('body')).not.toContainText(marker);

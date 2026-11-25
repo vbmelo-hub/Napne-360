@@ -47,17 +47,19 @@ test('docente salva e envia pelo editor e o NAPNE devolve, aprova e arquiva', as
 
   await loginUi(page, 'professor');
   await page.goto(`${path}/${draft.id}`);
-  const objective = page.getByLabel(/^Objetivo geral/);
-  await objective.fill('');
-  await page.getByLabel('Objetivos específicos', { exact: true }).fill('Objetivo específico fictício');
+  const objective = page.locator('#generalObjectives');
+  await expect(objective).toHaveValue('');
+  await page.locator('#specificObjectives').fill('Objetivo específico fictício\nSegundo objetivo fictício');
   await expect(submit).toBeDisabled();
   await saveCurrent();
   await expect(objective).toHaveValue('');
   await objective.fill('Objetivo geral fictício');
-  await page.getByLabel('Conteúdos prioritários', { exact: true }).fill('Conteúdo fictício');
-  await page.getByLabel('Estratégias facilitadoras', { exact: true }).fill('Adaptação fictícia');
-  await page.getByLabel('Critérios de avaliação', { exact: true }).fill('Critério fictício');
-  await page.getByLabel('Instrumentos de avaliação', { exact: true }).fill('Instrumento fictício');
+  await page.locator('#annex-contents').getByRole('textbox', { name: 'Conteúdo 1', exact: true }).fill('Conteúdo fictício');
+  await page.locator('#annex-contents').getByRole('spinbutton', { name: 'Carga horária do conteúdo 1', exact: true }).fill('4');
+  await page.locator('#teachingStrategies').fill('Adaptação fictícia');
+  await page.locator('#assessmentCriteria').fill('Critério fictício');
+  await page.getByRole('textbox', { name: 'Instrumento 1', exact: true }).fill('Instrumento fictício');
+  await page.getByRole('textbox', { name: 'Justificativa 1', exact: true }).fill('Justificativa fictícia');
   const saved = await saveCurrent();
   expect(saved.content['generalObjectives']).toBe('Objetivo geral fictício');
   await submit.click();
@@ -131,9 +133,11 @@ test('D04 preserva o vigente até a aprovação da substituta e aplica permissõ
 
   const complete = {
     ...draft.content,
-    generalObjectives: 'Objetivo original fictício', specificObjectives: ['Objetivo específico'],
-    contents: ['Conteúdo'], teachingStrategies: ['Ensino por etapas'],
-    assessmentCriteria: ['Participação'], assessmentInstruments: ['Atividade']
+    generalObjectives: 'Objetivo original fictício',
+    specificObjectives: ['Objetivo específico', 'Segundo objetivo específico'],
+    contents: [{ description: 'Conteúdo', workloadHours: 4, priority: false }],
+    teachingStrategies: ['Ensino por etapas'], assessmentCriteria: ['Participação'],
+    assessmentInstruments: [{ description: 'Atividade', justification: 'Permite observar a participação' }]
   };
   const edited = await edit(returned, complete);
   const pending = await readRevision(await action(edited, 'submit', f.teacherHeaders));
@@ -182,8 +186,10 @@ test('CA19 serializa aberturas, edições e aprovações concorrentes sem duplic
   const edit = (generalObjectives: string, context: APIRequestContext = request, headers = f.teacherHeaders) => context.put(`${path}/${draft.id}`, {
     headers,
     data: { version: draft.storageVersion, content: {
-      ...draft.content, generalObjectives, specificObjectives: ['Alvo'], contents: ['Conteúdo'],
-      teachingStrategies: ['Estratégia'], assessmentCriteria: ['Critério'], assessmentInstruments: ['Instrumento']
+      ...draft.content, generalObjectives, specificObjectives: ['Primeiro alvo', 'Segundo alvo'],
+      contents: [{ description: 'Conteúdo', workloadHours: 4, priority: false }],
+      teachingStrategies: ['Estratégia'], assessmentCriteria: ['Critério'],
+      assessmentInstruments: [{ description: 'Instrumento', justification: 'Observação do critério' }]
     } }
   });
   const secondSession = await playwright.request.newContext({ baseURL });
