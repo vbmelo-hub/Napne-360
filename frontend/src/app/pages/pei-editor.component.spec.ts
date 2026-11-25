@@ -222,6 +222,10 @@ describe('PeiEditorComponent — ações D04', () => {
       fixture.detectChanges();
     }
 
+    function specificObjectives(dom: HTMLElement) {
+      return Array.from(dom.querySelectorAll<HTMLTextAreaElement>('textarea[id^="pei-annex-i-specific-objective-"]'));
+    }
+
     it('apresenta a identificação e as instruções do catálogo, com opções só para indicadores avaliáveis', () => {
       const dom = openOfficial();
       const sheet = dom.querySelector('app-pei-annex-i')!;
@@ -234,6 +238,90 @@ describe('PeiEditorComponent — ações D04', () => {
       expect(sheet.querySelector('[data-indicator="oralCommunication1"] input[value="REALIZA_COM_AJUDA"]:checked')).not.toBeNull();
       expect(sheet.querySelector('[data-indicator="digitalTechnologies5"]')?.textContent).toContain('Demonstra autonomia');
       expect(sheet.querySelector('[data-indicator="digitalTechnologies5"] input')).toBeNull();
+    });
+
+    it('oferece instruções oficiais sob demanda enquanto o Anexo I pode ser editado', () => {
+      const dom = openOfficial();
+      const help = dom.querySelector<HTMLDetailsElement>('#help-specificObjectives');
+      expect(help?.open).toBeFalse();
+      const summary = help?.querySelector('summary');
+      expect(summary?.getAttribute('aria-label')).toContain('Objetivos Específicos');
+      summary?.click();
+      expect(help?.open).toBeTrue();
+      expect(help?.textContent).toContain('Elencar de 2 a 4 objetivos específicos originais da disciplina.');
+      expect(specificObjectives(dom).map(field => field.value)).toEqual(['Primeiro', '']);
+    });
+
+    it('omite as instruções de preenchimento no Anexo I em consulta', () => {
+      const dom = openOfficial({ ...official, status: 'IN_REVIEW', allowedActions: ['APPROVE'] });
+      expect(dom.textContent).not.toContain('Elencar de 2 a 4 objetivos específicos originais da disciplina.');
+      expect(specificObjectives(dom)[0]?.value).toBe('Primeiro');
+      expect(specificObjectives(dom)[0]?.matches(':disabled')).toBeTrue();
+    });
+
+    it('limita novas entradas a quatro objetivos e permite salvar um rascunho com menos de dois preenchidos', () => {
+      const dom = openOfficial();
+      expect(specificObjectives(dom).map(field => field.value)).toEqual(['Primeiro', '']);
+      const add = button(dom, 'Adicionar objetivo específico');
+      add?.click();
+      fixture.detectChanges();
+      add?.click();
+      fixture.detectChanges();
+      expect(specificObjectives(dom).length).toBe(4);
+      expect(add?.disabled).toBeTrue();
+      add?.click();
+      fixture.detectChanges();
+      expect(specificObjectives(dom).length).toBe(4);
+      expect(button(dom, 'Enviar para revisão').disabled).toBeTrue();
+
+      button(dom, 'Salvar rascunho').click();
+      const save = http.expectOne({ url: peiUrl, method: 'PUT' });
+      expect(save.request.body.content.specificObjectives).toEqual(['Primeiro']);
+      save.flush(official);
+    });
+
+    it('conserva a ordem e as quebras internas dos objetivos ao editar um item', () => {
+      const value = { ...official, content: { ...official.content,
+        specificObjectives: ['Apresentar a proposta\r\ncom justificativa', 'Comparar soluções', 'Registrar testes']
+      } };
+      const dom = openOfficial(value);
+      expect(specificObjectives(dom).map(field => field.value))
+        .toEqual(['Apresentar a proposta\ncom justificativa', 'Comparar soluções', 'Registrar testes']);
+      const second = specificObjectives(dom)[1];
+      expect(second?.labels?.[0].textContent).toContain('Objetivo específico 2');
+      if (second) type(dom, `#${second.id}`, 'Comparar as soluções\ncom base nos registros');
+
+      button(dom, 'Salvar rascunho').click();
+      const save = http.expectOne({ url: peiUrl, method: 'PUT' });
+      expect(save.request.body.content.specificObjectives).toEqual([
+        'Apresentar a proposta\r\ncom justificativa', 'Comparar as soluções\ncom base nos registros', 'Registrar testes'
+      ]);
+      save.flush(value);
+    });
+
+    it('mantém objetivos excedentes de rascunhos antigos até o docente remover um item', () => {
+      const objectives = ['Primeiro', 'Segundo', 'Terceiro\nem duas linhas', 'Quarto', 'Quinto'];
+      const value = { ...official, content: { ...official.content, specificObjectives: objectives } };
+      const dom = openOfficial(value);
+      expect(specificObjectives(dom).map(field => field.value)).toEqual(objectives);
+      expect(button(dom, 'Adicionar objetivo específico')?.disabled).toBeTrue();
+
+      button(dom, 'Salvar rascunho').click();
+      const preserved = http.expectOne({ url: peiUrl, method: 'PUT' });
+      expect(preserved.request.body.content.specificObjectives).toEqual(objectives);
+      preserved.flush(value);
+      fixture.detectChanges();
+
+      dom.querySelector<HTMLButtonElement>('[aria-label="Remover objetivo específico 2"]')?.click();
+      fixture.detectChanges();
+      expect(specificObjectives(dom).map(field => field.value))
+        .toEqual(['Primeiro', 'Terceiro\nem duas linhas', 'Quarto', 'Quinto']);
+      expect(button(dom, 'Enviar para revisão').disabled).toBeTrue();
+      button(dom, 'Salvar rascunho').click();
+      const corrected = http.expectOne({ url: peiUrl, method: 'PUT' });
+      expect(corrected.request.body.content.specificObjectives)
+        .toEqual(['Primeiro', 'Terceiro\nem duas linhas', 'Quarto', 'Quinto']);
+      corrected.flush(value);
     });
 
     it('edita quadros e indicadores sem reenviar os campos de identificação', () => {

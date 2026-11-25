@@ -48,7 +48,6 @@ public class PeiPdfRenderer {
         private final Font title = Liberation.SANS_BOLD.create(11);
         private final Font heading = Liberation.SANS_BOLD.create(9);
         private final Font body = Liberation.SANS.create(9);
-        private final Font instruction = Liberation.SANS.create(8);
         private final Font priority = Liberation.SANS_ITALIC.create(9);
         private final Font inventoryHeading = Liberation.SERIF_BOLD.create(10);
         private final Font inventoryBody = Liberation.SERIF.create(10);
@@ -82,7 +81,7 @@ public class PeiPdfRenderer {
         }
 
         private void identification(PeiDocument plan) {
-            PdfPTable table = table(34, 66);
+            PdfPTable table = table(45, 55);
             for (String key : List.of("course", "subject", "teacherName", "student")) {
                 table.addCell(span(pair(key, value(key)), 2));
             }
@@ -98,9 +97,7 @@ public class PeiPdfRenderer {
 
         private void objectives() {
             PdfPTable table = table(40, 60);
-            PdfPCell intro = cell();
-            describe(intro, "objectives");
-            table.addCell(span(intro, 2));
+            table.addCell(span(textCell(label("objectives"), heading), 2));
             PdfPCell left = cell();
             for (String key : List.of("generalObjectives", "specificObjectives")) fieldIn(left, key);
             table.addCell(left);
@@ -114,10 +111,7 @@ public class PeiPdfRenderer {
             PdfPTable table = table(1);
             if (key.equals("methodologicalResources")) table.setSpacingBefore(7);
             table.addCell(textCell(label(key), heading));
-            PdfPCell answer = cell();
-            paragraph(answer, hint(key), instruction);
-            paragraph(answer, value(key), body);
-            table.addCell(answer);
+            table.addCell(textCell(value(key), body));
             table.setHeaderRows(1);
             doc.add(table);
         }
@@ -126,8 +120,7 @@ public class PeiPdfRenderer {
             PdfPTable table = table(47, 53);
             table.addCell(textCell(label("contents"), heading));
             table.addCell(textCell(label("contentHours"), heading));
-            table.addCell(span(textCell(hint("contents"), instruction), 2));
-            table.setHeaderRows(2);
+            table.setHeaderRows(1);
             JsonNode entries = content.path("contents");
             for (JsonNode row : entries) {
                 table.addCell(textCell(row.path("description").asText(""), row.path("priority").asBoolean() ? priority : body));
@@ -148,7 +141,7 @@ public class PeiPdfRenderer {
             fieldIn(criteria, "assessmentCriteria");
             table.addCell(criteria);
             PdfPCell instruments = cell();
-            describe(instruments, "assessmentInstruments");
+            paragraph(instruments, label("assessmentInstruments"), heading);
             for (JsonNode row : content.path("assessmentInstruments")) {
                 paragraph(instruments, row.path("description").asText(""), body);
                 paragraph(instruments, row.path("justification").asText(""), body);
@@ -243,13 +236,8 @@ public class PeiPdfRenderer {
         }
 
         private void fieldIn(PdfPCell cell, String key) {
-            describe(cell, key);
-            paragraph(cell, value(key), body);
-        }
-
-        private void describe(PdfPCell cell, String key) {
             paragraph(cell, label(key), heading);
-            paragraph(cell, hint(key), instruction);
+            cell.addElement(line(value(key), body));
         }
 
         private String value(String key) {
@@ -289,7 +277,7 @@ public class PeiPdfRenderer {
 
         private static PdfPCell textCell(String text, Font font) {
             PdfPCell cell = cell();
-            cell.addElement(line(text.isEmpty() ? " " : text, font));
+            cell.addElement(line(text, font));
             return cell;
         }
 
@@ -299,7 +287,7 @@ public class PeiPdfRenderer {
         }
 
         private static Paragraph line(String value, Font font) {
-            Paragraph p = new Paragraph(value, font);
+            Paragraph p = new Paragraph(value.isBlank() ? " " : value, font);
             p.setLeading(0, 1.2f);
             return p;
         }
@@ -310,10 +298,6 @@ public class PeiPdfRenderer {
 
         private static String label(String key) {
             return FORM.required("labels").required(key).textValue();
-        }
-
-        private static String hint(String key) {
-            return FORM.required("instructions").path(key).asText("");
         }
     }
 }

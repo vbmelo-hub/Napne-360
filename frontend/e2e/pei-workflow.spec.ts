@@ -49,7 +49,8 @@ test('docente salva e envia pelo editor e o NAPNE devolve, aprova e arquiva', as
   await page.goto(`${path}/${draft.id}`);
   const objective = page.locator('#generalObjectives');
   await expect(objective).toHaveValue('');
-  await page.locator('#specificObjectives').fill('Objetivo específico fictício\nSegundo objetivo fictício');
+  await page.locator('#pei-annex-i-specific-objective-1').fill('Objetivo específico fictício');
+  await page.locator('#pei-annex-i-specific-objective-2').fill('Segundo objetivo fictício');
   await expect(submit).toBeDisabled();
   await saveCurrent();
   await expect(objective).toHaveValue('');
@@ -69,6 +70,7 @@ test('docente salva e envia pelo editor e o NAPNE devolve, aprova e arquiva', as
   await loginUi(page, 'napne');
   await page.goto(`${path}/${saved.id}`);
   await expect(objective).toBeDisabled();
+  await expect(page.locator('details#help-generalObjectives')).toHaveCount(0);
   await page.getByRole('button', { name: 'Devolver para ajustes', exact: true }).click();
   await confirm('Devolver PEI');
   await expect(status).toHaveText('Rascunho');

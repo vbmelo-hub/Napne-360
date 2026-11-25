@@ -9,9 +9,12 @@ export const bibliographyColumns = [
 ] as const;
 
 const textListFields = [
-  'specificObjectives', 'eliminatedObjectives', 'alternativeObjectives', 'complementaryObjectives',
+  'eliminatedObjectives', 'alternativeObjectives', 'complementaryObjectives',
   'professionalSkills', 'teachingStrategies', 'methodologicalResources', 'assessmentCriteria'
 ] as const;
+
+export const minSpecificObjectives = 2;
+export const maxSpecificObjectives = 4;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -20,6 +23,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 function asText(value: unknown): string {
   if (Array.isArray(value)) return value.filter(item => typeof item === 'string').join('\n');
   return typeof value === 'string' ? value : '';
+}
+
+function storedSpecificObjectives(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter(item => typeof item === 'string') : textList(asText(value), undefined);
 }
 
 function rows(value: unknown, minimum: number): Record<string, unknown>[] {
@@ -48,6 +55,8 @@ export function bibliographyRow(fb: FormBuilder, value: Record<string, unknown> 
 }
 
 export function buildPeiAnnexIForm(fb: FormBuilder, model: PeiAnnexI, content: Record<string, unknown>) {
+  const objectives = storedSpecificObjectives(content['specificObjectives']);
+  const emptyObjectives = Array.from({ length: Math.max(0, minSpecificObjectives - objectives.length) }, () => '');
   const savedInventory = asRecord(content['skillsInventory']);
   const inventory = fb.record<FormControl<PeiSkillRating>>({});
   for (const group of model.inventoryGroups) {
@@ -59,7 +68,8 @@ export function buildPeiAnnexIForm(fb: FormBuilder, model: PeiAnnexI, content: R
   }
 
   return fb.nonNullable.group({
-    generalObjectives: asText(content['generalObjectives']), specificObjectives: asText(content['specificObjectives']),
+    generalObjectives: asText(content['generalObjectives']),
+    specificObjectives: fb.nonNullable.array([...objectives, ...emptyObjectives]),
     eliminatedObjectives: asText(content['eliminatedObjectives']), alternativeObjectives: asText(content['alternativeObjectives']),
     complementaryObjectives: asText(content['complementaryObjectives']), professionalSkills: asText(content['professionalSkills']),
     syllabus: asText(content['syllabus']), prerequisites: asText(content['prerequisites']),
@@ -77,8 +87,9 @@ export function buildPeiAnnexIForm(fb: FormBuilder, model: PeiAnnexI, content: R
 
 export type PeiAnnexIForm = ReturnType<typeof buildPeiAnnexIForm>;
 
+const normalizeLineEndings = (value: string) => value.replace(/\r\n?/g, '\n');
+
 function textList(text: string, saved: unknown): string[] {
-  const normalizeLineEndings = (value: string) => value.replace(/\r\n?/g, '\n');
   const current = normalizeLineEndings(text);
   // A textarea normaliza as quebras, mas o documento pode conter itens multilinha.
   if (Array.isArray(saved) && saved.every(item => typeof item === 'string')
@@ -88,12 +99,22 @@ function textList(text: string, saved: unknown): string[] {
   return current.split('\n').map(line => line.trim()).filter(Boolean);
 }
 
+function specificObjectivesContent(current: string[], saved: unknown): string[] {
+  const previous = storedSpecificObjectives(saved);
+  // Preserve saved line endings and blank items when the teacher did not change the list.
+  const unchanged = previous.length <= current.length
+    && previous.every((objective, index) => normalizeLineEndings(objective) === normalizeLineEndings(current[index]))
+    && current.slice(previous.length).every(objective => !objective.trim());
+  return unchanged ? previous : current.filter(objective => objective.trim());
+}
+
 export function peiAnnexIContent(form: PeiAnnexIForm, savedContent: Record<string, unknown>): Record<string, unknown> {
   const value = form.getRawValue();
   const lists = Object.fromEntries(textListFields.map(key => [key, textList(value[key], savedContent[key])]));
   return {
     ...value,
     ...lists,
+    specificObjectives: specificObjectivesContent(value.specificObjectives, savedContent['specificObjectives']),
     contents: value.contents.filter(row => row.description.trim() || row.workloadHours !== null || row.priority),
     assessmentInstruments: value.assessmentInstruments.filter(row => row.description.trim() || row.justification.trim()),
     basicBibliography: value.basicBibliography.filter(row => Object.values(row).some(text => text.trim())),

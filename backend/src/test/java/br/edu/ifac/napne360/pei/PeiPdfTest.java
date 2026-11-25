@@ -2,6 +2,8 @@ package br.edu.ifac.napne360.pei;
 
 import br.edu.ifac.napne360.audit.AuditService;
 import br.edu.ifac.napne360.security.AccessGuard;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lowagie.text.pdf.PdfReader;
 import com.lowagie.text.pdf.parser.PdfTextExtractor;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,8 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class PeiPdfTest {
+    private static final JsonNode FORM = new ObjectMapper().valueToTree(PeiAnnexI.model());
+
     private final AccessGuard access = mock(AccessGuard.class);
     private final PeiService service = mock(PeiService.class);
     private final AuditService audit = mock(AuditService.class);
@@ -38,7 +42,8 @@ class PeiPdfTest {
         order.verify(service).get(5L, "rev2");
         order.verify(audit).record(eq(auth), eq(http), eq("DOWNLOAD"), eq("PEI"), eq("rev2"), eq("SUCCESS"), anyString());
         String text = extract(response.getBody());
-        assertThat(text).contains("ANEXO I", "Docente Fictícia", "Estudante Fictício", "Disciplina Fictícia", "Período de exemplo",
+        assertThat(text).contains("ANEXO I", "Docente Fictícia", "Estudante Fictício", "Disciplina Fictícia", "Período fictício Anexo I",
+                "Desenvolver autonomia em atividades.", "Ler textos curtos", "Produzir sínteses", "Fundamentos de desenvolvimento web.",
                 "Trabalho em duplas", "Relato oral", "Permite demonstrar", "Obra fictícia", "Autora fictícia", "AB-456",
                 "Bibliografia Complementar", "Observação fictícia", "Assinatura do Docente", "Acre", "25/11/2026")
             .doesNotContain("Sigilo fictício", "informacao-interna", "ANEXO II");
@@ -47,6 +52,39 @@ class PeiPdfTest {
         assertThat(text.split("Realiza com ajuda", -1)).hasSize(29);
         assertThat(text.split("\\[X] Não foi observado", -1)).hasSize(28);
         assertThat(text.split("Não foi observado", -1)).hasSize(29);
+        assertOfficialFormWithoutInstructions(text);
+    }
+
+    @Test
+    void leavesUnansweredFieldsBlankInDraft() throws Exception {
+        PeiDocument plan = example();
+        plan.setContent(Map.of(
+                "syllabus", "Fundamentos de desenvolvimento web.",
+                "generalObjectives", "",
+                "prerequisites", "   ",
+                "specificObjectives", List.of(),
+                "assessmentInstruments", List.of(Map.of("description", "", "justification", ""))));
+        when(service.get(5L, "rev2")).thenReturn(plan);
+
+        String text = extract(endpoint.download(5L, "rev2", auth, http).getBody());
+
+        assertOfficialFormWithoutInstructions(text);
+        assertThat(text).contains("Objetivos Gerais: Objetivos Específicos:",
+                "EMENTA Fundamentos de desenvolvimento web. PRÉ-REQUISITO (SE HOUVER) CONTEÚDOS CARGA HORÁRIA",
+                "CRITÉRIOS INSTRUMENTOS PROPOSTA DE RECUPERAÇÃO DIFERENCIADA Bibliografia Básica",
+                "Observações: Assinatura do Docente Responsável:")
+            .doesNotContain("[X]", "null", "undefined");
+        FORM.required("ratings").forEach(rating ->
+                assertThat(text).contains("[ ] " + rating.required("label").textValue()));
+    }
+
+    @Test
+    void fitsDemoAcademicTermAndWorkloadOnSameLine() throws Exception {
+        try (var reader = new PdfReader(new PeiPdfRenderer().render(example()))) {
+            var lines = new PdfTextExtractor(reader).getTextFromPage(1).lines();
+            assertThat(lines).anySatisfy(line -> assertThat(line)
+                    .contains("PERÍODO LETIVO: Período fictício Anexo I", "CARGA HORÁRIA: 60"));
+        }
     }
 
     @Test
@@ -59,6 +97,9 @@ class PeiPdfTest {
         plan.getContent().put("complementaryBibliography", List.of(Map.of("title", longText + "MARCALIVROFINAL")));
         var renderer = new PeiPdfRenderer();
         byte[] bytes = renderer.render(plan);
+        try (var reader = new PdfReader(bytes)) {
+            assertThat(reader.getNumberOfPages()).isGreaterThan(1);
+        }
         String text = extract(bytes);
         assertThat(text).contains("MARCAOBJETIVOFINAL", "MARCAAVALIACAOFINAL", "MARCALIVROFINAL", "Observação fictícia");
         assertThat(text.split("Explicação", -1)).hasSize(571);
@@ -94,6 +135,7 @@ class PeiPdfTest {
         content.put("workloadHours", 60);
         content.put("generalObjectives", "Desenvolver autonomia em atividades.");
         content.put("specificObjectives", List.of("Ler textos curtos", "Produzir sínteses"));
+        content.put("syllabus", "Fundamentos de desenvolvimento web.");
         content.put("contents", List.of(Map.of("description", "Trabalho em duplas", "workloadHours", 12, "priority", true)));
         content.put("assessmentInstruments", List.of(Map.of("description", "Relato oral", "justification", "Permite demonstrar as etapas.")));
         content.put("basicBibliography", List.of(Map.of("title", "Obra fictícia", "author", "Autora fictícia", "lt", "AB-456")));
@@ -106,8 +148,13 @@ class PeiPdfTest {
         content.put("skillsInventory", inventory);
         content.put("privateNote", "informacao-interna");
         return PeiDocument.builder().id("rev2").revision(2).formVersion(PeiAnnexI.VERSION)
-                .studentId(5L).academicTermLabel("Período de exemplo").content(content)
+                .studentId(5L).academicTermLabel("Período fictício Anexo I").content(content)
                 .transfer(new PeiDocument.Transfer(1L, 2L, "interno", null, "Sigilo fictício")).build();
+    }
+
+    private static void assertOfficialFormWithoutInstructions(String text) {
+        FORM.required("labels").forEach(label -> assertThat(text).contains(label.textValue()));
+        FORM.required("instructions").forEach(instruction -> assertThat(text).doesNotContain(instruction.textValue()));
     }
 
     private static String extract(byte[] bytes) throws IOException {

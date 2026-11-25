@@ -68,15 +68,25 @@ test('docente preenche, reabre e baixa o PEI do Anexo I na revisão salva', asyn
   await expect(indicators.last()).toHaveText('Demonstra autonomia no uso de softwares aplicados ao curso técnico');
 
   const objective = annex.locator('#generalObjectives');
-  const general = 'Objetivo geral fictício do Anexo I';
+  const general = 'Desenvolver autonomia na criação de páginas web acessíveis.';
+  const objectiveHelp = annex.locator('details#help-generalObjectives');
+  const guidance = objectiveHelp.getByText(/Descrever o objetivo geral da disciplina/);
+  await expect(objective).toHaveValue('');
+  await expect(guidance).toBeHidden();
+  await objectiveHelp.locator('summary').click();
+  await expect(guidance).toBeVisible();
+  await expect(objective).toHaveValue('');
   await objective.fill(general);
   await page.locator('.editor-nav').getByText('INVENTÁRIO DE HABILIDADES E COMPETÊNCIAS – IFAC', { exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/estudantes/${f.student.id}/pei/${draft.id}(?:#annex-inventory)?$`));
   await expect(annex.getByRole('heading', { name: 'INVENTÁRIO DE HABILIDADES E COMPETÊNCIAS – IFAC', exact: true })).toBeInViewport();
   await expect(objective).toHaveValue(general);
 
-  const specific = annex.locator('#specificObjectives');
-  const objectives = ['Objetivo específico fictício um', 'Objetivo específico fictício dois'];
+  const specific = (index: number) => annex.locator(`#pei-annex-i-specific-objective-${index + 1}`);
+  const objectives = [
+    'Criar uma página com HTML semântico.\nTestar a navegação por teclado na página criada.',
+    'Identificar problemas de contraste e corrigi-los na folha de estilos.'
+  ];
   const contents = annex.locator('#annex-contents');
   const content = contents.getByRole('textbox', { name: 'Conteúdo 1', exact: true });
   const hours = contents.getByRole('spinbutton', { name: 'Carga horária do conteúdo 1', exact: true });
@@ -91,7 +101,9 @@ test('docente preenche, reabre e baixa o PEI do Anexo I na revisão salva', asyn
   const observations = annex.locator('#observations');
   const location = annex.locator('#location');
   const date = annex.locator('#documentDate');
-  await specific.fill(objectives.join('\n'));
+  for (const [index, value] of objectives.entries()) {
+    await specific(index).fill(value);
+  }
   await content.fill('Conteúdo prioritário fictício');
   await hours.fill('6');
   await priority.check();
@@ -144,7 +156,9 @@ test('docente preenche, reabre e baixa o PEI do Anexo I na revisão salva', asyn
   await page.reload();
   await expect(status).toHaveText('Rascunho');
   await expect(objective).toHaveValue(general);
-  await expect(specific).toHaveValue(objectives.join('\n'));
+  for (const [index, value] of objectives.entries()) {
+    await expect(specific(index)).toHaveValue(value);
+  }
   await expect(content).toHaveValue('Conteúdo prioritário fictício');
   await expect(hours).toHaveValue('6');
   await expect(priority).toBeChecked();
