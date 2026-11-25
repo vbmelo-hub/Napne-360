@@ -169,34 +169,43 @@ test('docente preenche, reabre e baixa o PEI do Anexo I na revisão salva', asyn
   await expect(location).toHaveValue('Rio Branco, AC');
   await expect(date).toHaveValue('2026-11-25');
 
-  await observations.fill('Observação local ainda sem gravação');
-  await page.getByRole('button', { name: 'Baixar PDF', exact: true }).click();
-  const warning = page.getByRole('alertdialog', { name: 'Baixar PDF da revisão salva?' });
-  await expect(warning).toContainText('Há alterações locais no formulário.');
-  const pdfResponse = editorResponse('GET', `${apiPath}/${saved.id}/pdf`);
+  const updatedObservation = 'Observação gravada pelo botão Baixar PDF';
+  await observations.fill(updatedObservation);
+  const savingForPdf = editorResponse('PUT', `${apiPath}/${saved.id}`);
+  const pdfResponse = page.waitForResponse(response => {
+    const pathname = new URL(response.url()).pathname;
+    return response.request().method() === 'GET' && pathname.startsWith(`${apiPath}/`) && pathname.endsWith('/pdf');
+  });
   const pdfDownload = page.waitForEvent('download');
-  await warning.getByRole('button', { name: 'Baixar revisão salva', exact: true }).click();
-  const [pdf, download] = await Promise.all([pdfResponse, pdfDownload]);
+  await page.getByRole('button', { name: 'Baixar PDF', exact: true }).click();
+  const [updatedResponse, pdf, download] = await Promise.all([savingForPdf, pdfResponse, pdfDownload]);
+  expect(updatedResponse.status(), await updatedResponse.text()).toBe(200);
+  const exported = await updatedResponse.json();
+  expect(exported.id).not.toBe(saved.id);
+  expect(exported).toMatchObject({ status: 'DRAFT', revision: 3, content: { observations: updatedObservation } });
+  expect(new URL(pdf.url()).pathname).toBe(`${apiPath}/${exported.id}/pdf`);
   expect(pdf.status()).toBe(200);
   expect(pdf.headers()['content-type']).toBe('application/pdf');
-  expect(pdf.headers()['content-disposition']).toBe('attachment; filename="pei-revisao-2-rascunho.pdf"');
-  expect(download.suggestedFilename()).toBe('pei-revisao-2-rascunho.pdf');
+  expect(pdf.headers()['content-disposition']).toBe('attachment; filename="pei-revisao-3-rascunho.pdf"');
+  expect(download.suggestedFilename()).toBe('pei-revisao-3-rascunho.pdf');
   const pdfPath = testInfo.outputPath('pei-baixado.pdf');
   await download.saveAs(pdfPath);
   const file = await readFile(pdfPath);
   expect(file.subarray(0, 5).toString('ascii')).toBe('%PDF-');
   expect(file.equals(await pdf.body())).toBe(true);
-  await expect(observations).toHaveValue('Observação local ainda sem gravação');
-  const persisted = await request.get(`${apiPath}/${saved.id}`, { headers: f.teacherHeaders });
+  await expect(page).toHaveURL(new RegExp(`/estudantes/${f.student.id}/pei/${exported.id}$`));
+  await page.reload();
+  await expect(observations).toHaveValue(updatedObservation);
+  const persisted = await request.get(`${apiPath}/${exported.id}`, { headers: f.teacherHeaders });
   expect(persisted.status()).toBe(200);
   expect(await persisted.json()).toMatchObject({
-    status: 'DRAFT', revision: 2, storageVersion: saved.storageVersion, formVersion: 'IFAC_76_2025',
-    content: { observations: 'Observação fictícia do Anexo I' }
+    status: 'DRAFT', revision: 3, storageVersion: exported.storageVersion, formVersion: 'IFAC_76_2025',
+    content: { observations: updatedObservation }
   });
-  const denied = await request.get(`${apiPath}/${saved.id}/pdf`, { headers: f.adminHeaders });
+  const denied = await request.get(`${apiPath}/${exported.id}/pdf`, { headers: f.adminHeaders });
   expect(denied.status()).toBe(403);
   const audit = await request.get('/api/v1/audit', {
-    headers: f.headers, params: { resourceType: 'PEI', resourceId: saved.id }
+    headers: f.headers, params: { resourceType: 'PEI', resourceId: exported.id }
   });
   expect(audit.status()).toBe(200);
   const downloads = (await audit.json()).content.filter((entry: { action: string }) => entry.action === 'DOWNLOAD');

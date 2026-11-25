@@ -128,7 +128,7 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
             <p class="field-hint" role="status">Salve o rascunho antes de enviá-lo para revisão.</p>
           }
           <div class="editor-actions">
-            <div><strong>{{ isDirty() ? 'Alterações ainda não salvas' : 'Revisão atual salva' }}</strong><small>{{ isDirty() ? 'Salve o rascunho antes de enviar ou iniciar outra ação.' : 'As ações disponíveis seguem o estado desta versão.' }}</small></div>
+            <div><strong>{{ isDirty() ? 'Alterações ainda não salvas' : 'Revisão atual salva' }}</strong><small>{{ isDirty() ? 'Salve o rascunho antes de alterar o estado do PEI.' : 'As ações disponíveis seguem o estado desta versão.' }}</small></div>
             @if (canEdit()) { <button type="submit" [disabled]="saving() || !documentReady()">@if (saving()) { <span class="spinner"></span> }Salvar rascunho</button> }
             @if (hasAction('SUBMIT')) { <button type="button" (click)="performAction('SUBMIT')" [disabled]="saving() || isDirty() || !documentReady()">Enviar para revisão</button> }
             @if (hasAction('START_REVISION')) { <button type="button" (click)="performAction('START_REVISION')" [disabled]="saving() || isDirty()">Iniciar nova revisão</button> }
@@ -146,9 +146,6 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
       </form>
     }
     <app-confirm-dialog [open]="pendingAction() !== null" [title]="confirmationTitle()" [description]="confirmationDescription()" [confirmLabel]="confirmationLabel()" [danger]="pendingAction() === 'ARCHIVE'" (confirmed)="confirmAction()" (cancelled)="cancelConfirmation()" />
-    <app-confirm-dialog [open]="confirmPdfOpen()" title="Baixar PDF da revisão salva?"
-      description="Há alterações locais no formulário. O PDF contém somente os dados da última gravação desta revisão."
-      confirmLabel="Baixar revisão salva" (confirmed)="downloadPdf()" (cancelled)="confirmPdfOpen.set(false)" />
     <app-confirm-dialog [open]="transferOpen()" title="Transferir rascunho do PEI?"
       description="O conteúdo e a autoria serão mantidos. O docente escolhido poderá editar e enviar a nova revisão."
       confirmLabel="Confirmar transferência" [busy]="saving()" [confirmDisabled]="!canConfirmTransfer()"
@@ -256,7 +253,6 @@ export class PeiEditorComponent implements OnInit {
   protected readonly annexForm = signal<PeiAnnexIForm | null>(null);
   protected readonly documentReady = computed(() => !this.officialForm() || this.annexForm() !== null);
   protected readonly annexError = signal('');
-  protected readonly confirmPdfOpen = signal(false);
   protected readonly downloadingPdf = signal(false);
   readonly pendingAction = signal<ConfirmedPeiAction | null>(null);
   readonly transferOpen = signal(false);
@@ -369,6 +365,10 @@ export class PeiEditorComponent implements OnInit {
   }
 
   save() {
+    this.saveDraft();
+  }
+
+  private saveDraft(onSaved?: (value: Pei) => void) {
     const value = this.currentPei();
     const annex = this.annexForm();
     const form = this.officialForm() ? annex : this.form;
@@ -383,6 +383,7 @@ export class PeiEditorComponent implements OnInit {
         if (this.currentPei() !== value) return;
         this.acceptMutation(value, result);
         this.toast.show('Rascunho do PEI salvo. Envie-o para revisão quando estiver pronto.', 'success');
+        onSaved?.(result);
       },
       error: error => {
         if (this.currentPei() === value) this.fail(error.status, 'salvar o rascunho');
@@ -418,16 +419,16 @@ export class PeiEditorComponent implements OnInit {
   }
 
   protected requestPdf() {
-    if (!this.currentPei() || !this.officialForm() || this.saving() || this.downloadingPdf()) return;
-    if (this.isDirty()) this.confirmPdfOpen.set(true);
-    else this.downloadPdf();
-  }
-
-  protected downloadPdf() {
-    this.confirmPdfOpen.set(false);
     const value = this.currentPei();
     if (!value || !this.officialForm() || this.saving() || this.downloadingPdf()) return;
+    if (this.isDirty()) {
+      this.saveDraft(saved => this.downloadPdf(saved));
+      return;
+    }
+    this.downloadPdf(value);
+  }
 
+  private downloadPdf(value: Pei) {
     this.downloadingPdf.set(true);
     this.pdfRequest = this.api.downloadPeiPdf(value.studentId, value.id).pipe(
       takeUntilDestroyed(this.destroyRef),
@@ -454,7 +455,6 @@ export class PeiEditorComponent implements OnInit {
   }
 
   private resetPdf() {
-    this.confirmPdfOpen.set(false);
     this.pdfRequest?.unsubscribe();
     this.pdfRequest = undefined;
   }

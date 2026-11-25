@@ -366,27 +366,62 @@ describe('PeiEditorComponent — ações D04', () => {
       save.flush(value);
     });
 
-    it('avisa sobre alterações locais e baixa a revisão persistida com o nome enviado pela API', () => {
+    it('salva as alterações antes de baixar o PDF da nova revisão', () => {
+      const navigate = spyOn(TestBed.inject(Router), 'navigate').and.resolveTo(true);
       const dom = openOfficial();
       const click = spyOn(HTMLAnchorElement.prototype, 'click').and.callFake(function (this: HTMLAnchorElement) {
-        expect(this.download).toBe('pei-revisao-2-rascunho.pdf');
+        expect(this.download).toBe('pei-revisao-3-rascunho.pdf');
         expect(this.href).toMatch(/^blob:/);
       });
-      type(dom, '#generalObjectives', 'Alteração não salva');
+      type(dom, '#generalObjectives', 'Objetivo atualizado para exportar');
       button(dom, 'Baixar PDF').click();
       fixture.detectChanges();
-      const dialog = dom.querySelector<HTMLElement>('[role="alertdialog"]')!;
-      expect(dialog.textContent).toContain('alterações locais');
-      http.expectNone(`${peiUrl}/pdf`);
+      const save = http.expectOne({ url: peiUrl, method: 'PUT' });
+      expect(save.request.body).toEqual(jasmine.objectContaining({
+        version: official.storageVersion,
+        content: jasmine.objectContaining({ generalObjectives: 'Objetivo atualizado para exportar' })
+      }));
+      expect(button(dom, 'Baixar PDF').disabled).toBeTrue();
+      http.expectNone(request => request.url.endsWith('/pdf'));
+      expect(click).not.toHaveBeenCalled();
+      save.flush({ ...official, id: 'pei-2', revision: 3, storageVersion: 0, content: save.request.body.content });
+      expect(navigate).toHaveBeenCalledWith(['/estudantes', 1, 'pei', 'pei-2']);
+      routeParams.next(convertToParamMap({ studentId: '1', peiId: 'pei-2' }));
 
-      button(dialog, 'Baixar revisão salva').click();
-      const pdf = http.expectOne({ url: `${peiUrl}/pdf`, method: 'GET' });
+      const pdf = http.expectOne({ url: '/api/v1/students/1/peis/pei-2/pdf', method: 'GET' });
       expect(pdf.request.responseType).toBe('blob');
       pdf.flush(new Blob(['%PDF-1.4'], { type: 'application/pdf' }), {
-        headers: new HttpHeaders({ 'Content-Disposition': 'attachment; filename="pei-revisao-2-rascunho.pdf"' })
+        headers: new HttpHeaders({ 'Content-Disposition': 'attachment; filename="pei-revisao-3-rascunho.pdf"' })
       });
       expect(click).toHaveBeenCalledTimes(1);
-      expect(dom.querySelector<HTMLTextAreaElement>('#generalObjectives')?.value).toBe('Alteração não salva');
+      fixture.detectChanges();
+      expect(dom.querySelector<HTMLTextAreaElement>('#generalObjectives')?.value).toBe('Objetivo atualizado para exportar');
+      expect(dom.querySelector('.editor-actions')?.textContent).toContain('Revisão atual salva');
+    });
+
+    it('preserva as alterações e não baixa o PDF se o salvamento conflitar', () => {
+      const dom = openOfficial();
+      const click = spyOn(HTMLAnchorElement.prototype, 'click');
+      type(dom, '#generalObjectives', 'Objetivo local após conflito');
+      button(dom, 'Baixar PDF').click();
+
+      http.expectOne({ url: peiUrl, method: 'PUT' }).flush({}, { status: 409, statusText: 'Conflict' });
+      http.expectNone(request => request.url.endsWith('/pdf'));
+      expect(click).not.toHaveBeenCalled();
+      fixture.detectChanges();
+      expect(dom.querySelector<HTMLTextAreaElement>('#generalObjectives')?.value).toBe('Objetivo local após conflito');
+      expect(dom.querySelector('[role="alert"]')?.textContent).toContain('rascunho continua no formulário');
+      expect(button(dom, 'Baixar PDF').disabled).toBeFalse();
+    });
+
+    it('baixa a revisão salva sem criar outra quando não há alterações', () => {
+      const dom = openOfficial();
+      const click = spyOn(HTMLAnchorElement.prototype, 'click');
+      button(dom, 'Baixar PDF').click();
+
+      http.expectNone({ url: peiUrl, method: 'PUT' });
+      http.expectOne({ url: `${peiUrl}/pdf`, method: 'GET' }).flush(new Blob(['%PDF-1.4'], { type: 'application/pdf' }));
+      expect(click).toHaveBeenCalledTimes(1);
     });
 
     it('mantém o formato anterior em revisões legadas e não requisita o catálogo oficial', () => {
