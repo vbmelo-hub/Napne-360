@@ -27,15 +27,10 @@
       <div class="section-column">
         <ng-container *ngTemplateOutlet="textField; context: { $implicit: 'generalObjectives' }" />
         <fieldset class="annex-text-field specific-objectives"
-          [attr.aria-describedby]="editable()
-            ? (instructions['specificObjectives'] ? 'specific-objectives-limit instruction-specificObjectives' : 'specific-objectives-limit')
-            : null">
+          [attr.aria-describedby]="editable() && instructions['specificObjectives'] ? 'instruction-specificObjectives' : null">
           <legend>{{ labels['specificObjectives'] }}</legend>
           @let objectives = form().controls.specificObjectives;
           @if (editable()) {
-            <p id="specific-objectives-limit" class="instruction">
-              Preencha de {{ minSpecificObjectives }} a {{ maxSpecificObjectives }} objetivos específicos originais para a aprovação.
-            </p>
             <ng-container *ngTemplateOutlet="fieldInstruction; context: { $implicit: 'specificObjectives' }" />
             @if (objectives.length > maxSpecificObjectives) {
               <p class="instruction" role="status">Remova os objetivos excedentes antes da aprovação.</p>

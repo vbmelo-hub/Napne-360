@@ -247,7 +247,9 @@ describe('PeiEditorComponent — ações D04', () => {
       expect(instruction?.textContent?.trim()).toBe(model.instructions.specificObjectives);
       expect(instruction?.closest('details')).toBeNull();
       expect(instruction?.compareDocumentPosition(fields[0])).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-      expect(fields[0]?.closest('fieldset')?.getAttribute('aria-describedby')).toContain('instruction-specificObjectives');
+      const group = fields[0]?.closest('fieldset');
+      expect(group?.querySelectorAll('p.instruction').length).toBe(1);
+      expect(group?.getAttribute('aria-describedby')).toBe('instruction-specificObjectives');
       expect(fields.map(field => field.value)).toEqual(['Primeiro', '']);
     });
 
