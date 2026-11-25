@@ -56,6 +56,11 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     fixture = TestBed.createComponent(StudentDetailComponent);
     fixture.detectChanges();
   }
+  function setSession(roles: string[]) {
+    sessionStorage.setItem('napne360.session', JSON.stringify({ token: 'test', id: 2,
+      name: roles.includes('TEACHER') ? 'Docente fictício' : 'NAPNE fictício',
+      email: 'user@test.local', roles, campusId: 1 }));
+  }
   function view(tab: string) {
     fixture.componentInstance.tab.set(tab); fixture.detectChanges();
     return fixture.nativeElement as HTMLElement;
@@ -85,6 +90,7 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
   });
 
   it('conserva associação histórica inativa e seu nome sem disponibilizá-la no novo PEI', () => {
+    setSession(['NAPNE', 'TEACHER']);
     const dossier = { ...baseDossier, educationalNeeds: { categoryId: 91, category: 'Categoria histórica', notes: 'Conservar' } };
     api.saveDossier.and.returnValue(of(dossier));
     start(dossier);
@@ -144,8 +150,8 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     expect(dossier.textContent).toContain('Legado legível');
     expect(dossier.querySelector('[data-testid="category-catalog-error"]')).toBeNull();
     const dom = view('pei');
-    expect(dom.querySelector('[data-testid="term-catalog-empty"]')).not.toBeNull();
-    expect(dom.querySelector<HTMLButtonElement>('.create-panel button[type="submit"]')?.disabled).toBeTrue();
+    expect(dom.querySelector('[data-testid="term-catalog-empty"]')).toBeNull();
+    expect(dom.querySelector('select[formControlName="academicTermId"]')).toBeNull();
     expect(dom.querySelector('.pei-row')?.textContent).toContain('2026.1');
     expect(fixture.componentInstance.loadError()).toBe('');
   });
@@ -180,23 +186,27 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
   });
 
   it('cria PEI com ID numérico e mostra nome snapshot com fallback dos antigos', () => {
+    setSession(['TEACHER']);
     api.createPei.and.returnValue(of({ ...pei, id: 'novo-pei' }));
     api.peis.and.returnValue(of([{ ...pei, academicTermLabel: 'Período registrado' }, { ...pei, id: 'legado', academicTerm: '2025.2' }]));
     start(); const dom = view('pei');
     changeSelect('select[formControlName="subjectId"]', '100');
     const term = changeSelect('select[formControlName="academicTermId"]', '21');
-    changeSelect('select[formControlName="teacherId"]', '2');
+    expect(dom.querySelector<HTMLInputElement>('.create-panel input[readonly]')?.value).toBe('Docente fictício');
+    expect(dom.querySelector('select[formControlName="teacherId"]')).toBeNull();
     expect(term?.textContent).toContain('Primeiro semestre de 2026');
     dom.querySelector<HTMLButtonElement>('.create-panel button[type="submit"]')?.click(); fixture.detectChanges();
-    expect(api.createPei).toHaveBeenCalledWith(1, { subjectId: 100, teacherId: 2, academicTermId: 21 });
+    expect(api.createPei.calls.mostRecent().args[0]).toBe(1);
+    expect(api.createPei.calls.mostRecent().args[1] as unknown).toEqual({ subjectId: 100, academicTermId: 21 });
     expect(dom.textContent).toContain('Período registrado'); expect(dom.textContent).toContain('2025.2');
   });
 
   it('bloqueia campos do novo PEI durante envio e conserva seleção após erro', () => {
+    setSession(['TEACHER']);
     const pending = new Subject<Pei>(); api.createPei.and.returnValue(pending);
     start(); const dom = view('pei');
     changeSelect('select[formControlName="subjectId"]', '100');
-    changeSelect('select[formControlName="academicTermId"]', '21'); changeSelect('select[formControlName="teacherId"]', '2');
+    changeSelect('select[formControlName="academicTermId"]', '21');
     dom.querySelector<HTMLButtonElement>('.create-panel button[type="submit"]')?.click(); fixture.detectChanges();
     const term = dom.querySelector<HTMLSelectElement>('select[formControlName="academicTermId"]');
     expect(term?.matches(':disabled')).toBeTrue();
@@ -205,14 +215,29 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
   });
 
   it('falha do período bloqueia criação e mantém planos históricos acessíveis', () => {
+    setSession(['TEACHER']);
     api.references.and.callFake(kind => kind === 'ACADEMIC_TERM' ? throwError(() => ({ status: 500 })) : of([]));
     api.peis.and.returnValue(of([pei])); start(); const dom = view('pei');
     expect(dom.querySelector('[data-testid="term-catalog-error"]')).not.toBeNull();
     expect(dom.querySelector('[data-testid="term-catalog-empty"]')).toBeNull();
     expect(dom.querySelector('.pei-row a')).not.toBeNull();
-    fixture.componentInstance.peiForm.patchValue({ subjectId: '100', teacherId: '2' });
+    fixture.componentInstance.peiForm.patchValue({ subjectId: '100' });
     fixture.componentInstance.createPei();
     expect(api.createPei).not.toHaveBeenCalled();
+  });
+
+  it('não oferece criação de PEI ao NAPNE, mas mantém a consulta aos existentes', () => {
+    api.peis.and.returnValue(of([pei])); start(); const dom = view('pei');
+    expect(dom.querySelector('select[formControlName="academicTermId"]')).toBeNull();
+    expect(dom.querySelector('.pei-row a')).not.toBeNull();
+  });
+
+  it('não oferece criação ao docente sem vínculo ativo no componente', () => {
+    setSession(['TEACHER']);
+    api.studentTeachers.and.returnValue(of([{ id: 99, name: 'Outro docente', subjectId: 100 }]));
+    start(); const dom = view('pei');
+    expect(dom.querySelector('select[formControlName="academicTermId"]')).toBeNull();
+    expect(dom.textContent).toContain('Somente docente vinculado');
   });
 
   it('não busca categorias nem recompõe dados restritos para perfil pedagógico', () => {

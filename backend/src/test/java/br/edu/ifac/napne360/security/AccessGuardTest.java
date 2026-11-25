@@ -3,12 +3,15 @@ package br.edu.ifac.napne360.security;
 import br.edu.ifac.napne360.identity.Campus;
 import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.UserAccount;
+import br.edu.ifac.napne360.student.AssignmentType;
 import br.edu.ifac.napne360.student.Student;
 import br.edu.ifac.napne360.student.StudentAssignmentRepository;
 import br.edu.ifac.napne360.student.StudentRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -16,6 +19,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -32,7 +36,7 @@ class AccessGuardTest {
         guard = new AccessGuard(currentUser, students, assignments);
         campus = Campus.builder().id(1L).name("Campus A").code("A").build();
         student = Student.builder().id(7L).campus(campus).registration("1").civilName("Aluno").build();
-        when(students.findById(7L)).thenReturn(Optional.of(student));
+        lenient().when(students.findById(7L)).thenReturn(Optional.of(student));
     }
 
     @Test
@@ -69,15 +73,46 @@ class AccessGuardTest {
     @Test
     void tutorAssignmentDoesNotAuthorizePeiEditing() {
         when(currentUser.require()).thenReturn(user(5L, campus, RoleName.TUTOR));
-        assertThat(guard.canManagePei(7L, 10L)).isFalse();
+        assertThat(guard.canTeachPei(7L, 10L)).isFalse();
     }
 
     @Test
     void teacherCannotManageDifferentSubject() {
         when(currentUser.require()).thenReturn(user(3L, campus, RoleName.TEACHER));
-        when(assignments.existsByStudentIdAndUserIdAndSubjectIdAndActiveTrue(7L, 3L, 10L)).thenReturn(true);
-        assertThat(guard.canManagePei(7L, 10L)).isTrue();
-        assertThat(guard.canManagePei(7L, 11L)).isFalse();
+        when(assignments.existsByStudentIdAndUserIdAndSubjectIdAndAssignmentTypeAndActiveTrue(
+                7L, 3L, 10L, AssignmentType.TEACHER)).thenReturn(true);
+        assertThat(guard.canTeachPei(7L, 10L)).isTrue();
+        assertThat(guard.canTeachPei(7L, 11L)).isFalse();
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = RoleName.class, names = {"TUTOR", "COTEP"})
+    void mixedRoleWithoutTeacherAssignmentCannotTeachPei(RoleName otherRole) {
+        var account = user(3L, campus, RoleName.TEACHER);
+        account.setRoles(Set.of(RoleName.TEACHER, otherRole));
+        when(currentUser.require()).thenReturn(account);
+        lenient().when(assignments.existsByStudentIdAndUserIdAndSubjectIdAndActiveTrue(7L, 3L, 10L)).thenReturn(true);
+        lenient().when(assignments.existsByStudentIdAndUserIdAndActiveTrue(7L, 3L)).thenReturn(true);
+        assertThat(guard.canTeachPei(7L, 10L)).isFalse();
+        assertThat(guard.canViewPei(7L, 10L)).isFalse();
+    }
+
+    @Test
+    void teacherAndCotepRolesKeepTeachingAndCoordinationAssignmentsSeparate() {
+        var account = user(3L, campus, RoleName.TEACHER);
+        account.setRoles(Set.of(RoleName.TEACHER, RoleName.COTEP));
+        when(currentUser.require()).thenReturn(account);
+        when(assignments.existsByStudentIdAndUserIdAndSubjectIdAndAssignmentTypeAndActiveTrue(
+                7L, 3L, 10L, AssignmentType.TEACHER)).thenReturn(true);
+
+        assertThat(guard.canTeachPei(7L, 10L)).isTrue();
+        assertThat(guard.canViewPei(7L, 10L)).isTrue();
+        assertThat(guard.canViewPei(7L, 11L)).isFalse();
+
+        when(assignments.existsByStudentIdAndUserIdAndAssignmentTypeAndActiveTrue(
+                7L, 3L, AssignmentType.COORDINATOR)).thenReturn(true);
+        assertThat(guard.canViewPei(7L, 11L)).isTrue();
+        assertThat(guard.canTeachPei(7L, 11L)).isFalse();
     }
 
     @Test
@@ -93,6 +128,6 @@ class AccessGuardTest {
     void assignmentCannotGrantAccessAcrossCampus() {
         when(currentUser.require()).thenReturn(user(3L, Campus.builder().id(99L).build(), RoleName.TEACHER));
         assertThat(guard.canViewStudent(7L)).isFalse();
-        assertThat(guard.canManagePei(7L, 10L)).isFalse();
+        assertThat(guard.canTeachPei(7L, 10L)).isFalse();
     }
 }

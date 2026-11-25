@@ -50,9 +50,9 @@ describe('Casos no acompanhamento do estudante', () => {
     http.expectOne('/api/v1/catalog/student-teachers?studentId=1').flush([]);
     if (role === 'NAPNE') {
       http.expectOne('/api/v1/catalog/references?kind=NEED_CATEGORY').flush([]);
-      http.expectOne('/api/v1/catalog/references?kind=ACADEMIC_TERM').flush([]);
       http.expectOne('/api/v1/catalog/courses').flush([]);
     }
+    if (role === 'TEACHER') http.expectOne('/api/v1/catalog/references?kind=ACADEMIC_TERM').flush([]);
     fixture.detectChanges();
   }
 

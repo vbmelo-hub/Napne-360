@@ -3,10 +3,13 @@ package br.edu.ifac.napne360.pei;
 import br.edu.ifac.napne360.audit.AuditService;
 import br.edu.ifac.napne360.common.ConflictException;
 import br.edu.ifac.napne360.common.NotFoundException;
-import br.edu.ifac.napne360.document.DossierDocument;
-import br.edu.ifac.napne360.document.DossierRepository;
+import br.edu.ifac.napne360.document.CareRecordDocument;
+import br.edu.ifac.napne360.document.CareRecordService;
+import br.edu.ifac.napne360.document.CareRecordType;
+import br.edu.ifac.napne360.document.RecordStatus;
 import br.edu.ifac.napne360.identity.ReferenceCatalogService;
 import br.edu.ifac.napne360.identity.ReferenceIdDeserializer;
+import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.Subject;
 import br.edu.ifac.napne360.identity.SubjectRepository;
 import br.edu.ifac.napne360.identity.UserAccount;
@@ -14,109 +17,249 @@ import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.student.Student;
 import br.edu.ifac.napne360.timeline.TimelineService;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
+import com.fasterxml.jackson.annotation.JsonSetter;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class PeiService {
+    private static final List<String> REQUIRED_TEXT_LISTS = List.of("specificObjectives", "contents",
+            "teachingStrategies", "assessmentCriteria", "assessmentInstruments");
     private final ReferenceCatalogService catalog;
-    private final PeiRepository peis;
-    private final DossierRepository dossiers;
+    private final PeiSeriesStore store;
+    private final CareRecordService careRecords;
     private final SubjectRepository subjects;
     private final CurrentUserService currentUser;
     private final TimelineService timeline;
     private final AuditService audit;
     private final br.edu.ifac.napne360.security.AccessGuard access;
-    private final br.edu.ifac.napne360.identity.UserAccountRepository users;
-    private final br.edu.ifac.napne360.student.StudentAssignmentRepository assignments;
     private final br.edu.ifac.napne360.document.DocumentTemplateRepository templates;
 
     public List<PeiDocument> list(Long studentId) {
-        return peis.findByStudentIdOrderByUpdatedAtDesc(studentId).stream()
-                .filter(p -> access.canViewSubject(studentId, p.getSubjectId())).toList();
+        UserAccount actor = currentUser.require();
+        return store.list(studentId).stream()
+                .filter(series -> access.canViewPei(studentId, series.subjectId()))
+                .flatMap(series -> {
+                    var permissions = permissions(actor, studentId, series.subjectId());
+                    return series.revisions().stream().map(pei -> project(series, pei, actor, permissions));
+                })
+                .sorted(Comparator.comparing(PeiDocument::getUpdatedAt, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(PeiDocument::getId))
+                .toList();
     }
 
     public PeiDocument get(Long studentId, String id) {
-        PeiDocument pei = peis.findById(id).orElseThrow(() -> new NotFoundException("PEI não encontrado."));
-        if (!studentId.equals(pei.getStudentId())) throw new NotFoundException("PEI não encontrado.");
-        if (!access.canViewSubject(studentId, pei.getSubjectId())) throw new org.springframework.security.access.AccessDeniedException("Access denied");
-        return pei;
+        PeiSeries series = requireSeries(studentId, id);
+        PeiDocument pei = requirePlan(series, id);
+        UserAccount actor = currentUser.require();
+        if (!access.canViewPei(studentId, series.subjectId())) {
+            throw denied();
+        }
+        return project(series, pei, actor, permissions(actor, studentId, series.subjectId()));
     }
 
     public PeiDocument createDraft(Student student, PeiCreateRequest request, Authentication auth, HttpServletRequest http) {
+        UserAccount actor = currentUser.require();
+        if (!permissions(actor, student.getId(), request.subjectId()).teacher()) throw denied();
+        if (request.teacherId() != null && !request.teacherId().equals(actor.getId())) {
+            throw new IllegalArgumentException("O docente responsável deve ser o autor do rascunho.");
+        }
         Subject subject = subjects.findById(request.subjectId()).orElseThrow(() -> new NotFoundException("Componente não encontrado."));
         if (!subject.getCourse().getId().equals(student.getCourse().getId())) {
             throw new IllegalArgumentException("O componente deve pertencer ao curso do estudante.");
         }
-        UserAccount user = currentUser.require();
-        Long teacherId = request.teacherId() == null && user.getRoles().contains(br.edu.ifac.napne360.identity.RoleName.TEACHER)
-                ? user.getId() : request.teacherId();
-        if (teacherId != null) {
-            UserAccount teacher = users.findById(teacherId).orElseThrow(() -> new IllegalArgumentException("Docente inválido."));
-            if (!teacher.isActive() || !teacher.getRoles().contains(br.edu.ifac.napne360.identity.RoleName.TEACHER)
-                    || teacher.getCampus() == null || !teacher.getCampus().getId().equals(student.getCampus().getId())
-                    || !assignments.existsByStudentIdAndUserIdAndSubjectIdAndActiveTrue(student.getId(), teacherId, subject.getId())) {
-                throw new IllegalArgumentException("O docente deve estar ativo e vinculado ao estudante e componente.");
-            }
-        }
         var term = catalog.academicTerm(request.academicTermId(), request.academicTerm());
-        int revision = peis.findByStudentIdAndSubjectIdAndAcademicTermOrderByRevisionDesc(
-                student.getId(), subject.getId(), term.getCode()).stream().findFirst().map(PeiDocument::getRevision).orElse(0) + 1;
-        PeiDocument pei = PeiDocument.builder().studentId(student.getId()).subjectId(subject.getId()).teacherId(teacherId)
-                .academicTerm(term.getCode()).academicTermId(term.getId()).academicTermLabel(term.getLabel()).revision(revision).content(template(student, subject)).createdBy(user.getEmail())
-                .updatedBy(user.getEmail()).build();
-        pei = peis.save(pei);
-        timeline.append(student.getId(), "PEI_CREATED", "Rascunho de PEI criado", user.getName(), TimelineVisibility.PEDAGOGICAL,
-                Map.of("peiId", pei.getId(), "subjectId", subject.getId(), "revision", revision));
-        audit.record(auth, http, "CREATE", "PEI", pei.getId(), "SUCCESS", "Rascunho determinístico; revisão humana obrigatória");
-        return pei;
+        var series = store.load(student.getId(), subject.getId(), term.getCode());
+        if (series.hasOpenWork() || series.current().isPresent()) {
+            throw new ConflictException("Já existe trabalho em andamento ou PEI vigente neste período.");
+        }
+        var now = recordedAt();
+        var plan = PeiDocument.builder().id(newId()).studentId(student.getId()).subjectId(subject.getId())
+                .teacherId(actor.getId()).academicTerm(term.getCode()).academicTermId(term.getId())
+                .academicTermLabel(term.getLabel()).revision(series.nextRevision()).storageVersion(0L)
+                .content(template(student, subject)).createdBy(actor.getEmail()).updatedBy(actor.getEmail())
+                .createdAt(now).updatedAt(now).build();
+        var revisions = new ArrayList<>(series.revisions());
+        revisions.add(plan);
+        return persist(series, revisions, plan, actor, new Permissions(true, false), "CREATE",
+                "PEI_CREATED", "Rascunho de PEI criado", auth, http);
     }
 
     public PeiDocument createVersion(Long studentId, String id, PeiUpdateRequest request,
                                      Authentication auth, HttpServletRequest http) {
-        PeiDocument previous = get(studentId, id);
-        if (previous.getStatus() == PeiStatus.ARCHIVED || previous.getStatus() == PeiStatus.SUPERSEDED)
-            throw new ConflictException("Somente a versão atual pode ser revisada.");
-        if (request.status() != null && request.status() != PeiStatus.DRAFT && request.status() != PeiStatus.IN_REVIEW)
-            throw new IllegalArgumentException("Revisões devem ser rascunhos ou estar em revisão. A aprovação exige a operação de revisão humana.");
-        UserAccount user = currentUser.require();
-        previous.setStatus(PeiStatus.SUPERSEDED);
-        previous.setUpdatedBy(user.getEmail());
-        previous.setUpdatedAt(Instant.now());
-        PeiDocument next = PeiDocument.builder().studentId(previous.getStudentId()).subjectId(previous.getSubjectId())
-                .teacherId(previous.getTeacherId()).academicTerm(previous.getAcademicTerm())
-                .academicTermId(previous.getAcademicTermId()).academicTermLabel(previous.getAcademicTermLabel())
-                .revision(previous.getRevision() + 1)
-                .status(request.status() == null ? PeiStatus.DRAFT : request.status())
-                .content(request.content() == null ? Map.of() : new LinkedHashMap<>(request.content()))
-                .createdBy(previous.getCreatedBy()).updatedBy(user.getEmail()).build();
-        next = peis.save(next);
-        peis.save(previous);
-        timeline.append(studentId, "PEI_REVISED", "Nova versão do PEI", user.getName(), TimelineVisibility.PEDAGOGICAL,
-                Map.of("peiId", next.getId(), "revision", next.getRevision(), "subjectId", next.getSubjectId()));
-        audit.record(auth, http, "REVISE", "PEI", next.getId(), "SUCCESS", "Revisão " + next.getRevision());
-        return next;
+        var series = requireSeries(studentId, id);
+        var previous = requirePlan(series, id);
+        var actor = currentUser.require();
+        var permissions = permissions(actor, studentId, series.subjectId());
+        requireAction(series, previous, actor, permissions, Action.EDIT, request.version());
+        var now = recordedAt();
+        var next = newDraft(series, previous, actor, now, new LinkedHashMap<>(request.content()), previous.getCreatedBy());
+        var revisions = replace(series, advance(previous, PeiStatus.SUPERSEDED, actor, now).build());
+        revisions.add(next);
+        return persist(series, revisions, next, actor, permissions, "REVISE", "PEI_REVISED",
+                "Nova versão do PEI", auth, http);
     }
 
-    public PeiDocument approve(Long studentId, String id, Authentication auth, HttpServletRequest http) {
-        PeiDocument pei = get(studentId, id);
-        if (pei.getStatus() != PeiStatus.IN_REVIEW) {
-            throw new ConflictException("Envie a versão atual para revisão antes de aprovar.");
+    public PeiDocument transition(Long studentId, String id, Action action, Long version,
+                                  Authentication auth, HttpServletRequest http) {
+        var series = requireSeries(studentId, id);
+        var previous = requirePlan(series, id);
+        var actor = currentUser.require();
+        var permissions = permissions(actor, studentId, series.subjectId());
+        requireAction(series, previous, actor, permissions, action, version);
+        var now = recordedAt();
+
+        if (action == Action.START_REVISION) {
+            var next = newDraft(series, previous, actor, now, new LinkedHashMap<>(previous.getContent()), actor.getEmail());
+            var revisions = replace(series, previous.toBuilder()
+                    .storageVersion(Math.incrementExact(previous.getStorageVersion())).build());
+            revisions.add(next);
+            return persist(series, revisions, next, actor, permissions, "REVISE", "PEI_REVISED",
+                    "Rascunho de substituição do PEI criado", auth, http);
         }
-        for (String field : List.of("generalObjectives", "specificObjectives", "contents", "teachingStrategies", "assessmentCriteria", "assessmentInstruments")) {
-            Object value = pei.getContent().get(field);
-            if (value == null || value.toString().isBlank() || value instanceof java.util.Collection<?> c && c.isEmpty())
-                throw new IllegalArgumentException("Preencha os objetivos, conteúdos, estratégias e avaliação antes de aprovar.");
+        var status = switch (action) {
+            case SUBMIT -> PeiStatus.IN_REVIEW;
+            case RETURN -> PeiStatus.DRAFT;
+            case APPROVE -> PeiStatus.APPROVED;
+            case ARCHIVE -> PeiStatus.ARCHIVED;
+            default -> throw new IllegalArgumentException("Operação de PEI inválida.");
+        };
+        var changed = advance(previous, status, actor, now);
+        if (action == Action.APPROVE) {
+            validateApproval(previous);
+            changed.reviewedBy(actor.getEmail()).reviewedAt(now);
+        }
+        var result = changed.build();
+        var revisions = replace(series, result);
+        if (action == Action.APPROVE) {
+            series.current().ifPresent(vigent -> revisions.replaceAll(p -> p.getId().equals(vigent.getId())
+                    ? advance(p, PeiStatus.SUPERSEDED, actor, now).build() : p));
+        }
+        return switch (action) {
+            case SUBMIT -> persist(series, revisions, result, actor, permissions, "SUBMIT", "PEI_SUBMITTED",
+                    "PEI enviado para revisão", auth, http);
+            case RETURN -> persist(series, revisions, result, actor, permissions, "RETURN", "PEI_RETURNED",
+                    "PEI devolvido para ajustes", auth, http);
+            case APPROVE -> persist(series, revisions, result, actor, permissions, "APPROVE", "PEI_APPROVED",
+                    "PEI aprovado após revisão humana", auth, http);
+            case ARCHIVE -> persist(series, revisions, result, actor, permissions, "ARCHIVE", "PEI_ARCHIVED",
+                    "PEI arquivado", auth, http);
+            default -> throw new IllegalArgumentException("Operação de PEI inválida.");
+        };
+    }
+
+    private PeiSeries requireSeries(Long studentId, String id) {
+        return store.find(studentId, id).orElseThrow(() -> new NotFoundException("PEI não encontrado."));
+    }
+
+    private PeiDocument requirePlan(PeiSeries series, String id) {
+        return series.find(id).orElseThrow(() -> new NotFoundException("PEI não encontrado."));
+    }
+
+    private Permissions permissions(UserAccount actor, Long studentId, Long subjectId) {
+        return new Permissions(actor.getRoles().contains(RoleName.TEACHER) && access.canTeachPei(studentId, subjectId),
+                actor.getRoles().contains(RoleName.NAPNE) && access.canEditDossier(studentId));
+    }
+
+    private void requireAction(PeiSeries series, PeiDocument pei, UserAccount actor, Permissions permissions,
+                               Action action, Long version) {
+        if (!authorized(pei, actor, permissions, action)) throw denied();
+        if (version == null || !Objects.equals(version, pei.getStorageVersion())
+                || !available(series, pei, action)) {
+            throw new ConflictException("O PEI foi alterado ou a operação não está disponível nesta revisão.");
+        }
+    }
+
+    private static boolean authorized(PeiDocument pei, UserAccount actor, Permissions permissions, Action action) {
+        return switch (action) {
+            case EDIT, SUBMIT -> permissions.teacher()
+                    && (pei.getTeacherId() == null || Objects.equals(pei.getTeacherId(), actor.getId()));
+            case START_REVISION -> permissions.teacher();
+            case APPROVE, RETURN, ARCHIVE -> permissions.reviewer();
+        };
+    }
+
+    private static boolean available(PeiSeries series, PeiDocument pei, Action action) {
+        return switch (action) {
+            case EDIT -> pei.getStatus() == PeiStatus.DRAFT;
+            case SUBMIT -> pei.getStatus() == PeiStatus.DRAFT && pei.getTeacherId() != null;
+            case START_REVISION -> pei.getStatus() == PeiStatus.APPROVED && !series.hasOpenWork();
+            case APPROVE, RETURN -> pei.getStatus() == PeiStatus.IN_REVIEW;
+            case ARCHIVE -> pei.getStatus() == PeiStatus.APPROVED;
+        };
+    }
+
+    private static PeiDocument project(PeiSeries series, PeiDocument pei, UserAccount actor, Permissions permissions) {
+        var actions = java.util.Arrays.stream(Action.values())
+                .filter(action -> authorized(pei, actor, permissions, action) && available(series, pei, action))
+                .map(Action::name).toList();
+        return pei.toBuilder().allowedActions(actions).build();
+    }
+
+    private PeiDocument persist(PeiSeries series, List<PeiDocument> revisions, PeiDocument plan, UserAccount actor,
+                                Permissions permissions, String action, String event, String title,
+                                Authentication auth, HttpServletRequest http) {
+        store.save(series, revisions);
+        timeline.append(plan.getStudentId(), event, title, actor.getName(), TimelineVisibility.PEDAGOGICAL,
+                Map.of("peiId", plan.getId(), "subjectId", plan.getSubjectId(), "revision", plan.getRevision()));
+        audit.record(auth, http, action, "PEI", plan.getId(), "SUCCESS", "Revisão " + plan.getRevision());
+        return project(series.next(revisions), plan, actor, permissions);
+    }
+
+    private static ArrayList<PeiDocument> replace(PeiSeries series, PeiDocument plan) {
+        var revisions = new ArrayList<>(series.revisions());
+        revisions.replaceAll(p -> p.getId().equals(plan.getId()) ? plan : p);
+        return revisions;
+    }
+
+    private static PeiDocument.PeiDocumentBuilder advance(PeiDocument plan, PeiStatus status, UserAccount actor, Instant now) {
+        return plan.toBuilder().status(status).storageVersion(Math.incrementExact(plan.getStorageVersion()))
+                .updatedBy(actor.getEmail()).updatedAt(now);
+    }
+
+    private static PeiDocument newDraft(PeiSeries series, PeiDocument source, UserAccount actor, Instant now,
+                                        Map<String, Object> content, String author) {
+        return source.toBuilder().id(newId()).teacherId(actor.getId()).revision(series.nextRevision())
+                .status(PeiStatus.DRAFT).storageVersion(0L).content(content)
+                .createdBy(author).createdAt(now).updatedBy(actor.getEmail()).updatedAt(now)
+                .reviewedBy(null).reviewedAt(null).build();
+    }
+
+    private static String newId() {
+        return UUID.randomUUID().toString();
+    }
+
+    private static Instant recordedAt() {
+        return Instant.now().truncatedTo(ChronoUnit.MILLIS);
+    }
+
+    private static AccessDeniedException denied() {
+        return new AccessDeniedException("Sem permissão para esta operação no PEI.");
+    }
+
+    private void validateApproval(PeiDocument pei) {
+        var content = pei.getContent();
+        if (content == null || !hasText(content.get("generalObjectives"))
+                || REQUIRED_TEXT_LISTS.stream().anyMatch(field -> !hasTextList(content.get(field)))) {
+            throw new IllegalArgumentException("Preencha os objetivos, conteúdos, estratégias e avaliação antes de aprovar.");
         }
         if (pei.getTeacherId() == null) throw new IllegalArgumentException("Identifique o docente responsável antes da aprovação.");
         if (!(pei.getContent().get("skillsInventory") instanceof Map<?,?> inventory))
@@ -125,20 +268,17 @@ public class PeiService {
             if (!(inventory.get(dimension) instanceof String rating) || !java.util.Set.of("REALIZA_COM_AJUDA", "REALIZA_SEM_AJUDA", "NAO_REALIZA", "NAO_OBSERVADO").contains(rating))
                 throw new IllegalArgumentException("Escolha uma opção válida em cada dimensão do inventário.");
         }
-        UserAccount reviewer = currentUser.require();
-        pei.setStatus(PeiStatus.APPROVED);
-        pei.setReviewedBy(reviewer.getEmail());
-        pei.setReviewedAt(Instant.now());
-        pei.setUpdatedAt(Instant.now());
-        pei = peis.save(pei);
-        timeline.append(studentId, "PEI_APPROVED", "PEI aprovado após revisão humana", reviewer.getName(),
-                TimelineVisibility.PEDAGOGICAL, Map.of("peiId", pei.getId(), "revision", pei.getRevision(), "subjectId", pei.getSubjectId()));
-        audit.record(auth, http, "APPROVE", "PEI", pei.getId(), "SUCCESS", "Revisão humana registrada");
-        return pei;
+    }
+
+    private static boolean hasText(Object value) {
+        return value instanceof String text && !text.isBlank();
+    }
+
+    private static boolean hasTextList(Object value) {
+        return value instanceof List<?> texts && !texts.isEmpty() && texts.stream().allMatch(PeiService::hasText);
     }
 
     private Map<String, Object> template(Student student, Subject subject) {
-        DossierDocument dossier = dossiers.findByStudentId(student.getId()).orElse(null);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("student", student.getDisplayName());
         result.put("course", student.getCourse().getName());
@@ -153,7 +293,7 @@ public class PeiService {
         result.put("professionalSkills", List.of());
         result.put("prerequisites", "");
         result.put("contents", List.of());
-        result.put("teachingStrategies", dossier == null ? Map.of() : dossier.getInitialInterventions());
+        result.put("teachingStrategies", suggestedStrategies(student.getId(), subject.getId()));
         result.put("methodologicalResources", List.of());
         result.put("assessmentCriteria", List.of());
         result.put("assessmentInstruments", List.of());
@@ -169,6 +309,20 @@ public class PeiService {
         });
         result.put("reviewWarning", "Rascunho de apoio. Deve ser revisado pelo docente e pela equipe responsável antes da aprovação.");
         return result;
+    }
+
+    private List<String> suggestedStrategies(Long studentId, Long subjectId) {
+        return careRecords.list(studentId, CareRecordType.PEDAGOGICAL_GUIDANCE).stream()
+                .filter(record -> record.getStatus() == RecordStatus.ACTIVE)
+                .filter(record -> record.getSubjectId() == null || subjectId.equals(record.getSubjectId()))
+                .map(CareRecordDocument::getContent)
+                .filter(Objects::nonNull)
+                .map(content -> content.get("adaptations"))
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .map(text -> text.lines().map(String::strip).filter(line -> !line.isEmpty()).toList())
+                .filter(strategies -> !strategies.isEmpty())
+                .findFirst().orElseGet(List::of);
     }
 
     private Map<String, Object> emptyInventory() {
@@ -187,5 +341,17 @@ public class PeiService {
             this(subjectId, teacherId, academicTerm, null);
         }
     }
-    public record PeiUpdateRequest(PeiStatus status, Map<String, Object> content) {}
+    enum Action { EDIT, START_REVISION, SUBMIT, RETURN, APPROVE, ARCHIVE }
+    private record Permissions(boolean teacher, boolean reviewer) {}
+
+    public record PeiUpdateRequest(@NotNull Map<String, Object> content,
+                                   @NotNull @PositiveOrZero @JsonDeserialize(using = ReferenceIdDeserializer.class) Long version) {
+        @JsonSetter("status")
+        public void rejectStatus(JsonNode ignored) {
+            throw new IllegalArgumentException("Use as ações do PEI para alterar o status.");
+        }
+    }
+
+    public record PeiActionRequest(
+            @NotNull @PositiveOrZero @JsonDeserialize(using = ReferenceIdDeserializer.class) Long version) {}
 }

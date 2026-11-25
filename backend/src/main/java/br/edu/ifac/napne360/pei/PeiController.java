@@ -5,7 +5,6 @@ import br.edu.ifac.napne360.student.Student;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -34,24 +33,28 @@ public class PeiController {
     public PeiDocument create(@PathVariable Long studentId, @Valid @RequestBody PeiService.PeiCreateRequest request,
                               Authentication auth, HttpServletRequest http) {
         Student student = access.requireView(studentId);
-        if (!access.canManagePei(studentId, request.subjectId())) throw new AccessDeniedException("Access denied");
         return service.createDraft(student, request, auth, http);
     }
 
     @PutMapping("/{id}")
     public PeiDocument update(@PathVariable Long studentId, @PathVariable String id,
-                              @RequestBody PeiService.PeiUpdateRequest request,
+                              @Valid @RequestBody PeiService.PeiUpdateRequest request,
                               Authentication auth, HttpServletRequest http) {
-        PeiDocument current = service.get(studentId, id);
-        if (!access.canManagePei(studentId, current.getSubjectId())) throw new AccessDeniedException("Access denied");
         return service.createVersion(studentId, id, request, auth, http);
     }
 
-    @PostMapping("/{id}/approve")
-    public PeiDocument approve(@PathVariable Long studentId, @PathVariable String id,
-                               Authentication auth, HttpServletRequest http) {
-        PeiDocument current = service.get(studentId, id);
-        if (!access.canManagePei(studentId, current.getSubjectId())) throw new AccessDeniedException("Access denied");
-        return service.approve(studentId, id, auth, http);
+    @PostMapping("/{id}/{operation:submit|return|approve|archive|revisions}")
+    public PeiDocument transition(@PathVariable Long studentId, @PathVariable String id, @PathVariable String operation,
+                                  @Valid @RequestBody PeiService.PeiActionRequest request,
+                                  Authentication auth, HttpServletRequest http) {
+        var action = switch (operation) {
+            case "submit" -> PeiService.Action.SUBMIT;
+            case "return" -> PeiService.Action.RETURN;
+            case "approve" -> PeiService.Action.APPROVE;
+            case "archive" -> PeiService.Action.ARCHIVE;
+            case "revisions" -> PeiService.Action.START_REVISION;
+            default -> throw new IllegalArgumentException("Operação de PEI inválida.");
+        };
+        return service.transition(studentId, id, action, request.version(), auth, http);
     }
 }

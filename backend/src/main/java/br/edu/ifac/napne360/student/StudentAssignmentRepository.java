@@ -7,4 +7,7 @@ public interface StudentAssignmentRepository extends JpaRepository<StudentAssign
     java.util.List<StudentAssignment> findByStudentIdAndActiveTrue(Long studentId);
     boolean existsByStudentIdAndUserIdAndActiveTrue(Long studentId, Long userId);
     boolean existsByStudentIdAndUserIdAndSubjectIdAndActiveTrue(Long studentId, Long userId, Long subjectId);
+    boolean existsByStudentIdAndUserIdAndSubjectIdAndAssignmentTypeAndActiveTrue(
+            Long studentId, Long userId, Long subjectId, AssignmentType assignmentType);
+    boolean existsByStudentIdAndUserIdAndAssignmentTypeAndActiveTrue(Long studentId, Long userId, AssignmentType assignmentType);
 }

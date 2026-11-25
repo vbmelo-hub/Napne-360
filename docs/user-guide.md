@@ -24,7 +24,9 @@ Em **Documentos**, envie PDF, PNG, JPEG ou DOCX até 10 MB. O arquivo é acessí
 
 Somente estudantes vinculados aparecem. Professor seleciona o componente ao registrar uma devolutiva. COTEP/coordenação precisam de atribuição explícita ao estudante. Os campos livres do dossiê clínico e anexos não são liberados para esses perfis.
 
-Em **PEI**, selecione componente, período e docente vinculado. O rascunho usa informações pedagógicas existentes; preencha objetivos, conteúdos, estratégias e avaliação. Registre uma opção em cada dimensão do inventário. Salve uma nova revisão antes de aprovar; a aprovação identifica a pessoa e a data. Não é uma avaliação médica automatizada.
+Em **PEI**, o docente vinculado seleciona o componente e o período. O sistema identifica o docente e oferece um rascunho com dados acadêmicos, valores do modelo e adaptações de orientação pedagógica ativa quando disponíveis. Preencha objetivos, conteúdos, estratégias, avaliação e inventário de habilidades. Salve o rascunho e envie para revisão quando estiver pronto.
+
+O NAPNE do campus pode devolver o PEI para ajustes ou aprová-lo após a conferência. A aprovação registra a pessoa revisora e a data. COTEP e coordenação com vínculo acompanham o PEI em consulta. Para atualizar um aprovado, abra uma nova revisão a partir dele. Você pode elaborar uma revisão por estudante, componente e período. O aprovado continua vigente até a aprovação da substituta ou até o arquivamento pelo NAPNE. Consulte os planos anteriores no histórico.
 
 ## Tutor, gestão e administração
 

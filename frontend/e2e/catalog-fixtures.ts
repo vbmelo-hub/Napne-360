@@ -58,28 +58,42 @@ export async function catalogFixture(request: APIRequestContext) {
   return { student, course: courses[0], teacher, subject: subjects[0], headers, adminHeaders, teacherHeaders, path, post, dossier, saveDossier, entry };
 }
 
-/** Old records cannot be created through the new API. Touch only this newly created TEST student. */
-export function makeLegacyFixture(student: { id: number; registration: string }, peiId: string) {
-  if (!Number.isSafeInteger(student.id) || student.id <= 0 || !student.registration.startsWith('TEST-CATALOG-')) {
-    throw new Error('Fixture de legado exige estudante fictício recém-criado.');
-  }
+export function evaluateMongo(script: string): string {
   const docker = process.env['NAPNE_E2E_DOCKER'] || 'docker';
   const compose = ['compose'];
+  if (process.env['NAPNE_E2E_COMPOSE_FILE']) compose.push('-f', process.env['NAPNE_E2E_COMPOSE_FILE']);
   if (process.env['NAPNE_E2E_COMPOSE_PROJECT']) compose.push('-p', process.env['NAPNE_E2E_COMPOSE_PROJECT']);
-  const container = execFileSync(docker, [...compose, 'ps', '-q', 'mongo'], { encoding: 'utf8', timeout: 30_000 }).trim();
+  const container = process.env['NAPNE_E2E_MONGO_CONTAINER'] ||
+    execFileSync(docker, [...compose, 'ps', '-q', 'mongo'], { encoding: 'utf8', timeout: 30_000 }).trim();
   if (!container || container.includes('\n')) throw new Error('Container Mongo isolado não identificado.');
+  const database = process.env['NAPNE_E2E_MONGO_DB'] || 'napne360_documents';
+  return execFileSync(docker, ['exec', container, 'mongosh', database, '--quiet', '--eval', script], {
+    encoding: 'utf8', timeout: 30_000
+  }).trim();
+}
+
+/** Old records cannot be created through the new API. Touch only this newly created TEST student. */
+export function makeLegacyFixture(student: { id: number; registration: string }, subjectId: number, teacherId: number): string {
+  if (!Number.isSafeInteger(student.id) || student.id <= 0 || !student.registration.startsWith('TEST-CATALOG-') ||
+      ![subjectId, teacherId].every(id => Number.isSafeInteger(id) && id > 0)) {
+    throw new Error('Fixture de legado exige estudante fictício recém-criado e vínculo válido.');
+  }
   // Arguments and JavaScript literals are passed separately; no shell interpolation is used.
   const script = `
     const studentId = NumberLong(${JSON.stringify(String(student.id))});
     const dossier = db.student_dossiers.updateOne({studentId}, {$set: {educationalNeeds: {
       category: 'Categoria legada fictícia', notes: 'Notas legadas fictícias', extra: 'Extra preservado'
     }}});
-    const peiId = ${JSON.stringify(peiId)};
-    const pei = db.pei_documents.updateOne({$or: [{_id: peiId}, {_id: ObjectId(peiId)}], studentId}, {
-      $set: {academicTerm: 'LEGACY-FICTICIO'}, $unset: {academicTermId: '', academicTermLabel: ''}
+    if (dossier.matchedCount !== 1) throw new Error('Fixture histórica de dossiê não localizada');
+    const pei = db.pei_documents.insertOne({studentId,
+      subjectId: NumberLong(${JSON.stringify(String(subjectId))}),
+      teacherId: NumberLong(${JSON.stringify(String(teacherId))}),
+      academicTerm: 'LEGACY-FICTICIO', revision: 1, status: 'DRAFT',
+      content: { generalObjectives: 'Objetivo histórico fictício' },
+      createdBy: 'docente-ficticio@example.test', updatedBy: 'docente-ficticio@example.test',
+      createdAt: new Date(), updatedAt: new Date(), storageVersion: NumberLong('0')
     });
-    if (dossier.matchedCount !== 1 || pei.matchedCount !== 1) throw new Error('Fixture histórica não localizada');
-    print('Fixture histórica fictícia preparada');
+    print(pei.insertedId.toString());
   `;
-  execFileSync(docker, ['exec', container, 'mongosh', 'napne360_documents', '--quiet', '--eval', script], { stdio: 'pipe', timeout: 30_000 });
+  return evaluateMongo(script);
 }

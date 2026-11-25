@@ -149,7 +149,11 @@ export interface Pei {
   reviewedBy: string | null;
   reviewedAt: string | null;
   updatedAt: string;
+  storageVersion?: number;
+  allowedActions?: PeiAction[];
 }
+
+export type PeiAction = 'EDIT' | 'START_REVISION' | 'SUBMIT' | 'RETURN' | 'APPROVE' | 'ARCHIVE';
 
 export interface TimelineEvent {
   id: string;
@@ -188,7 +192,7 @@ export interface ReferenceOption {
 
 export interface PeiCreateRequest {
   subjectId: number;
-  teacherId: number;
+  teacherId?: number;
   academicTermId: number;
 }
 

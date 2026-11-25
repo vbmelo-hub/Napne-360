@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiCreateRequest, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
+import { Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiCreateRequest, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
@@ -46,8 +46,15 @@ export class ApiService {
   peis(id: number) { return this.http.get<Pei[]>(`/api/v1/students/${id}/peis`); }
   pei(studentId: number, id: string) { return this.http.get<Pei>(`/api/v1/students/${studentId}/peis/${id}`); }
   createPei(studentId: number, value: PeiCreateRequest) { return this.http.post<Pei>(`/api/v1/students/${studentId}/peis`, value); }
-  revisePei(studentId: number, id: string, value: object) { return this.http.put<Pei>(`/api/v1/students/${studentId}/peis/${id}`, value); }
-  approvePei(studentId: number, id: string) { return this.http.post<Pei>(`/api/v1/students/${studentId}/peis/${id}/approve`, {}); }
+  revisePei(studentId: number, id: string, value: {content: Record<string, unknown>; version: number}) {
+    return this.http.put<Pei>(`/api/v1/students/${studentId}/peis/${id}`, value);
+  }
+  peiAction(studentId: number, id: string, action: Exclude<PeiAction, 'EDIT'>, version: number) {
+    const endpoint: Record<Exclude<PeiAction, 'EDIT'>, string> = {
+      START_REVISION: 'revisions', SUBMIT: 'submit', RETURN: 'return', APPROVE: 'approve', ARCHIVE: 'archive'
+    };
+    return this.http.post<Pei>(`/api/v1/students/${studentId}/peis/${id}/${endpoint[action]}`, {version});
+  }
   courses() { return this.http.get<Course[]>('/api/v1/catalog/courses'); }
   subjects(courseId: number) { return this.http.get<Subject[]>('/api/v1/catalog/subjects', { params: { courseId } }); }
   studentSubjects(studentId: number) { return this.http.get<Subject[]>('/api/v1/catalog/student-subjects', { params: { studentId } }); }

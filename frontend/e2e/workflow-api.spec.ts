@@ -34,15 +34,19 @@ test('caso completo: dossiê, acompanhamento, PEI e negação de acesso',async({
   const term=await post('/admin/references',{kind:'ACADEMIC_TERM',code:`TEST-WORKFLOW-${Date.now()}`,label:'Período fictício do fluxo'},adminHeaders);
   // Compatibilidade do cliente antigo: o código agora precisa existir e estar ativo.
   const draft=await post(studentPath+'/peis',{subjectId:subjects[0].id,teacherId:teacher.id,academicTerm:term.code},teacherHeaders);
-  const bypass=await request.put('/api/v1'+studentPath+`/peis/${draft.id}`,{headers:teacherHeaders,data:{status:'APPROVED',content:draft.content}});
+  const bypass=await request.put('/api/v1'+studentPath+`/peis/${draft.id}`,{headers:teacherHeaders,data:{version:draft.storageVersion,status:'APPROVED',content:draft.content}});
   expect(bypass.status()).toBe(400);
   const content={...draft.content,generalObjectives:'Objetivo fictício',specificObjectives:['Objetivo específico'],contents:['Conteúdo'],teachingStrategies:['Exemplos'],assessmentCriteria:['Participação'],assessmentInstruments:['Atividade']};
-  const revised=await request.put('/api/v1'+studentPath+`/peis/${draft.id}`,{headers:teacherHeaders,data:{status:'IN_REVIEW',content}});
+  const revised=await request.put('/api/v1'+studentPath+`/peis/${draft.id}`,{headers:teacherHeaders,data:{version:draft.storageVersion,content}});
   expect(revised.status()).toBe(200);
   const version=await revised.json();
-  const approved=await post(studentPath+`/peis/${version.id}/approve`,{},teacherHeaders);
+  const submitted=await post(studentPath+`/peis/${version.id}/submit`,{version:version.storageVersion},teacherHeaders);
+  expect(submitted.status).toBe('IN_REVIEW');
+  const approvePath=studentPath+`/peis/${submitted.id}/approve`;
+  expect((await request.post('/api/v1'+approvePath,{headers:teacherHeaders,data:{version:submitted.storageVersion}})).status()).toBe(403);
+  const approved=await post(approvePath,{version:submitted.storageVersion});
   expect(approved.status).toBe('APPROVED');
-  expect(approved.reviewedBy).toBe(teacher.email);
+  expect(approved.reviewedBy).toBe(napne.email);
   const redacted=await (await request.get('/api/v1'+studentPath+'/dossier',{headers:teacherHeaders})).json();
   expect(redacted.redacted).toBe(true);
   expect(redacted.identification).toEqual({});

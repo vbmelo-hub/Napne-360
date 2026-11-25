@@ -12,9 +12,11 @@ A autorização consulta o vínculo relacional antes de liberar qualquer documen
 
 ## Consistência entre armazenamentos
 
-Não há transação distribuída. Uma falha entre a gravação do agregado, linha do tempo e auditoria pode deixar uma operação parcialmente registrada. O histórico embutido de dossiê e atendimento é salvo atomicamente com o documento; a linha do tempo é uma projeção separada. PEIs têm índice único por estudante/componente/período/revisão. A nova versão é persistida antes da marcação da anterior como substituída para preservar conteúdo.
+Não há transação distribuída. Uma falha entre a gravação do agregado, linha do tempo e auditoria pode deixar uma operação parcialmente registrada. O histórico de dossiê e atendimento é salvo atomicamente com o documento. A linha do tempo é uma projeção separada.
 
-Uma entrega institucional ainda exige outbox/reconciliação para eventos e auditoria entre bancos, teste de concorrência de PEI e tratamento de uploads órfãos. A infraestrutura atual não deve ser descrita como transacional entre MySQL, MongoDB e filesystem.
+O PEI guarda as revisões em uma série por estudante, componente e código de período. Uma gravação condicional no MongoDB efetiva a aprovação e a substituição da versão vigente juntas. O token de versão da revisão protege ações enviadas a partir de uma tela desatualizada. Séries legadas preservam IDs, conteúdo autorizado e metadados históricos. Quando já existem vários rascunhos ou versões em revisão, vale a de maior número para o trabalho em andamento. A mesma regra identifica o vigente entre aprovados legados. As demais versões seguem consultáveis como substituídas.
+
+Outbox ou reconciliação de eventos e auditoria entre bancos e o tratamento de uploads órfãos permanecem pendentes. Uma repetição após conflito preserva o estado do PEI. Ela não recompõe um evento que falhou após a gravação.
 
 ## Execução
 

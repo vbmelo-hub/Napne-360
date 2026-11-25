@@ -2,6 +2,7 @@ package br.edu.ifac.napne360.security;
 
 import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.UserAccount;
+import br.edu.ifac.napne360.student.AssignmentType;
 import br.edu.ifac.napne360.student.Student;
 import br.edu.ifac.napne360.student.StudentAssignmentRepository;
 import br.edu.ifac.napne360.student.StudentRepository;
@@ -43,17 +44,26 @@ public class AccessGuard {
                 && assignments.existsByStudentIdAndUserIdAndActiveTrue(studentId, user.getId());
     }
 
-    public boolean canManagePei(Long studentId, Long subjectId) {
+    public boolean canTeachPei(Long studentId, Long subjectId) {
         UserAccount user = currentUser.require();
-        Student student = requireStudent(studentId);
-        if (!sameCampus(user, student)) return false;
-        if (user.getRoles().contains(RoleName.NAPNE)) return true;
-        if (subjectId == null) return false;
-        if (user.getRoles().stream().anyMatch(Set.of(RoleName.COTEP, RoleName.COURSE_COORDINATOR)::contains)) {
-            return assignments.existsByStudentIdAndUserIdAndActiveTrue(studentId, user.getId());
-        }
-        return user.getRoles().contains(RoleName.TEACHER)
-                && assignments.existsByStudentIdAndUserIdAndSubjectIdAndActiveTrue(studentId, user.getId(), subjectId);
+        Student student = students.findById(studentId).orElse(null);
+        return student != null && sameCampus(user, student) && hasPeiTeachingAssignment(user, studentId, subjectId);
+    }
+
+    public boolean canViewPei(Long studentId, Long subjectId) {
+        UserAccount user = currentUser.require();
+        Student student = students.findById(studentId).orElse(null);
+        if (student == null || !sameCampus(user, student)) return false;
+        if (user.getRoles().contains(RoleName.NAPNE) || hasPeiTeachingAssignment(user, studentId, subjectId)) return true;
+        return (user.getRoles().contains(RoleName.COTEP) || user.getRoles().contains(RoleName.COURSE_COORDINATOR))
+                && assignments.existsByStudentIdAndUserIdAndAssignmentTypeAndActiveTrue(
+                        studentId, user.getId(), AssignmentType.COORDINATOR);
+    }
+
+    private boolean hasPeiTeachingAssignment(UserAccount user, Long studentId, Long subjectId) {
+        return subjectId != null && user.getRoles().contains(RoleName.TEACHER)
+                && assignments.existsByStudentIdAndUserIdAndSubjectIdAndAssignmentTypeAndActiveTrue(
+                        studentId, user.getId(), subjectId, AssignmentType.TEACHER);
     }
 
     public boolean canViewSubject(Long studentId, Long subjectId) {

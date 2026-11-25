@@ -43,10 +43,11 @@ test('administra catálogos pela interface e preserva snapshots após renomear e
   const saved = await savedResponse.json();
   expect(saved.educationalNeeds).toMatchObject({ categoryId: category.id, category: categoryLabel });
 
+  await loginUi(page, 'professor');
+  await page.goto(`/estudantes/${f.student.id}`);
   await page.getByRole('button', { name: 'PEI', exact: true }).click();
   const peiForm = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Criar rascunho de PEI', exact: true }) });
   await peiForm.getByRole('combobox', { name: /^Componente/ }).selectOption(String(f.subject.id));
-  await peiForm.getByRole('combobox', { name: /^Docente responsável/ }).selectOption(String(f.teacher.id));
   await peiForm.getByRole('combobox', { name: /^Período letivo/ }).selectOption({ label: termLabel });
   const peiResponse = page.waitForResponse(r => r.url().endsWith(`${f.path}/peis`) && r.request().method() === 'POST');
   await peiForm.getByRole('button', { name: 'Criar rascunho', exact: true }).click();
@@ -73,6 +74,8 @@ test('administra catálogos pela interface e preserva snapshots após renomear e
   await page.goto(`/estudantes/${another.id}`);
   await page.locator('#dossier-educationalNeeds summary').click();
   await expect(categorySelect.locator(`option[value="${category.id}"]`)).toHaveText(`${categoryLabel} renomeado`);
+  await loginUi(page, 'professor');
+  await page.goto(`/estudantes/${f.student.id}`);
   await page.getByRole('button', { name: 'PEI', exact: true }).click();
   await expect(peiForm.getByRole('combobox', { name: /^Período letivo/ }).locator(`option[value="${term.id}"]`)).toHaveText(`${termLabel} renomeado`);
   await loginUi(page, 'admin');
@@ -103,10 +106,16 @@ test('administra catálogos pela interface e preserva snapshots após renomear e
   await page.getByRole('button', { name: 'PEI', exact: true }).click();
   await expect(page.locator('article.pei-row')).toContainText(termLabel);
   await expect(page.locator('article.pei-row')).not.toContainText('renomeado');
+  await loginUi(page, 'professor');
+  await page.goto(`/estudantes/${f.student.id}`);
+  await page.getByRole('button', { name: 'PEI', exact: true }).click();
   await expect(peiForm.getByRole('combobox', { name: /^Período letivo/ }).locator(`option[value="${term.id}"]`)).toHaveCount(0);
-  const revision = await request.put(`${f.path}/peis/${pei.id}`, { headers: f.headers, data: { status: 'DRAFT', content: pei.content } });
+  const revision = await request.put(`${f.path}/peis/${pei.id}`, {
+    headers: f.teacherHeaders, data: { version: pei.storageVersion, content: pei.content }
+  });
   expect(revision.status()).toBe(200);
   expect(await revision.json()).toMatchObject({ academicTermId: term.id, academicTerm: term.code, academicTermLabel: termLabel, revision: 2 });
+  await loginUi(page, 'napne');
   await page.goto(`/estudantes/${another.id}`);
   await page.locator('#dossier-educationalNeeds summary').click();
   await expect(categorySelect.locator(`option[value="${category.id}"]`)).toHaveCount(0);
@@ -139,14 +148,21 @@ test('valida IDs, código legado, inatividade, omissão e remoção antes de per
   expect(items.find((item: { id: number }) => item.id === category.id)).toMatchObject({ label: category.label, code: category.code, kind: category.kind });
   const peiData = { subjectId: f.subject.id, teacherId: f.teacher.id };
   for (const invalid of [{ academicTermId: category.id }, { academicTermId: 2147483647 }, { academicTerm: term.label }, { academicTerm: 'NAO-CADASTRADO' }]) {
-    const response = await request.post(`${f.path}/peis`, { headers: f.headers, data: { ...peiData, ...invalid } });
+    const response = await request.post(`${f.path}/peis`, { headers: f.teacherHeaders, data: { ...peiData, ...invalid } });
     expect(response.status()).toBe(400);
   }
   expect(await (await request.get(`${f.path}/peis`, { headers: f.headers })).json()).toHaveLength(0);
-  const oldClient = await f.post(`/students/${f.student.id}/peis`, { ...peiData, academicTerm: term.code });
+  const oldClient = await f.post(`/students/${f.student.id}/peis`, { ...peiData, academicTerm: term.code }, f.teacherHeaders);
   expect(oldClient).toMatchObject({ academicTermId: term.id, academicTerm: term.code, academicTermLabel: term.label });
-  const newClient = await f.post(`/students/${f.student.id}/peis`, { ...peiData, academicTermId: term.id, academicTermLabel: 'Adulterado' });
-  expect(newClient).toMatchObject({ academicTermId: term.id, academicTerm: term.code, academicTermLabel: term.label });
+  const duplicated = await request.post(`${f.path}/peis`, {
+    headers: f.teacherHeaders, data: { ...peiData, academicTermId: term.id }
+  });
+  expect(duplicated.status()).toBe(409);
+  const secondTerm = await f.entry('ACADEMIC_TERM', 'Outro período fictício');
+  const newClient = await f.post(`/students/${f.student.id}/peis`, {
+    ...peiData, academicTermId: secondTerm.id, academicTermLabel: 'Adulterado'
+  }, f.teacherHeaders);
+  expect(newClient).toMatchObject({ academicTermId: secondTerm.id, academicTerm: secondTerm.code, academicTermLabel: secondTerm.label });
   for (const item of [category, term]) {
     const response = await request.patch(`/api/v1/admin/references/${item.id}/active`, { headers: f.adminHeaders, data: { active: false } });
     expect(response.status()).toBe(200);
@@ -174,7 +190,7 @@ test('valida IDs, código legado, inatividade, omissão e remoção antes de per
   expect(await history()).toHaveLength(beforeInvalid.length);
   expect(await timeline()).toHaveLength(beforeEvents.length);
   for (const inactive of [{ academicTermId: term.id }, { academicTerm: term.code }]) {
-    const response = await request.post(`${f.path}/peis`, { headers: f.headers, data: { ...peiData, ...inactive } });
+    const response = await request.post(`${f.path}/peis`, { headers: f.teacherHeaders, data: { ...peiData, ...inactive } });
     expect(response.status()).toBe(400);
   }
   const peis = await (await request.get(`${f.path}/peis`, { headers: f.headers })).json();
@@ -186,10 +202,8 @@ test('valida IDs, código legado, inatividade, omissão e remoção antes de per
 
 test('reabre legado sem inventar associação e permite revisão e remoção explícita', async ({ page, request }) => {
   const f = await catalogFixture(request);
-  const term = await f.entry('ACADEMIC_TERM', 'Período temporário de fixture histórica');
   await f.saveDossier(await f.dossier());
-  const pei = await f.post(`/students/${f.student.id}/peis`, { subjectId: f.subject.id, teacherId: f.teacher.id, academicTermId: term.id });
-  makeLegacyFixture(f.student, pei.id);
+  const peiId = makeLegacyFixture(f.student, f.subject.id, f.teacher.id);
   await loginUi(page, 'napne');
   await page.goto(`/estudantes/${f.student.id}`);
   await page.locator('#dossier-educationalNeeds summary').click();
@@ -211,7 +225,12 @@ test('reabre legado sem inventar associação e permite revisão e remoção exp
   expect((await f.dossier()).educationalNeeds.category).toBeFalsy();
   await page.getByRole('button', { name: 'PEI', exact: true }).click();
   await expect(page.locator('article.pei-row')).toContainText('LEGACY-FICTICIO');
-  const response = await request.put(`${f.path}/peis/${pei.id}`, { headers: f.headers, data: { status: 'DRAFT', content: pei.content } });
+  const previousResponse = await request.get(`${f.path}/peis/${peiId}`, { headers: f.teacherHeaders });
+  expect(previousResponse.status()).toBe(200);
+  const previous = await previousResponse.json();
+  const response = await request.put(`${f.path}/peis/${peiId}`, {
+    headers: f.teacherHeaders, data: { version: previous.storageVersion, content: previous.content }
+  });
   expect(response.status()).toBe(200);
   const revision = await response.json();
   expect(revision.academicTerm).toBe('LEGACY-FICTICIO');
