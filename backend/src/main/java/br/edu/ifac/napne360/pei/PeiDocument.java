@@ -1,5 +1,6 @@
 package br.edu.ifac.napne360.pei;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.*;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.Transient;
@@ -34,6 +35,8 @@ public class PeiDocument {
     private String updatedBy;
     private String reviewedBy;
     private Instant reviewedAt;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Transfer transfer;
     @Builder.Default
     private Instant createdAt = Instant.now();
     @Builder.Default
@@ -43,4 +46,6 @@ public class PeiDocument {
     @Transient
     @Builder.Default
     private List<String> allowedActions = List.of();
+
+    public record Transfer(Long fromTeacherId, Long toTeacherId, String transferredBy, Instant transferredAt, String reason) {}
 }

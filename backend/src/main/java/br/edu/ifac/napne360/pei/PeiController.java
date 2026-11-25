@@ -43,6 +43,18 @@ public class PeiController {
         return service.createVersion(studentId, id, request, auth, http);
     }
 
+    @GetMapping("/{id}/transfer-candidates")
+    public List<PeiService.TransferCandidate> transferCandidates(@PathVariable Long studentId, @PathVariable String id) {
+        return service.transferCandidates(studentId, id);
+    }
+
+    @PostMapping("/{id}/transfer")
+    public PeiDocument transfer(@PathVariable Long studentId, @PathVariable String id,
+                                @Valid @RequestBody PeiService.PeiTransferRequest request,
+                                Authentication auth, HttpServletRequest http) {
+        return service.transfer(studentId, id, request, auth, http);
+    }
+
     @PostMapping("/{id}/{operation:submit|return|approve|archive|revisions}")
     public PeiDocument transition(@PathVariable Long studentId, @PathVariable String id, @PathVariable String operation,
                                   @Valid @RequestBody PeiService.PeiActionRequest request,

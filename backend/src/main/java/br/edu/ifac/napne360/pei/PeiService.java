@@ -14,7 +14,10 @@ import br.edu.ifac.napne360.identity.Subject;
 import br.edu.ifac.napne360.identity.SubjectRepository;
 import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.security.CurrentUserService;
+import br.edu.ifac.napne360.student.AssignmentType;
 import br.edu.ifac.napne360.student.Student;
+import br.edu.ifac.napne360.student.StudentAssignment;
+import br.edu.ifac.napne360.student.StudentAssignmentRepository;
 import br.edu.ifac.napne360.timeline.TimelineService;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import com.fasterxml.jackson.annotation.JsonSetter;
@@ -22,6 +25,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
@@ -52,6 +56,7 @@ public class PeiService {
     private final AuditService audit;
     private final br.edu.ifac.napne360.security.AccessGuard access;
     private final br.edu.ifac.napne360.document.DocumentTemplateRepository templates;
+    private final StudentAssignmentRepository assignments;
 
     public List<PeiDocument> list(Long studentId) {
         UserAccount actor = currentUser.require();
@@ -111,7 +116,8 @@ public class PeiService {
         var permissions = permissions(actor, studentId, series.subjectId());
         requireAction(series, previous, actor, permissions, Action.EDIT, request.version());
         var now = recordedAt();
-        var next = newDraft(series, previous, actor, now, new LinkedHashMap<>(request.content()), previous.getCreatedBy());
+        var next = newDraft(series, previous, actor, now, new LinkedHashMap<>(request.content()), previous.getCreatedBy())
+                .teacherId(actor.getId()).build();
         var revisions = replace(series, advance(previous, PeiStatus.SUPERSEDED, actor, now).build());
         revisions.add(next);
         return persist(series, revisions, next, actor, permissions, "REVISE", "PEI_REVISED",
@@ -128,7 +134,8 @@ public class PeiService {
         var now = recordedAt();
 
         if (action == Action.START_REVISION) {
-            var next = newDraft(series, previous, actor, now, new LinkedHashMap<>(previous.getContent()), actor.getEmail());
+            var next = newDraft(series, previous, actor, now, new LinkedHashMap<>(previous.getContent()), actor.getEmail())
+                    .teacherId(actor.getId()).build();
             var revisions = replace(series, previous.toBuilder()
                     .storageVersion(Math.incrementExact(previous.getStorageVersion())).build());
             revisions.add(next);
@@ -166,6 +173,81 @@ public class PeiService {
         };
     }
 
+    public List<TransferCandidate> transferCandidates(Long studentId, String id) {
+        var actor = requireTransferActor(studentId);
+        var series = requireSeries(studentId, id);
+        var draft = requirePlan(series, id);
+        if (!available(series, draft, Action.TRANSFER)) throw revisionConflict();
+        return eligibleTransferTeachers(series, draft, actor.getCampus().getId());
+    }
+
+    public PeiDocument transfer(Long studentId, String id, PeiTransferRequest request,
+                                Authentication auth, HttpServletRequest http) {
+        var actor = requireTransferActor(studentId);
+        var series = requireSeries(studentId, id);
+        var previous = requirePlan(series, id);
+        var permissions = permissions(actor, studentId, series.subjectId());
+        requireAction(series, previous, actor, permissions, Action.TRANSFER, request.version());
+
+        var reason = trimTransferReason(request.reason());
+        if (reason.isEmpty() || reason.length() > 500) {
+            throw new IllegalArgumentException("Informe um motivo de até 500 caracteres para a transferência.");
+        }
+        if (eligibleTransferTeachers(series, previous, actor.getCampus().getId()).stream()
+                .noneMatch(candidate -> candidate.id().equals(request.teacherId()))) {
+            throw new IllegalArgumentException("O docente escolhido deve ter vínculo ativo com o estudante e o componente.");
+        }
+
+        var now = recordedAt();
+        var next = newDraft(series, previous, actor, now, previous.getContent(), previous.getCreatedBy())
+                .teacherId(request.teacherId())
+                .transfer(new PeiDocument.Transfer(previous.getTeacherId(), request.teacherId(), actor.getEmail(), now, reason))
+                .build();
+        var revisions = replace(series, advance(previous, PeiStatus.SUPERSEDED, actor, now).build());
+        revisions.add(next);
+        return persist(series, revisions, next, actor, permissions, "TRANSFER", "PEI_TRANSFERRED",
+                "Rascunho de PEI transferido", TimelineVisibility.RESTRICTED, auth, http);
+    }
+
+    private static String trimTransferReason(JsonNode reason) {
+        if (reason == null || !reason.isTextual()) return "";
+        var text = reason.textValue();
+        int start = 0;
+        int end = text.length();
+        while (start < end && isTransferWhitespace(text.charAt(start))) {
+            start++;
+        }
+        while (start < end && isTransferWhitespace(text.charAt(end - 1))) {
+            end--;
+        }
+        return text.substring(start, end);
+    }
+
+    private static boolean isTransferWhitespace(char character) {
+        // The editor's trim() also removes U+FEFF.
+        return Character.isWhitespace(character) || Character.isSpaceChar(character) || character == '\uFEFF';
+    }
+
+    private UserAccount requireTransferActor(Long studentId) {
+        var actor = currentUser.require();
+        if (!canReview(actor, studentId)) throw denied();
+        return actor;
+    }
+
+    private List<TransferCandidate> eligibleTransferTeachers(PeiSeries series, PeiDocument source, Long campusId) {
+        return assignments.findByStudentIdAndActiveTrue(series.studentId()).stream()
+                .filter(link -> link.getAssignmentType() == AssignmentType.TEACHER && link.getSubject() != null
+                        && series.subjectId().equals(link.getSubject().getId()))
+                .map(StudentAssignment::getUser)
+                .filter(user -> !user.getId().equals(source.getTeacherId()) && user.isActive()
+                        && user.getRoles().contains(RoleName.TEACHER)
+                        && user.getCampus() != null && campusId.equals(user.getCampus().getId()))
+                .map(user -> new TransferCandidate(user.getId(), user.getName()))
+                .distinct()
+                .sorted(Comparator.comparing(TransferCandidate::name).thenComparing(TransferCandidate::id))
+                .toList();
+    }
+
     private PeiSeries requireSeries(Long studentId, String id) {
         return store.find(studentId, id).orElseThrow(() -> new NotFoundException("PEI não encontrado."));
     }
@@ -176,7 +258,11 @@ public class PeiService {
 
     private Permissions permissions(UserAccount actor, Long studentId, Long subjectId) {
         return new Permissions(actor.getRoles().contains(RoleName.TEACHER) && access.canTeachPei(studentId, subjectId),
-                actor.getRoles().contains(RoleName.NAPNE) && access.canEditDossier(studentId));
+                canReview(actor, studentId));
+    }
+
+    private boolean canReview(UserAccount actor, Long studentId) {
+        return actor.getRoles().contains(RoleName.NAPNE) && access.canEditDossier(studentId);
     }
 
     private void requireAction(PeiSeries series, PeiDocument pei, UserAccount actor, Permissions permissions,
@@ -184,8 +270,12 @@ public class PeiService {
         if (!authorized(pei, actor, permissions, action)) throw denied();
         if (version == null || !Objects.equals(version, pei.getStorageVersion())
                 || !available(series, pei, action)) {
-            throw new ConflictException("O PEI foi alterado ou a operação não está disponível nesta revisão.");
+            throw revisionConflict();
         }
+    }
+
+    private static ConflictException revisionConflict() {
+        return new ConflictException("O PEI foi alterado ou a operação não está disponível nesta revisão.");
     }
 
     private static boolean authorized(PeiDocument pei, UserAccount actor, Permissions permissions, Action action) {
@@ -193,32 +283,41 @@ public class PeiService {
             case EDIT, SUBMIT -> permissions.teacher()
                     && (pei.getTeacherId() == null || Objects.equals(pei.getTeacherId(), actor.getId()));
             case START_REVISION -> permissions.teacher();
-            case APPROVE, RETURN, ARCHIVE -> permissions.reviewer();
+            case APPROVE, RETURN, ARCHIVE, TRANSFER -> permissions.reviewer();
         };
     }
 
-    private static boolean available(PeiSeries series, PeiDocument pei, Action action) {
+    private boolean available(PeiSeries series, PeiDocument pei, Action action) {
         return switch (action) {
             case EDIT -> pei.getStatus() == PeiStatus.DRAFT;
             case SUBMIT -> pei.getStatus() == PeiStatus.DRAFT && pei.getTeacherId() != null;
             case START_REVISION -> pei.getStatus() == PeiStatus.APPROVED && !series.hasOpenWork();
             case APPROVE, RETURN -> pei.getStatus() == PeiStatus.IN_REVIEW;
             case ARCHIVE -> pei.getStatus() == PeiStatus.APPROVED;
+            case TRANSFER -> pei.getStatus() == PeiStatus.DRAFT && pei.getTeacherId() != null
+                    && series.subjectId() != null && !assignments.existsByStudentIdAndUserIdAndSubjectIdAndAssignmentTypeAndActiveTrue(
+                    series.studentId(), pei.getTeacherId(), series.subjectId(), AssignmentType.TEACHER);
         };
     }
 
-    private static PeiDocument project(PeiSeries series, PeiDocument pei, UserAccount actor, Permissions permissions) {
+    private PeiDocument project(PeiSeries series, PeiDocument pei, UserAccount actor, Permissions permissions) {
         var actions = java.util.Arrays.stream(Action.values())
                 .filter(action -> authorized(pei, actor, permissions, action) && available(series, pei, action))
                 .map(Action::name).toList();
-        return pei.toBuilder().allowedActions(actions).build();
+        return pei.toBuilder().allowedActions(actions).transfer(permissions.reviewer() ? pei.getTransfer() : null).build();
     }
 
     private PeiDocument persist(PeiSeries series, List<PeiDocument> revisions, PeiDocument plan, UserAccount actor,
                                 Permissions permissions, String action, String event, String title,
                                 Authentication auth, HttpServletRequest http) {
+        return persist(series, revisions, plan, actor, permissions, action, event, title, TimelineVisibility.PEDAGOGICAL, auth, http);
+    }
+
+    private PeiDocument persist(PeiSeries series, List<PeiDocument> revisions, PeiDocument plan, UserAccount actor,
+                                Permissions permissions, String action, String event, String title,
+                                TimelineVisibility visibility, Authentication auth, HttpServletRequest http) {
         store.save(series, revisions);
-        timeline.append(plan.getStudentId(), event, title, actor.getName(), TimelineVisibility.PEDAGOGICAL,
+        timeline.append(plan.getStudentId(), event, title, actor.getName(), visibility,
                 Map.of("peiId", plan.getId(), "subjectId", plan.getSubjectId(), "revision", plan.getRevision()));
         audit.record(auth, http, action, "PEI", plan.getId(), "SUCCESS", "Revisão " + plan.getRevision());
         return project(series.next(revisions), plan, actor, permissions);
@@ -235,12 +334,12 @@ public class PeiService {
                 .updatedBy(actor.getEmail()).updatedAt(now);
     }
 
-    private static PeiDocument newDraft(PeiSeries series, PeiDocument source, UserAccount actor, Instant now,
-                                        Map<String, Object> content, String author) {
-        return source.toBuilder().id(newId()).teacherId(actor.getId()).revision(series.nextRevision())
+    private static PeiDocument.PeiDocumentBuilder newDraft(PeiSeries series, PeiDocument source, UserAccount actor,
+                                                           Instant now, Map<String, Object> content, String author) {
+        return source.toBuilder().id(newId()).revision(series.nextRevision())
                 .status(PeiStatus.DRAFT).storageVersion(0L).content(content)
                 .createdBy(author).createdAt(now).updatedBy(actor.getEmail()).updatedAt(now)
-                .reviewedBy(null).reviewedAt(null).build();
+                .reviewedBy(null).reviewedAt(null).transfer(null);
     }
 
     private static String newId() {
@@ -341,7 +440,7 @@ public class PeiService {
             this(subjectId, teacherId, academicTerm, null);
         }
     }
-    enum Action { EDIT, START_REVISION, SUBMIT, RETURN, APPROVE, ARCHIVE }
+    enum Action { EDIT, START_REVISION, SUBMIT, RETURN, APPROVE, ARCHIVE, TRANSFER }
     private record Permissions(boolean teacher, boolean reviewer) {}
 
     public record PeiUpdateRequest(@NotNull Map<String, Object> content,
@@ -354,4 +453,11 @@ public class PeiService {
 
     public record PeiActionRequest(
             @NotNull @PositiveOrZero @JsonDeserialize(using = ReferenceIdDeserializer.class) Long version) {}
+
+    public record PeiTransferRequest(
+            @NotNull @Positive @JsonDeserialize(using = ReferenceIdDeserializer.class) Long teacherId,
+            JsonNode reason,
+            @JsonDeserialize(using = ReferenceIdDeserializer.class) Long version) {}
+
+    public record TransferCandidate(Long id, String name) {}
 }

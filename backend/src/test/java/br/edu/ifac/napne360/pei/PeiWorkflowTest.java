@@ -7,8 +7,13 @@ import br.edu.ifac.napne360.document.CareRecordService;
 import br.edu.ifac.napne360.identity.*;
 import br.edu.ifac.napne360.security.AccessGuard;
 import br.edu.ifac.napne360.security.CurrentUserService;
+import br.edu.ifac.napne360.student.AssignmentType;
 import br.edu.ifac.napne360.student.Student;
+import br.edu.ifac.napne360.student.StudentAssignment;
+import br.edu.ifac.napne360.student.StudentAssignmentRepository;
+import br.edu.ifac.napne360.student.StudentRepository;
 import br.edu.ifac.napne360.timeline.TimelineService;
+import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,10 +45,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PeiWorkflowTest {
     private static final String PATH = "/api/v1/students/1/peis";
     private static final String VERSION = "{\"version\":0}";
+    private static final String TRANSFER = "{\"teacherId\":12,\"version\":0,\"reason\":\"  Substituição docente  \"}";
+    private static final Campus CAMPUS = Campus.builder().id(4L).build();
+    private static final Campus OTHER_CAMPUS = Campus.builder().id(5L).build();
     final PeiRepository legacy = mock(PeiRepository.class);
     final PeiMongoFixture mongo = new PeiMongoFixture(legacy);
     final CurrentUserService current = mock(CurrentUserService.class);
     final AccessGuard access = mock(AccessGuard.class);
+    final StudentRepository students = mock(StudentRepository.class);
+    final StudentAssignmentRepository assignments = mock(StudentAssignmentRepository.class);
     final ReferenceCatalogService catalog = mock(ReferenceCatalogService.class);
     final SubjectRepository subjects = mock(SubjectRepository.class);
     final TimelineService timeline = mock(TimelineService.class);
@@ -53,10 +63,7 @@ class PeiWorkflowTest {
     MockMvc mvc;
 
     @BeforeEach void setUp() {
-        var service = new PeiService(catalog, mongo.store, mock(CareRecordService.class),
-                subjects, current, timeline, audit, access, mock(DocumentTemplateRepository.class));
-        mvc = MockMvcBuilders.standaloneSetup(new PeiController(service, access))
-                .setControllerAdvice(new ApiExceptionHandler()).build();
+        setUpController(access);
         approved = plan("old", 3, PeiStatus.APPROVED);
         draft = plan("draft", 7, PeiStatus.DRAFT);
         when(legacy.findById("old")).thenReturn(Optional.of(approved));
@@ -68,6 +75,13 @@ class PeiWorkflowTest {
         when(access.canTeachPei(1L, 2L)).thenReturn(true);
         when(access.canEditDossier(1L)).thenReturn(true);
         actor(RoleName.TEACHER);
+    }
+
+    private void setUpController(AccessGuard guard) {
+        var service = new PeiService(catalog, mongo.store, mock(CareRecordService.class),
+                subjects, current, timeline, audit, guard, mock(DocumentTemplateRepository.class), assignments);
+        mvc = MockMvcBuilders.standaloneSetup(new PeiController(service, guard))
+                .setControllerAdvice(new ApiExceptionHandler()).build();
     }
 
     @Test void editingReturnsNewRevisionAndStaleRetryCannotChangeVigency() throws Exception {
@@ -130,6 +144,187 @@ class PeiWorkflowTest {
         update("draft", "{\"content\":{},\"version\":0}").andExpect(status().isForbidden());
         action("draft", "submit", VERSION).andExpect(status().isForbidden());
         verifyNoInteractions(timeline, audit);
+    }
+
+    @Test void transferKeepsAuthoredContentAndVigencyAndRetainsTheReasonOnlyInItsRevision() throws Exception {
+        transferFixture();
+        var moved = transfer(TRANSFER).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DRAFT"))
+                .andExpect(jsonPath("$.revision").value(8))
+                .andExpect(jsonPath("$.teacherId").value(12))
+                .andExpect(jsonPath("$.createdBy").value("teacher@example.test"))
+                .andExpect(jsonPath("$.updatedBy").value("napne@example.test"))
+                .andExpect(jsonPath("$.transfer.fromTeacherId").value(9))
+                .andExpect(jsonPath("$.transfer.toTeacherId").value(12))
+                .andExpect(jsonPath("$.transfer.transferredBy").value("napne@example.test"))
+                .andExpect(jsonPath("$.transfer.transferredAt").exists())
+                .andExpect(jsonPath("$.transfer.reason").value("Substituição docente"))
+                .andExpect(jsonPath("$.allowedActions").isEmpty())
+                .andReturn();
+        var id = new ObjectMapper().readTree(moved.getResponse().getContentAsString()).get("id").asText();
+
+        var saved = mongo.store.load(1L, 2L, "2026-2");
+        assertThat(saved.revisions()).hasSize(3);
+        assertThat(saved.current().orElseThrow()).usingRecursiveComparison().isEqualTo(approved);
+        var previous = saved.find("draft").orElseThrow();
+        assertThat(previous.getStatus()).isEqualTo(PeiStatus.SUPERSEDED);
+        assertThat(previous.getTeacherId()).isEqualTo(9L);
+        assertThat(previous.getContent()).isEqualTo(draft.getContent());
+        assertThat(saved.find(id).orElseThrow().getContent()).isEqualTo(draft.getContent());
+        verify(timeline).append(eq(1L), eq("PEI_TRANSFERRED"), anyString(), anyString(),
+                eq(TimelineVisibility.RESTRICTED), eq(Map.of("peiId", id, "subjectId", 2L, "revision", 8)));
+        verify(audit).record(any(), any(), eq("TRANSFER"), eq("PEI"), eq(id), eq("SUCCESS"), eq("Revisão 8"));
+
+        transfer(TRANSFER).andExpect(status().isConflict());
+        actor(RoleName.TEACHER, 12L, CAMPUS);
+        mvc.perform(get(PATH + "/" + id)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.transfer").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.allowedActions", containsInAnyOrder("EDIT", "SUBMIT")));
+        mvc.perform(get(PATH)).andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].transfer").isEmpty());
+        var edited = update(id, "{\"version\":0,\"content\":{\"generalObjectives\":\"Revisado\"}}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.createdBy").value("teacher@example.test")).andReturn();
+        var newId = new ObjectMapper().readTree(edited.getResponse().getContentAsString()).get("id").asText();
+        action(newId, "submit", VERSION).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("IN_REVIEW"));
+        actor(RoleName.NAPNE, 10L, CAMPUS);
+        mvc.perform(get(PATH + "/" + id)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUPERSEDED"))
+                .andExpect(jsonPath("$.transfer.reason").value("Substituição docente"));
+        mvc.perform(get(PATH + "/" + newId)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.transfer").doesNotHaveJsonPath());
+        mvc.perform(get(PATH)).andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].transfer.reason", org.hamcrest.Matchers.contains("Substituição docente")));
+    }
+
+    @Test void candidatesExcludeOtherAssignmentTypesSubjectsCampusesRolesAndInactiveAccounts() throws Exception {
+        var eligible = transferFixture();
+        var previousWithTutorLink = transferTeacher(9L, CAMPUS, true, RoleName.TEACHER, RoleName.TUTOR);
+        var nonTeacher = transferTeacher(13L, CAMPUS, true, RoleName.TUTOR);
+        var inactive = transferTeacher(14L, CAMPUS, false, RoleName.TEACHER);
+        var otherCampus = transferTeacher(15L, OTHER_CAMPUS, true, RoleName.TEACHER);
+        var wrongType = transferTeacher(16L, CAMPUS, true, RoleName.TEACHER, RoleName.TUTOR);
+        var otherSubject = transferTeacher(17L, CAMPUS, true, RoleName.TEACHER);
+        var absentCampus = transferTeacher(18L, null, true, RoleName.TEACHER);
+        when(assignments.findByStudentIdAndActiveTrue(1L)).thenReturn(List.of(
+                link(eligible, 2L, AssignmentType.TEACHER), link(eligible, 2L, AssignmentType.TEACHER),
+                link(previousWithTutorLink, 2L, AssignmentType.TUTOR), link(nonTeacher, 2L, AssignmentType.TEACHER),
+                link(inactive, 2L, AssignmentType.TEACHER), link(otherCampus, 2L, AssignmentType.TEACHER),
+                link(wrongType, 2L, AssignmentType.TUTOR), link(otherSubject, 3L, AssignmentType.TEACHER),
+                link(absentCampus, 2L, AssignmentType.TEACHER)));
+
+        mvc.perform(get(PATH + "/draft")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.allowedActions", org.hamcrest.Matchers.contains("TRANSFER")));
+        candidates().andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(12))
+                .andExpect(jsonPath("$[0].name").value("Docente 12"))
+                .andExpect(jsonPath("$[0].email").doesNotHaveJsonPath());
+        for (long id : List.of(9L, 13L, 14L, 15L, 16L, 17L, 18L)) {
+            transfer(TRANSFER.replace("\"teacherId\":12", "\"teacherId\":" + id)).andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(timeline, audit);
+    }
+
+    @Test void candidateRemovedAfterListingCannotReceiveDraft() throws Exception {
+        transferFixture();
+        candidates().andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1));
+        when(assignments.findByStudentIdAndActiveTrue(1L)).thenReturn(List.of());
+
+        transfer(TRANSFER).andExpect(status().isBadRequest());
+        assertThat(mongo.store.load(1L, 2L, "2026-2").version()).isNull();
+        verifyNoInteractions(timeline, audit);
+    }
+
+    @Test void activePriorTeachingAssignmentWithdrawsTransfer() throws Exception {
+        transferFixture();
+        candidates().andExpect(status().isOk());
+        when(assignments.existsByStudentIdAndUserIdAndSubjectIdAndAssignmentTypeAndActiveTrue(
+                1L, 9L, 2L, AssignmentType.TEACHER)).thenReturn(true);
+
+        mvc.perform(get(PATH + "/draft")).andExpect(status().isOk()).andExpect(jsonPath("$.allowedActions").isEmpty());
+        candidates().andExpect(status().isConflict());
+        transfer(TRANSFER).andExpect(status().isConflict());
+        verifyNoInteractions(timeline, audit);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = RoleName.class, names = {"TEACHER", "COTEP", "COURSE_COORDINATOR", "NAPNE"})
+    void onlyNapneOnTheStudentCampusCanListCandidatesOrTransfer(RoleName role) throws Exception {
+        transferFixture();
+        actor(role, 10L, role == RoleName.NAPNE ? OTHER_CAMPUS : CAMPUS);
+
+        candidates().andExpect(status().isForbidden());
+        transfer(TRANSFER).andExpect(status().isForbidden());
+        verifyNoInteractions(timeline, audit);
+    }
+
+    @Test void onlyAssignedDraftsCanBeTransferredAndReturnedDraftsUseTheNewVersion() throws Exception {
+        transferFixture();
+        draft.setTeacherId(null);
+        candidates().andExpect(status().isConflict());
+        transfer(TRANSFER).andExpect(status().isConflict());
+        draft.setTeacherId(9L);
+        draft.setStatus(PeiStatus.IN_REVIEW);
+        candidates().andExpect(status().isConflict());
+        transfer(TRANSFER).andExpect(status().isConflict());
+
+        action("draft", "return", VERSION).andExpect(status().isOk());
+        transfer(TRANSFER).andExpect(status().isConflict());
+        transfer(TRANSFER.replace("\"version\":0", "\"version\":1")).andExpect(status().isOk());
+    }
+
+    @Test void transferReasonMustContainAtMostFiveHundredCharactersAfterTrimming() throws Exception {
+        transferFixture();
+        var mapper = new ObjectMapper();
+        transfer("{\"teacherId\":12,\"version\":0}").andExpect(status().isBadRequest());
+        transfer("{\"teacherId\":12,\"version\":0,\"reason\":123}").andExpect(status().isBadRequest());
+        for (var invalid : List.of(" \t ", "x".repeat(501))) {
+            transfer(mapper.writeValueAsString(Map.of("teacherId", 12, "version", 0, "reason", invalid)))
+                    .andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(timeline, audit);
+        var limit = "x".repeat(500);
+        transfer(mapper.writeValueAsString(Map.of("teacherId", 12, "version", 0, "reason", "  " + limit + "  ")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.transfer.reason").value(limit));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\u00A0", "\u202F", "\u2007", "\uFEFF", " \t\u00A0\u202F\u2007\uFEFF\n"})
+    void transferRejectsReasonContainingOnlyUnicodeSpaces(String reason) throws Exception {
+        transferFixture();
+        var body = new ObjectMapper().writeValueAsString(Map.of("teacherId", 12, "version", 0, "reason", reason));
+
+        transfer(body).andExpect(status().isBadRequest());
+
+        assertThat(mongo.store.load(1L, 2L, "2026-2").version()).isNull();
+        verifyNoInteractions(timeline, audit);
+    }
+
+    @Test void transferTrimsUnicodeSpacesAtTheEdgesAndPreservesThemInTheText() throws Exception {
+        transferFixture();
+        var text = "Troca\u00A0de\u202Fdocente\u2007por escala.";
+        var reason = text + "x".repeat(500 - text.length());
+        var padded = "\u00A0\u202F\u2007\uFEFF" + reason + "\uFEFF\u2007\u202F\u00A0";
+        var body = new ObjectMapper().writeValueAsString(Map.of("teacherId", 12, "version", 0, "reason", padded));
+
+        transfer(body).andExpect(status().isOk())
+                .andExpect(jsonPath("$.transfer.reason").value(reason));
+    }
+
+    @Test void simultaneousTransfersCreateOneDraftAndOneSuccessEvent() throws Exception {
+        transferFixture();
+        var imported = mongo.store.load(1L, 2L, "2026-2");
+        mongo.store.save(imported, imported.revisions());
+
+        race(() -> transfer(TRANSFER).andReturn().getResponse().getStatus());
+
+        var saved = mongo.store.load(1L, 2L, "2026-2");
+        assertThat(saved.revisions()).hasSize(3);
+        assertThat(saved.revisions().stream().filter(plan -> plan.getStatus() == PeiStatus.DRAFT))
+                .singleElement().extracting(PeiDocument::getTeacherId).isEqualTo(12L);
+        assertThat(saved.current().orElseThrow().getId()).isEqualTo("old");
+        verify(timeline, times(1)).append(any(), any(), any(), any(), any(), any());
+        verify(audit, times(1)).record(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test void replacementCopiesContentAndKeepsVigentUntilApproval() throws Exception {
@@ -325,9 +520,42 @@ class PeiWorkflowTest {
     }
 
     private void actor(RoleName role) {
-        when(current.require()).thenReturn(UserAccount.builder().id(role == RoleName.TEACHER ? 9L : 10L)
+        actor(role, role == RoleName.TEACHER ? 9L : 10L, CAMPUS);
+    }
+
+    private void actor(RoleName role, Long id, Campus campus) {
+        when(current.require()).thenReturn(UserAccount.builder().id(id).campus(campus)
                 .email(role.name().toLowerCase(java.util.Locale.ROOT) + "@example.test")
                 .name("Pessoa fictícia").roles(Set.of(role)).build());
+    }
+
+    private UserAccount transferFixture() {
+        setUpController(new AccessGuard(current, students, assignments));
+        when(students.findById(1L)).thenReturn(Optional.of(Student.builder().id(1L).campus(CAMPUS).build()));
+        actor(RoleName.NAPNE, 10L, CAMPUS);
+        var eligible = transferTeacher(12L, CAMPUS, true, RoleName.TEACHER);
+        when(assignments.findByStudentIdAndActiveTrue(1L)).thenReturn(List.of(link(eligible, 2L, AssignmentType.TEACHER)));
+        when(assignments.existsByStudentIdAndUserIdAndActiveTrue(1L, 12L)).thenReturn(true);
+        when(assignments.existsByStudentIdAndUserIdAndSubjectIdAndAssignmentTypeAndActiveTrue(
+                1L, 12L, 2L, AssignmentType.TEACHER)).thenReturn(true);
+        return eligible;
+    }
+
+    private UserAccount transferTeacher(Long id, Campus campus, boolean active, RoleName... roles) {
+        return UserAccount.builder().id(id).campus(campus).name("Docente " + id).active(active).roles(Set.of(roles)).build();
+    }
+
+    private StudentAssignment link(UserAccount teacher, Long subjectId, AssignmentType type) {
+        return StudentAssignment.builder().student(Student.builder().id(1L).campus(CAMPUS).build())
+                .subject(Subject.builder().id(subjectId).build()).assignmentType(type).user(teacher).build();
+    }
+
+    private ResultActions candidates() throws Exception {
+        return mvc.perform(get(PATH + "/draft/transfer-candidates"));
+    }
+
+    private ResultActions transfer(String body) throws Exception {
+        return action("draft", "transfer", body);
     }
 
     private ResultActions action(String id, String action, String body) throws Exception {

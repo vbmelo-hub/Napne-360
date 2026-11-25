@@ -12,11 +12,36 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 
+import java.time.Instant;
+import java.util.Date;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class PeiSeriesMappingTest {
+    @Test void transferMetadataSurvivesMongoReadAndConditionalRevisionUpdate() {
+        var context = new MongoMappingContext();
+        var converter = new MappingMongoConverter(NoOpDbRefResolver.INSTANCE, context);
+        context.setSimpleTypeHolder(converter.getCustomConversions().getSimpleTypeHolder());
+        converter.afterPropertiesSet();
+        var transfer = new Document("fromTeacherId", 9L).append("toTeacherId", 12L)
+                .append("transferredBy", "napne@example.test")
+                .append("transferredAt", Date.from(Instant.parse("2026-11-25T19:00:00Z")))
+                .append("reason", "Substituição docente");
+        var raw = new Document("_id", "1:2:+2026-2").append("studentId", 1L).append("subjectId", 2L)
+                .append("academicTerm", "2026-2").append("version", 2L)
+                .append("revisions", List.of(new Document("_id", "previous").append("revision", 7),
+                        new Document("_id", "transferred").append("revision", 8).append("transfer", transfer)));
+
+        var series = converter.read(PeiSeries.class, raw);
+        var entity = context.getRequiredPersistentEntity(PeiSeries.class);
+        var update = new UpdateMapper(converter).getMappedObject(
+                new Update().set("revisions", series.revisions()).set("version", 3L).getUpdateObject(), entity);
+        var revisions = update.get("$set", Document.class).getList("revisions", Document.class);
+        assertThat(revisions.getFirst()).doesNotContainKey("transfer");
+        assertThat(revisions.getLast().get("transfer", Document.class)).isEqualTo(transfer);
+    }
+
     @Test void legacyObjectIdsAndNewStringIdsRemainAddressableAfterEmbeddingAndCasUpdate() {
         var context = new MongoMappingContext();
         var converter = new MappingMongoConverter(NoOpDbRefResolver.INSTANCE, context);

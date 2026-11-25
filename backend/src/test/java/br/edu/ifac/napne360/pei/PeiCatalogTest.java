@@ -40,7 +40,8 @@ class PeiCatalogTest {
     ReferenceEntry term;
 
     @BeforeEach void setup() {
-        service = new PeiService(new ReferenceCatalogService(entries),mongo.store,careRecords,subjects,current,timeline,audit,access,templates);
+        service = new PeiService(new ReferenceCatalogService(entries), mongo.store, careRecords, subjects, current, timeline,
+                audit, access, templates, mock(StudentAssignmentRepository.class));
         mvc = MockMvcBuilders.standaloneSetup(new PeiController(service,access)).setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(json)).build();
         var course = Course.builder().id(2L).name("Curso fictício").build();

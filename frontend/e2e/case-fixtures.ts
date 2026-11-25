@@ -21,7 +21,7 @@ export type CaseView = {
 
 type Account = { id: number; name: string; email: string; campusId: number | null };
 type Session = Account & { headers: Headers };
-type Student = { id: number; registration: string; socialName: string };
+type Student = { id: number; registration: string; socialName: string; courseId: number };
 type Course = { id: number; campusId: number };
 type Campus = { id: number };
 

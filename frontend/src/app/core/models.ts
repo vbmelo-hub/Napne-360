@@ -151,9 +151,23 @@ export interface Pei {
   updatedAt: string;
   storageVersion?: number;
   allowedActions?: PeiAction[];
+  transfer?: PeiTransfer;
 }
 
-export type PeiAction = 'EDIT' | 'START_REVISION' | 'SUBMIT' | 'RETURN' | 'APPROVE' | 'ARCHIVE';
+export type PeiAction = 'EDIT' | 'START_REVISION' | 'SUBMIT' | 'RETURN' | 'APPROVE' | 'ARCHIVE' | 'TRANSFER';
+
+export interface PeiTransferCandidate {
+  id: number;
+  name: string;
+}
+
+export interface PeiTransfer {
+  fromTeacherId: number;
+  toTeacherId: number;
+  transferredBy: string;
+  transferredAt: string;
+  reason: string;
+}
 
 export interface TimelineEvent {
   id: string;

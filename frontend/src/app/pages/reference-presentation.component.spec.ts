@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { ActivatedRoute, provideRouter } from '@angular/router';
+import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { of } from 'rxjs';
 import { ApiService } from '../core/api.service';
 import { ToastService } from '../core/toast.service';
@@ -37,8 +37,9 @@ describe('Apresentação de referências', () => {
         revision: 1, status: 'DRAFT', content: { generalObjectives: 'Objetivo' }, reviewedBy: null, reviewedAt: null,
         updatedAt: '2026-11-17T12:00:00Z' } as Pei;
       const api = jasmine.createSpyObj<ApiService>('ApiService', ['pei']); api.pei.and.returnValue(of(pei));
+      const params = convertToParamMap({ studentId: '1', peiId: 'pei-1' });
       await TestBed.configureTestingModule({ imports: [PeiEditorComponent], providers: [provideRouter([]),
-        { provide: ActivatedRoute, useValue: { snapshot: { paramMap: { get: () => '1' } }, paramMap: of({ get: () => 'pei-1' }) } },
+        { provide: ActivatedRoute, useValue: { snapshot: { paramMap: params }, paramMap: of(params) } },
         { provide: ApiService, useValue: api },
         { provide: ToastService, useValue: jasmine.createSpyObj('ToastService', ['show']) }
       ] }).compileComponents();

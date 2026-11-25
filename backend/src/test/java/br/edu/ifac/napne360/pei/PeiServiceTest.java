@@ -8,6 +8,7 @@ import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.security.AccessGuard;
 import br.edu.ifac.napne360.security.CurrentUserService;
+import br.edu.ifac.napne360.student.StudentAssignmentRepository;
 import br.edu.ifac.napne360.timeline.TimelineService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,7 @@ class PeiServiceTest {
     @Mock TimelineService timeline;
     @Mock AuditService audit;
     @Mock AccessGuard access;
+    @Mock StudentAssignmentRepository assignments;
     @Mock br.edu.ifac.napne360.document.DocumentTemplateRepository templates;
     PeiService service;
     PeiDocument pei;
@@ -39,7 +41,7 @@ class PeiServiceTest {
     @BeforeEach void setup() {
         mongo = new PeiMongoFixture(peis);
         service = new PeiService(mock(br.edu.ifac.napne360.identity.ReferenceCatalogService.class), mongo.store,
-                careRecords, subjects, currentUser, timeline, audit, access, templates);
+                careRecords, subjects, currentUser, timeline, audit, access, templates, assignments);
         pei = PeiDocument.builder().id("p1").studentId(1L).subjectId(2L).teacherId(9L).academicTerm("2026-2").build();
         when(peis.findById("p1")).thenReturn(Optional.of(pei));
         lenient().when(peis.findByStudentIdAndSubjectIdAndAcademicTermOrderByRevisionDesc(1L, 2L, "2026-2"))

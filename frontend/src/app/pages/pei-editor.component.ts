@@ -1,20 +1,24 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, ElementRef, Injector, OnInit, afterNextRender, computed, inject, signal, viewChild } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { EMPTY, Subscription, catchError, switchMap } from 'rxjs';
 import { ApiService } from '../core/api.service';
-import { Pei, PeiAction } from '../core/models';
+import { Pei, PeiAction, PeiTransferCandidate } from '../core/models';
 import { errorMessage, labelFor, toneFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 
 type ConfirmedPeiAction = Extract<PeiAction, 'RETURN' | 'APPROVE' | 'ARCHIVE'>;
-type RequestedPeiAction = Exclude<PeiAction, 'EDIT'>;
+type RequestedPeiAction = Exclude<PeiAction, 'EDIT' | 'TRANSFER'>;
+
+const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a página para consultar a revisão mais recente.';
 
 @Component({
   standalone: true,
   imports: [ReactiveFormsModule, RouterLink, ConfirmDialogComponent],
   template: `
-    <a [routerLink]="['/estudantes', studentId]" class="back-link">← Voltar ao acompanhamento</a>
+    <a [routerLink]="['/estudantes', studentId()]" class="back-link">← Voltar ao acompanhamento</a>
     @if (loading()) {
       <div class="loading-grid" aria-label="Carregando PEI">
         <span class="skeleton skeleton-card"></span><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-card"></span>
@@ -27,7 +31,7 @@ type RequestedPeiAction = Exclude<PeiAction, 'EDIT'>;
       <header class="pei-header">
         <div>
           <span class="eyebrow">Plano de Ensino Individualizado</span>
-          <h1>Editor do PEI</h1>
+          <h1 #editorTitle tabindex="-1">Editor do PEI</h1>
           <p>Período {{ value.academicTermLabel ?? value.academicTerm }} · revisão {{ value.revision }}</p>
           @if (value.status === 'APPROVED') { <p class="pei-lifecycle">Versão vigente</p> }
           @if (value.status === 'SUPERSEDED' || value.status === 'ARCHIVED') {
@@ -40,8 +44,16 @@ type RequestedPeiAction = Exclude<PeiAction, 'EDIT'>;
         <span class="review-mark" aria-hidden="true">✓</span>
         <div><strong>Revisão humana obrigatória</strong><p>Este rascunho apoia o planejamento pedagógico. Não representa diagnóstico e não substitui a análise do docente e da equipe responsável.</p></div>
       </div>
+      @if (value.transfer; as transfer) {
+        <div class="notice review-note" role="note">
+          <div><strong>Motivo da transferência</strong><p>{{ transfer.reason }}</p></div>
+        </div>
+      }
       @if (conflict()) {
         <div class="error conflict-message" role="alert">O PEI mudou desde que foi carregado. Seu rascunho continua no formulário; atualize a página para consultar a versão mais recente antes de tentar novamente.</div>
+      }
+      @if (transferConflict() && !transferOpen()) {
+        <div class="error conflict-message" role="alert">{{ transferConflictMessage }}</div>
       }
       <form class="editor-layout" [formGroup]="form" (ngSubmit)="save()">
         <aside class="editor-nav card">
@@ -94,11 +106,49 @@ type RequestedPeiAction = Exclude<PeiAction, 'EDIT'>;
             @if (hasAction('RETURN')) { <button type="button" class="secondary" (click)="requestConfirmation('RETURN')" [disabled]="saving() || form.dirty">Devolver para ajustes</button> }
             @if (hasAction('APPROVE')) { <button type="button" class="approve" (click)="requestConfirmation('APPROVE')" [disabled]="saving() || form.dirty">Aprovar PEI</button> }
             @if (hasAction('ARCHIVE')) { <button type="button" class="secondary" (click)="requestConfirmation('ARCHIVE')" [disabled]="saving() || form.dirty">Arquivar PEI</button> }
+            @if (hasAction('TRANSFER')) { <button type="button" class="secondary" (click)="openTransfer()" [disabled]="!canOpenTransfer()">Transferir rascunho</button> }
           </div>
         </div>
       </form>
     }
     <app-confirm-dialog [open]="pendingAction() !== null" [title]="confirmationTitle()" [description]="confirmationDescription()" [confirmLabel]="confirmationLabel()" [danger]="pendingAction() === 'ARCHIVE'" (confirmed)="confirmAction()" (cancelled)="cancelConfirmation()" />
+    <app-confirm-dialog [open]="transferOpen()" title="Transferir rascunho do PEI?"
+      description="O conteúdo e a autoria serão mantidos. O docente escolhido poderá editar e enviar a nova revisão."
+      confirmLabel="Confirmar transferência" [busy]="saving()" [confirmDisabled]="!canConfirmTransfer()"
+      (confirmed)="confirmTransfer()" (cancelled)="resetTransfer()">
+      @if (loadingTransferCandidates()) {
+        <p role="status">Carregando docentes elegíveis…</p>
+      }
+      @if (transferCandidateOptions(); as candidates) {
+        @if (candidates.length) {
+          <fieldset class="stack" [formGroup]="transferForm" [disabled]="saving()">
+            <label>Novo docente
+              <select formControlName="teacherId" required>
+                <option value="">Selecione um docente</option>
+                @for (candidate of candidates; track candidate.id) {
+                  <option [value]="candidate.id">{{ candidate.label }}</option>
+                }
+              </select>
+            </label>
+            <label>Motivo
+              <textarea formControlName="reason" required maxlength="500" rows="3" aria-describedby="pei-transfer-reason-hint"></textarea>
+            </label>
+            <small id="pei-transfer-reason-hint" class="field-hint">Obrigatório. Até 500 caracteres.</small>
+          </fieldset>
+        } @else {
+          <p role="status">Nenhum docente elegível para receber este rascunho.</p>
+        }
+      }
+      @if (saving()) {
+        <p role="status">Transferindo rascunho…</p>
+      }
+      @if (transferError()) {
+        <p class="error" role="alert">{{ transferError() }}</p>
+        @if (!transferCandidates() && !transferConflict()) {
+          <button type="button" class="secondary" (click)="loadTransferCandidates()">Tentar novamente</button>
+        }
+      }
+    </app-confirm-dialog>
   `,
   styles: [`
     .back-link{display:inline-flex;margin-bottom:1rem;font-weight:700;text-decoration:none}
@@ -126,6 +176,9 @@ export class PeiEditorComponent implements OnInit {
   private readonly fb = inject(FormBuilder);
   private readonly router = inject(Router);
   private readonly toast = inject(ToastService);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
+  private readonly editorTitle = viewChild<ElementRef<HTMLHeadingElement>>('editorTitle');
 
   readonly sections = [
     {id: 'overview', label: 'Visão geral'}, {id: 'objectives', label: 'Objetivos'},
@@ -139,18 +192,43 @@ export class PeiEditorComponent implements OnInit {
     {key: 'socioemotionalSkills', label: 'Habilidades socioemocionais'},
     {key: 'functionalAutonomy', label: 'Autonomia funcional'}, {key: 'digitalTechnologies', label: 'Tecnologias digitais'}
   ];
-  readonly studentId = Number(this.route.snapshot.paramMap.get('studentId'));
-  peiId = String(this.route.snapshot.paramMap.get('peiId'));
+  private readonly routeContext = signal({
+    studentId: Number(this.route.snapshot.paramMap.get('studentId')),
+    peiId: String(this.route.snapshot.paramMap.get('peiId'))
+  });
+  readonly studentId = computed(() => this.routeContext().studentId);
   readonly pei = signal<Pei | null>(null);
+  private readonly currentPei = computed(() => {
+    const { studentId, peiId } = this.routeContext();
+    const value = this.pei();
+    return value?.id === peiId && value.studentId === studentId ? value : null;
+  });
   readonly loading = signal(true);
   readonly loadError = signal('');
   readonly saving = signal(false);
   readonly conflict = signal(false);
   readonly pendingAction = signal<ConfirmedPeiAction | null>(null);
+  readonly transferOpen = signal(false);
+  readonly transferCandidates = signal<PeiTransferCandidate[] | null>(null);
+  readonly transferCandidateOptions = computed(() => {
+    const candidates = this.transferCandidates();
+    if (!candidates) return null;
+    const countByName = new Map<string, number>();
+    for (const { name } of candidates) countByName.set(name, (countByName.get(name) ?? 0) + 1);
+    return candidates.map(({ id, name }) => ({
+      id, label: countByName.get(name) === 1 ? name : `${name} (#${id})`
+    }));
+  });
+  readonly loadingTransferCandidates = signal(false);
+  readonly transferConflict = signal(false);
+  readonly transferError = signal('');
+  readonly transferConflictMessage = TRANSFER_CONFLICT;
+  readonly transferForm = this.fb.nonNullable.group({ teacherId: '', reason: '' });
   readonly label = labelFor;
   readonly tone = toneFor;
   readonly canEdit = computed(() => this.hasAction('EDIT'));
   private rawContent: Record<string, unknown> = {};
+  private transferCandidatesRequest?: Subscription;
 
   readonly form = this.fb.nonNullable.group({
     generalObjectives: ['', Validators.required], specificObjectives: [''], eliminatedObjectives: [''],
@@ -162,20 +240,49 @@ export class PeiEditorComponent implements OnInit {
   });
 
   ngOnInit() {
-    this.route.paramMap.subscribe(params => {
-      const requestedPeiId = String(params.get('peiId'));
-      if (requestedPeiId === this.peiId && requestedPeiId === this.pei()?.id) return;
-      this.peiId = requestedPeiId;
-      this.loading.set(true);
-      this.loadError.set('');
-      this.api.pei(this.studentId, this.peiId).subscribe({
-        next: value => this.accept(value),
-        error: error => {
-          this.loading.set(false);
-          this.loadError.set(errorMessage(error.status, 'carregar o PEI'));
-        }
-      });
+    this.route.paramMap.pipe(
+      switchMap(params => {
+        const studentId = Number(params.get('studentId'));
+        const peiId = String(params.get('peiId'));
+        this.routeContext.set({ studentId, peiId });
+        if (this.currentPei()) return EMPTY;
+
+        this.pei.set(null);
+        this.rawContent = {};
+        this.form.reset();
+        this.resetTransfer();
+        this.cancelConfirmation();
+        this.saving.set(false);
+        this.conflict.set(false);
+        this.transferConflict.set(false);
+        this.loading.set(true);
+        this.loadError.set('');
+        return this.api.pei(studentId, peiId).pipe(catchError(error => {
+          this.failLoading(error.status);
+          return EMPTY;
+        }));
+      }),
+      takeUntilDestroyed(this.destroyRef)
+    ).subscribe(value => {
+      const { studentId, peiId } = this.routeContext();
+      if (value.studentId === studentId && value.id === peiId) {
+        this.accept(value);
+      } else {
+        this.failLoading();
+      }
     });
+  }
+
+  private failLoading(status?: number) {
+    this.loading.set(false);
+    this.loadError.set(errorMessage(status, 'carregar o PEI'));
+  }
+
+  private acceptMutation(previous: Pei, value: Pei) {
+    this.accept(value);
+    if (value.id !== previous.id) {
+      void this.router.navigate(['/estudantes', previous.studentId, 'pei', value.id]);
+    }
   }
 
   peiStatusLabel(status: string): string {
@@ -186,29 +293,32 @@ export class PeiEditorComponent implements OnInit {
   }
 
   hasAction(action: PeiAction): boolean {
-    const value = this.pei();
+    const value = this.currentPei();
     return value?.allowedActions?.includes(action) === true && Number.isInteger(value.storageVersion);
   }
 
   save() {
-    const value = this.pei();
+    const value = this.currentPei();
     this.form.markAllAsTouched();
     if (!value || !this.canEdit() || this.saving()) return;
     this.saving.set(true);
     this.conflict.set(false);
-    this.api.revisePei(this.studentId, value.id, {
+    this.api.revisePei(value.studentId, value.id, {
       content: this.content(), version: value.storageVersion!
-    }).subscribe({
+    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: result => {
-        this.accept(result);
+        if (this.currentPei() !== value) return;
+        this.acceptMutation(value, result);
         this.toast.show('Rascunho do PEI salvo. Envie-o para revisão quando estiver pronto.', 'success');
       },
-      error: error => this.fail(error.status, 'salvar o rascunho')
+      error: error => {
+        if (this.currentPei() === value) this.fail(error.status, 'salvar o rascunho');
+      }
     });
   }
 
   performAction(action: RequestedPeiAction) {
-    const value = this.pei();
+    const value = this.currentPei();
     if (!value || !this.hasAction(action) || this.saving()) return;
     if (this.form.dirty) {
       this.toast.show('Salve as alterações locais antes de continuar com esta ação.', 'error');
@@ -216,16 +326,20 @@ export class PeiEditorComponent implements OnInit {
     }
     this.saving.set(true);
     this.conflict.set(false);
-    this.api.peiAction(this.studentId, value.id, action, value.storageVersion!).subscribe({
+    this.api.peiAction(value.studentId, value.id, action, value.storageVersion!)
+    .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: result => {
-        this.accept(result);
+        if (this.currentPei() !== value) return;
+        this.acceptMutation(value, result);
         const messages: Record<RequestedPeiAction, string> = {
           START_REVISION: 'Nova revisão iniciada como rascunho.', SUBMIT: 'PEI enviado para revisão do NAPNE.',
           RETURN: 'PEI devolvido para ajustes.', APPROVE: 'PEI aprovado e vigente.', ARCHIVE: 'PEI arquivado e mantido no histórico.'
         };
         this.toast.show(messages[action], 'success');
       },
-      error: error => this.fail(error.status, this.actionVerb(action))
+      error: error => {
+        if (this.currentPei() === value) this.fail(error.status, this.actionVerb(action));
+      }
     });
   }
 
@@ -240,6 +354,86 @@ export class PeiEditorComponent implements OnInit {
   }
 
   cancelConfirmation() { this.pendingAction.set(null); }
+
+  canOpenTransfer() {
+    return this.hasAction('TRANSFER') && !this.form.dirty && !this.loading() && !this.saving() && !this.transferConflict();
+  }
+
+  openTransfer() {
+    if (this.transferOpen() || !this.canOpenTransfer()) return;
+    this.transferOpen.set(true);
+    this.loadTransferCandidates();
+  }
+
+  loadTransferCandidates() {
+    const value = this.currentPei();
+    if (!value || !this.transferOpen() || !this.canOpenTransfer() || this.loadingTransferCandidates()) return;
+    this.transferError.set('');
+    this.loadingTransferCandidates.set(true);
+    this.transferCandidatesRequest = this.api.peiTransferCandidates(value.studentId, value.id)
+      .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+        next: candidates => {
+          this.transferCandidates.set(candidates);
+          this.loadingTransferCandidates.set(false);
+        },
+        error: error => {
+          this.loadingTransferCandidates.set(false);
+          this.transferConflict.set(error.status === 409);
+          this.transferError.set(error.status === 409
+            ? TRANSFER_CONFLICT
+            : errorMessage(error.status, 'carregar docentes elegíveis'));
+        }
+      });
+  }
+
+  canConfirmTransfer() {
+    const { teacherId, reason } = this.transferForm.getRawValue();
+    const normalizedReason = reason.trim();
+    return this.transferOpen() && this.hasAction('TRANSFER') && !this.transferConflict() && !this.form.dirty
+      && !!normalizedReason && normalizedReason.length <= 500
+      && this.transferCandidates()?.some(candidate => String(candidate.id) === teacherId) === true;
+  }
+
+  confirmTransfer() {
+    const value = this.currentPei();
+    if (!value || this.saving() || !this.canConfirmTransfer()) return;
+    const { teacherId, reason } = this.transferForm.getRawValue();
+    this.saving.set(true);
+    this.transferError.set('');
+    this.api.transferPei(value.studentId, value.id, {
+      teacherId: Number(teacherId), reason: reason.trim(), version: value.storageVersion!
+    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: result => {
+        if (!this.isCurrentTransfer(value)) return;
+        this.resetTransfer();
+        this.acceptMutation(value, result);
+        afterNextRender(() => this.editorTitle()?.nativeElement.focus(), { injector: this.injector });
+        this.toast.show('Rascunho do PEI transferido.', 'success');
+      },
+      error: error => {
+        if (!this.isCurrentTransfer(value)) return;
+        this.saving.set(false);
+        this.transferConflict.set(error.status === 409);
+        this.transferError.set(error.status === 409
+          ? `${TRANSFER_CONFLICT} Seleção e motivo preservados.`
+          : errorMessage(error.status, 'transferir o rascunho do PEI'));
+      }
+    });
+  }
+
+  resetTransfer() {
+    this.transferCandidatesRequest?.unsubscribe();
+    this.transferCandidatesRequest = undefined;
+    this.transferOpen.set(false);
+    this.loadingTransferCandidates.set(false);
+    this.transferCandidates.set(null);
+    this.transferError.set('');
+    this.transferForm.reset();
+  }
+
+  private isCurrentTransfer(value: Pei) {
+    return this.transferOpen() && this.currentPei() === value;
+  }
 
   confirmationTitle(): string {
     const titles: Record<ConfirmedPeiAction, string> = {
@@ -273,16 +467,13 @@ export class PeiEditorComponent implements OnInit {
   }
 
   private accept(value: Pei) {
-    const previousId = this.peiId;
     this.pei.set(value);
     this.rawContent = value.content ?? {};
     this.fill(value.content ?? {});
     this.form.markAsPristine();
-    this.peiId = value.id;
     this.saving.set(false);
     this.conflict.set(false);
     this.loading.set(false);
-    if (value.id !== previousId) void this.router.navigate(['/estudantes', this.studentId, 'pei', value.id]);
   }
 
   private fail(status: number, action: string) {

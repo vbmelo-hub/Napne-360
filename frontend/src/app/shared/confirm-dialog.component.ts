@@ -10,9 +10,10 @@ import { AfterViewChecked, Component, ElementRef, EventEmitter, HostListener, In
           <span class="dialog-mark" aria-hidden="true">!</span>
           <h2 [id]="dialogId">{{ title }}</h2>
           <p [id]="descriptionId">{{ description }}</p>
+          <ng-content />
           <div class="dialog-actions">
-            <button #cancelButton type="button" class="secondary" (click)="cancel()">Cancelar</button>
-            <button type="button" [class.danger]="danger" (click)="confirmed.emit()">{{ confirmLabel }}</button>
+            <button #cancelButton type="button" class="secondary" [attr.aria-disabled]="busy ? true : null" (click)="cancel()">Cancelar</button>
+            <button #confirmButton type="button" [class.danger]="danger" [disabled]="confirmDisabled" [attr.aria-disabled]="busy ? true : null" (click)="confirm()">{{ confirmLabel }}</button>
           </div>
         </section>
       </div>
@@ -25,11 +26,14 @@ export class ConfirmDialogComponent implements OnChanges, AfterViewChecked {
   @Input() description = '';
   @Input() confirmLabel = 'Confirmar';
   @Input() danger = false;
+  @Input() confirmDisabled = false;
+  @Input() busy = false;
   @Output() confirmed = new EventEmitter<void>();
   @Output() cancelled = new EventEmitter<void>();
 
   @ViewChild('dialog') private dialog?: ElementRef<HTMLElement>;
   @ViewChild('cancelButton') private cancelButton?: ElementRef<HTMLButtonElement>;
+  @ViewChild('confirmButton') private confirmButton?: ElementRef<HTMLButtonElement>;
 
   readonly dialogId = `confirm-${Math.random().toString(36).slice(2)}`;
   readonly descriptionId = `${this.dialogId}-description`;
@@ -37,6 +41,10 @@ export class ConfirmDialogComponent implements OnChanges, AfterViewChecked {
   private previousFocus: HTMLElement | null = null;
 
   ngOnChanges(changes: SimpleChanges): void {
+    if (this.open && changes['confirmDisabled']?.currentValue &&
+        document.activeElement === this.confirmButton?.nativeElement) {
+      this.focusWhenRendered = true;
+    }
     const openChange = changes['open'];
     if (!openChange) return;
     if (openChange.currentValue === true) {
@@ -61,13 +69,17 @@ export class ConfirmDialogComponent implements OnChanges, AfterViewChecked {
   }
 
   cancel(): void {
-    if (this.open) this.cancelled.emit();
+    if (this.open && !this.busy) this.cancelled.emit();
+  }
+
+  confirm(): void {
+    if (this.open && !this.busy && !this.confirmDisabled) this.confirmed.emit();
   }
 
   trapFocus(event: KeyboardEvent): void {
     if (event.key !== 'Tab' || !this.dialog) return;
     const elements = Array.from(this.dialog.nativeElement.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      'button:enabled, [href], input:enabled, select:enabled, textarea:enabled, [tabindex]:not([tabindex="-1"])'
     ));
     if (elements.length === 0) return;
     const first = elements[0];
