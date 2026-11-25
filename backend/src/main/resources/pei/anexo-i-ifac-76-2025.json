@@ -1,0 +1,262 @@
+{
+  "version": "IFAC_76_2025",
+  "title": "Plano de Ensino Individualizado - PEI",
+  "labels": {
+    "annex": "ANEXO I",
+    "course": "CURSO:",
+    "subject": "COMPONENTE CURRICULAR:",
+    "teacherName": "PROFESSOR(ES):",
+    "student": "ALUNO(A):",
+    "academicTerm": "PERÍODO LETIVO:",
+    "workloadHours": "CARGA HORÁRIA:",
+    "objectives": "OBJETIVOS",
+    "generalObjectives": "Objetivos Gerais:",
+    "specificObjectives": "Objetivos Específicos:",
+    "eliminatedObjectives": "Objetivos Gerais Eliminados:",
+    "alternativeObjectives": "Objetivos Específicos Alternativos:",
+    "complementaryObjectives": "Objetivos Específicos Complementares:",
+    "professionalSkills": "HABILIDADES E COMPETÊNCIAS PROFISSIONAIS A SEREM DESENVOLVIDAS",
+    "syllabus": "EMENTA",
+    "prerequisites": "PRÉ-REQUISITO (SE HOUVER)",
+    "contents": "CONTEÚDOS",
+    "contentHours": "CARGA HORÁRIA",
+    "teachingStrategies": "ESTRATÉGIA DE ENSINO FACILITADORAS DA APRENDIZAGEM",
+    "methodologicalResources": "RECURSOS METODOLÓGICOS",
+    "assessment": "AVALIAÇÃO DA APRENDIZAGEM",
+    "assessmentCriteria": "CRITÉRIOS",
+    "assessmentInstruments": "INSTRUMENTOS",
+    "recoveryProposal": "PROPOSTA DE RECUPERAÇÃO DIFERENCIADA",
+    "basicBibliography": "Bibliografia Básica (títulos, periódicos, etc.)",
+    "complementaryBibliography": "Bibliografia Complementar (títulos, periódicos, etc.)",
+    "bibliographyTitle": "Título/Periódico",
+    "bibliographyAuthor": "Autor",
+    "bibliographyEdition": "Ed.",
+    "bibliographyLocation": "Local",
+    "bibliographyPublisher": "Editora",
+    "bibliographyYear": "Ano",
+    "bibliographyLt": "LT",
+    "skillsInventory": "INVENTÁRIO DE HABILIDADES E COMPETÊNCIAS – IFAC",
+    "observations": "Observações:",
+    "signature": "Assinatura do Docente Responsável:",
+    "location": "Local:",
+    "documentDate": "Data:"
+  },
+  "instructions": {
+    "objectives": "Oriente-se pelos objetivos da disciplina e pela realidade do(a) estudante. Os objetivos de caráter funcional e prático devem ser priorizados e devem-se eliminar os que ultrapassam as condições do(a) aluno(a). Indique os objetivos específicos alternativos aos que não podem ser alcançados. Insira objetivos específicos complementares para suprir as necessidades educativas específicas identificadas através dados do Inventário de Habilidades para priorizar objetivos funcionais e acessíveis.",
+    "generalObjectives": "Descrever o objetivo geral da disciplina adaptado ao perfil do(a) estudante.",
+    "specificObjectives": "Elencar de 2 a 4 objetivos específicos originais da disciplina, compatíveis com as habilidades do(a) estudante.",
+    "eliminatedObjectives": "Registrar objetivos gerais não aplicáveis, com referência no plano de ensino de base e conforme diagnóstico ou observação educacional.",
+    "alternativeObjectives": "Reescrever os objetivos eliminados de forma acessível, de acordo com as potencialidades do(a) estudante, identificadas previamente no Inventário de Habilidades.",
+    "complementaryObjectives": "Inserir metas que favoreçam o desenvolvimento de habilidades socioemocionais, comunicacionais ou tecnológicas.",
+    "professionalSkills": "Indicar quais habilidades e competências podem ser promovidas considerando o Inventário de Habilidades e a ementa da disciplina.",
+    "syllabus": "Copiar a ementa oficial do plano de ensino de referência e destacar conteúdos fundamentais e acessíveis ao estudante.",
+    "prerequisites": "Indicar conhecimentos ou habilidades prévios necessários ao entendimento da disciplina.",
+    "contents": "Relacionar os conteúdos, destacando em itálico os prioritários. Adaptar a complexidade com base no Inventário de Habilidades e a carga horária necessária para cada conteúdo relacionado.",
+    "teachingStrategies": "Descrever as estratégias metodológicas diferenciadas com base no Inventário de Habilidades, laudos e observações da equipe do NAPNE.",
+    "methodologicalResources": "Indicar os possíveis recursos, tecnologias assistivas e materiais adaptados necessários ao bom desenvolvimento da aprendizagem do(a) estudante. Considere as orientações do relatório elaborado pelo NAPNE.",
+    "assessmentCriteria": "Descrever quais critérios serão usados para verificar a aprendizagem do(a) estudante, considerando equidade e desenvolvimento integral.",
+    "assessmentInstruments": "Listar os instrumentos avaliativos (provas orais, relatórios com imagens, avaliações adaptadas, etc.) e justificar o uso.",
+    "recoveryProposal": "Explicar como será oferecido o reforço ou a recuperação, mesmo após adaptações anteriores. Deve prever atendimento individualizado, mediação, recapitulação, entre outros."
+  },
+  "inventoryGroups": [
+    {
+      "id": "oralCommunication",
+      "label": "COMUNICAÇÃO ORAL",
+      "indicators": [
+        {
+          "id": "oralCommunication1",
+          "label": "Expressa ideias com clareza e coerência em diferentes contextos",
+          "hasOptions": true
+        },
+        {
+          "id": "oralCommunication2",
+          "label": "Participa de debates, apresentações ou seminários com argumentação lógica",
+          "hasOptions": true
+        },
+        {
+          "id": "oralCommunication3",
+          "label": "Demonstra escuta ativa e respeito pela fala do outro",
+          "hasOptions": true
+        },
+        {
+          "id": "oralCommunication4",
+          "label": "Adapta a linguagem ao contexto formal ou informal conforme a situação",
+          "hasOptions": true
+        }
+      ]
+    },
+    {
+      "id": "readingAndWriting",
+      "label": "LEITURA E PRODUÇÃO DE TEXTOS",
+      "indicators": [
+        {
+          "id": "readingAndWriting1",
+          "label": "Compreende e interpreta textos técnicos, científicos e literários",
+          "hasOptions": true
+        },
+        {
+          "id": "readingAndWriting2",
+          "label": "Produz textos coerentes e coesos, adequados ao gênero proposto",
+          "hasOptions": true
+        },
+        {
+          "id": "readingAndWriting3",
+          "label": "Demonstra domínio das normas gramaticais na escrita",
+          "hasOptions": true
+        },
+        {
+          "id": "readingAndWriting4",
+          "label": "Utiliza a leitura e a escrita como ferramentas para estudo e pesquisa",
+          "hasOptions": true
+        },
+        {
+          "id": "readingAndWriting5",
+          "label": "Organiza ideias com clareza em relatórios, resenhas e projetos",
+          "hasOptions": true
+        }
+      ]
+    },
+    {
+      "id": "logicalMathematicalReasoning",
+      "label": "RACIOCÍNIO LÓGICO E MATEMÁTICO",
+      "indicators": [
+        {
+          "id": "logicalMathematicalReasoning1",
+          "label": "Aplica conceitos matemáticos em situações do cotidiano e do curso técnico",
+          "hasOptions": true
+        },
+        {
+          "id": "logicalMathematicalReasoning2",
+          "label": "Resolve problemas utilizando raciocínio lógico e estratégias diversas",
+          "hasOptions": true
+        },
+        {
+          "id": "logicalMathematicalReasoning3",
+          "label": "Utiliza gráficos, tabelas e fórmulas para análise de dados",
+          "hasOptions": true
+        },
+        {
+          "id": "logicalMathematicalReasoning4",
+          "label": "Demonstra pensamento crítico na resolução de problemas",
+          "hasOptions": true
+        },
+        {
+          "id": "logicalMathematicalReasoning5",
+          "label": "Realiza cálculos com autonomia e precisão",
+          "hasOptions": true
+        }
+      ]
+    },
+    {
+      "id": "socioemotionalSkills",
+      "label": "HABILIDADES SOCIOEMOCIONAIS",
+      "indicators": [
+        {
+          "id": "socioemotionalSkills1",
+          "label": "Lida com frustrações e desafios com resiliência",
+          "hasOptions": true
+        },
+        {
+          "id": "socioemotionalSkills2",
+          "label": "Trabalha de forma colaborativa em grupo",
+          "hasOptions": true
+        },
+        {
+          "id": "socioemotionalSkills3",
+          "label": "Gerencia o tempo e cumpre prazos com responsabilidade",
+          "hasOptions": true
+        },
+        {
+          "id": "socioemotionalSkills4",
+          "label": "Demonstra empatia, respeito e ética nas interações",
+          "hasOptions": true
+        },
+        {
+          "id": "socioemotionalSkills5",
+          "label": "Mostra iniciativa e autonomia na realização de tarefas escolares",
+          "hasOptions": true
+        }
+      ]
+    },
+    {
+      "id": "functionalAutonomy",
+      "label": "AUTONOMIA FUNCIONAL",
+      "indicators": [
+        {
+          "id": "functionalAutonomy1",
+          "label": "Organiza seu material escolar e ambiente de estudos",
+          "hasOptions": true
+        },
+        {
+          "id": "functionalAutonomy2",
+          "label": "Solicita ajuda quando necessário de maneira apropriada",
+          "hasOptions": true
+        },
+        {
+          "id": "functionalAutonomy3",
+          "label": "Cumpre rotinas acadêmicas com independência",
+          "hasOptions": true
+        },
+        {
+          "id": "functionalAutonomy4",
+          "label": "Realiza deslocamentos no campus com autonomia",
+          "hasOptions": true
+        },
+        {
+          "id": "functionalAutonomy5",
+          "label": "Faz uso responsável dos espaços coletivos (laboratórios, biblioteca, etc.)",
+          "hasOptions": true
+        }
+      ]
+    },
+    {
+      "id": "digitalTechnologies",
+      "label": "DOMÍNIO DE TECNOLOGIAS DIGITAIS",
+      "indicators": [
+        {
+          "id": "digitalTechnologies1",
+          "label": "Utiliza e-mail e plataformas institucionais para comunicação acadêmica",
+          "hasOptions": true
+        },
+        {
+          "id": "digitalTechnologies2",
+          "label": "Acessa, navega e participa de ambientes virtuais de aprendizagem",
+          "hasOptions": true
+        },
+        {
+          "id": "digitalTechnologies3",
+          "label": "Utiliza ferramentas digitais para elaboração de trabalhos e projetos",
+          "hasOptions": true
+        },
+        {
+          "id": "digitalTechnologies4",
+          "label": "Aplica noções de segurança e ética no uso de tecnologias digitais",
+          "hasOptions": true
+        },
+        {
+          "id": "digitalTechnologies5",
+          "label": "Demonstra autonomia no uso de softwares aplicados ao curso técnico",
+          "hasOptions": false
+        }
+      ]
+    }
+  ],
+  "ratings": [
+    {
+      "value": "REALIZA_COM_AJUDA",
+      "label": "Realiza com ajuda"
+    },
+    {
+      "value": "REALIZA_SEM_AJUDA",
+      "label": "Realiza sem ajuda"
+    },
+    {
+      "value": "NAO_REALIZA",
+      "label": "Não realiza"
+    },
+    {
+      "value": "NAO_OBSERVADO",
+      "label": "Não foi observado"
+    }
+  ]
+}
