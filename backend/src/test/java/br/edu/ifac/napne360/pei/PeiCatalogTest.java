@@ -42,13 +42,13 @@ class PeiCatalogTest {
     @BeforeEach void setup() {
         service = new PeiService(new ReferenceCatalogService(entries), mongo.store, careRecords, subjects, current, timeline,
                 audit, access, templates, mock(StudentAssignmentRepository.class));
-        mvc = MockMvcBuilders.standaloneSetup(new PeiController(service,access)).setControllerAdvice(new ApiExceptionHandler())
+        mvc = MockMvcBuilders.standaloneSetup(new PeiController(service,access), new PeiAnnexController()).setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(json)).build();
         var course = Course.builder().id(2L).name("Curso fictício").build();
         var student = Student.builder().id(1L).civilName("Estudante fictício").course(course).build();
         when(access.requireView(1L)).thenReturn(student);
         when(access.canTeachPei(1L,3L)).thenReturn(true);
-        when(subjects.findById(3L)).thenReturn(Optional.of(Subject.builder().id(3L).course(course).name("Componente fictício").build()));
+        when(subjects.findById(3L)).thenReturn(Optional.of(Subject.builder().id(3L).course(course).name("Componente fictício").workloadHours(60).build()));
         when(current.require()).thenReturn(UserAccount.builder().id(12L).name("Docente").email("docente@example.test").roles(Set.of(RoleName.TEACHER)).build());
         term = ReferenceEntry.builder().id(9L).kind(ReferenceEntry.Kind.ACADEMIC_TERM).code("2026-2").label("Segundo semestre").build();
         when(entries.findById(9L)).thenReturn(Optional.of(term));
@@ -77,6 +77,97 @@ class PeiCatalogTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.academicTermId").value(9))
                 .andExpect(jsonPath("$.academicTerm").value("2026-2")).andExpect(jsonPath("$.academicTermLabel").value("Segundo semestre"))
                 .andExpect(jsonPath("$.revision").value(3));
+    }
+
+    @Test void annexEndpointExposesTheOfficialDescriptionAndAnswerOrder() throws Exception {
+        var response = mvc.perform(get("/api/v1/pei/anexo-i"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value("IFAC_76_2025"))
+                .andExpect(jsonPath("$.title").value("Plano de Ensino Individualizado - PEI"))
+                .andExpect(jsonPath("$.labels.teacherName").value("PROFESSOR(ES):"))
+                .andExpect(jsonPath("$.inventoryGroups.length()").value(6))
+                .andExpect(jsonPath("$.inventoryGroups[0].indicators[0].id").value("oralCommunication1"))
+                .andExpect(jsonPath("$.inventoryGroups[5].indicators[4].id").value("digitalTechnologies5"))
+                .andExpect(jsonPath("$.inventoryGroups[5].indicators[4].hasOptions").value(false))
+                .andExpect(jsonPath("$.ratings[*].value").value(org.hamcrest.Matchers.contains(
+                        "REALIZA_COM_AJUDA", "REALIZA_SEM_AJUDA", "NAO_REALIZA", "NAO_OBSERVADO")))
+                .andReturn();
+        var groups = json.readTree(response.getResponse().getContentAsString()).get("inventoryGroups");
+        var indicators = new ArrayList<com.fasterxml.jackson.databind.JsonNode>();
+        groups.forEach(group -> group.get("indicators").forEach(indicators::add));
+        assertThat(indicators).hasSize(29);
+        assertThat(indicators.stream().filter(value -> !value.get("hasOptions").asBoolean()))
+                .singleElement().satisfies(value -> assertThat(value.get("id").asText()).isEqualTo("digitalTechnologies5"));
+    }
+
+    @Test void officialDraftUsesServerIdentificationAndPreparesOnlyAnswerableIndicators() throws Exception {
+        mvc.perform(post("/api/v1/students/1/peis").contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"subjectId":3,"academicTermId":9,"formVersion":"forjado",
+                         "content":{"student":"forjado","teacherName":"forjado"}}
+                        """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.formVersion").value("IFAC_76_2025"))
+                .andExpect(jsonPath("$.content.student").value("Estudante fictício"))
+                .andExpect(jsonPath("$.content.course").value("Curso fictício"))
+                .andExpect(jsonPath("$.content.subject").value("Componente fictício"))
+                .andExpect(jsonPath("$.content.workloadHours").value(60))
+                .andExpect(jsonPath("$.content.teacherName").value("Docente"))
+                .andExpect(jsonPath("$.content.skillsInventory.length()").value(28))
+                .andExpect(jsonPath("$.content.skillsInventory.digitalTechnologies4").value("NAO_OBSERVADO"))
+                .andExpect(jsonPath("$.content.skillsInventory.digitalTechnologies5").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.content.observations").value(""))
+                .andExpect(jsonPath("$.content.location").value(""))
+                .andExpect(jsonPath("$.content.documentDate").value(""));
+    }
+
+    @Test void officialSaveProtectsIdentificationAndRetainsStructuredContent() throws Exception {
+        var created = mvc.perform(post("/api/v1/students/1/peis").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"subjectId\":3,\"academicTermId\":9}"))
+                .andExpect(status().isOk()).andReturn();
+        var id = json.readTree(created.getResponse().getContentAsString()).get("id").asText();
+
+        var saved = mvc.perform(put("/api/v1/students/1/peis/" + id).contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"version":0,"teacherId":98,"academicTerm":"forjado","formVersion":"forjado",
+                         "content":{"student":"forjado","course":"forjado","subject":"forjado","workloadHours":8,
+                           "teacherName":"forjado","contents":[{"description":"Atividade prática","workloadHours":2.5,"priority":true}],
+                           "assessmentInstruments":[{"description":"Relato oral","justification":"Permite explicar as etapas"}],
+                           "basicBibliography":[{"title":"Título fictício","author":"Autoria fictícia","edition":"2","location":"Rio Branco","publisher":"Editora fictícia","year":"2020","lt":"Livre"}],
+                           "documentDate":"2026-11-25","observations":"Texto fictício","location":"Rio Branco"}}
+                        """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.formVersion").value("IFAC_76_2025"))
+                .andExpect(jsonPath("$.teacherId").value(12))
+                .andExpect(jsonPath("$.academicTerm").value("2026-2"))
+                .andExpect(jsonPath("$.content.student").value("Estudante fictício"))
+                .andExpect(jsonPath("$.content.course").value("Curso fictício"))
+                .andExpect(jsonPath("$.content.subject").value("Componente fictício"))
+                .andExpect(jsonPath("$.content.workloadHours").value(60))
+                .andExpect(jsonPath("$.content.teacherName").value("Docente"))
+                .andExpect(jsonPath("$.content.contents[0].workloadHours").value(2.5))
+                .andExpect(jsonPath("$.content.contents[0].priority").value(true))
+                .andExpect(jsonPath("$.content.assessmentInstruments[0].justification").value("Permite explicar as etapas"))
+                .andExpect(jsonPath("$.content.basicBibliography[0].lt").value("Livre"))
+                .andExpect(jsonPath("$.content.documentDate").value("2026-11-25")).andReturn();
+
+        var savedId = json.readTree(saved.getResponse().getContentAsString()).get("id").asText();
+        var series = mongo.store.load(1L, 3L, "2026-2");
+        assertThat(series.find(id).orElseThrow().getContent().get("contents")).isEqualTo(List.of());
+        assertThat(series.find(savedId).orElseThrow().getContent().get("observations")).isEqualTo("Texto fictício");
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"2026-02-30", "25/11/2026", "+12026-11-25"})
+    void officialDraftRejectsInvalidCalendarDateWithoutCreatingARevision(String date) throws Exception {
+        var created = mvc.perform(post("/api/v1/students/1/peis").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"subjectId\":3,\"academicTermId\":9}")).andReturn();
+        var id = json.readTree(created.getResponse().getContentAsString()).get("id").asText();
+        var body = Map.of("version", 0, "content", Map.of("documentDate", date));
+
+        mvc.perform(put("/api/v1/students/1/peis/" + id).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsBytes(body))).andExpect(status().isBadRequest());
+
+        assertThat(mongo.store.load(1L, 3L, "2026-2").revisions()).hasSize(1);
     }
 
     @Test void suppliedIdWinsOverClientCodeAndLabel() throws Exception {

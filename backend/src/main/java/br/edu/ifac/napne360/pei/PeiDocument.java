@@ -25,6 +25,8 @@ public class PeiDocument {
     private String academicTerm;
     private Long academicTermId;
     private String academicTermLabel;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String formVersion;
     @Builder.Default
     private int revision = 1;
     @Builder.Default

@@ -33,6 +33,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -40,6 +42,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -47,6 +50,8 @@ import java.util.UUID;
 public class PeiService {
     private static final List<String> REQUIRED_TEXT_LISTS = List.of("specificObjectives", "contents",
             "teachingStrategies", "assessmentCriteria", "assessmentInstruments");
+    private static final List<String> IDENTIFICATION = List.of("student", "course", "subject", "workloadHours", "teacherName");
+    private static final Set<String> BIBLIOGRAPHY_FIELDS = Set.of("title", "author", "edition", "location", "publisher", "year", "lt");
     private final ReferenceCatalogService catalog;
     private final PeiSeriesStore store;
     private final CareRecordService careRecords;
@@ -99,8 +104,9 @@ public class PeiService {
         var now = recordedAt();
         var plan = PeiDocument.builder().id(newId()).studentId(student.getId()).subjectId(subject.getId())
                 .teacherId(actor.getId()).academicTerm(term.getCode()).academicTermId(term.getId())
-                .academicTermLabel(term.getLabel()).revision(series.nextRevision()).storageVersion(0L)
-                .content(template(student, subject)).createdBy(actor.getEmail()).updatedBy(actor.getEmail())
+                .academicTermLabel(term.getLabel()).formVersion(PeiAnnexI.VERSION)
+                .revision(series.nextRevision()).storageVersion(0L)
+                .content(template(student, subject, actor)).createdBy(actor.getEmail()).updatedBy(actor.getEmail())
                 .createdAt(now).updatedAt(now).build();
         var revisions = new ArrayList<>(series.revisions());
         revisions.add(plan);
@@ -116,7 +122,8 @@ public class PeiService {
         var permissions = permissions(actor, studentId, series.subjectId());
         requireAction(series, previous, actor, permissions, Action.EDIT, request.version());
         var now = recordedAt();
-        var next = newDraft(series, previous, actor, now, new LinkedHashMap<>(request.content()), previous.getCreatedBy())
+        var content = isAnnex(previous) ? annexEdit(previous, request.content()) : new LinkedHashMap<>(request.content());
+        var next = newDraft(series, previous, actor, now, content, previous.getCreatedBy())
                 .teacherId(actor.getId()).build();
         var revisions = replace(series, advance(previous, PeiStatus.SUPERSEDED, actor, now).build());
         revisions.add(next);
@@ -134,7 +141,7 @@ public class PeiService {
         var now = recordedAt();
 
         if (action == Action.START_REVISION) {
-            var next = newDraft(series, previous, actor, now, new LinkedHashMap<>(previous.getContent()), actor.getEmail())
+            var next = newDraft(series, previous, actor, now, contentForTeacher(previous, actor.getName()), actor.getEmail())
                     .teacherId(actor.getId()).build();
             var revisions = replace(series, previous.toBuilder()
                     .storageVersion(Math.incrementExact(previous.getStorageVersion())).build());
@@ -193,14 +200,14 @@ public class PeiService {
         if (reason.isEmpty() || reason.length() > 500) {
             throw new IllegalArgumentException("Informe um motivo de até 500 caracteres para a transferência.");
         }
-        if (eligibleTransferTeachers(series, previous, actor.getCampus().getId()).stream()
-                .noneMatch(candidate -> candidate.id().equals(request.teacherId()))) {
-            throw new IllegalArgumentException("O docente escolhido deve ter vínculo ativo com o estudante e o componente.");
-        }
+        var successor = eligibleTransferTeachers(series, previous, actor.getCampus().getId()).stream()
+                .filter(candidate -> candidate.id().equals(request.teacherId()))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException(
+                        "O docente escolhido deve ter vínculo ativo com o estudante e o componente."));
 
         var now = recordedAt();
-        var next = newDraft(series, previous, actor, now, previous.getContent(), previous.getCreatedBy())
-                .teacherId(request.teacherId())
+        var next = newDraft(series, previous, actor, now, contentForTeacher(previous, successor.name()), previous.getCreatedBy())
+                .teacherId(successor.id())
                 .transfer(new PeiDocument.Transfer(previous.getTeacherId(), request.teacherId(), actor.getEmail(), now, reason))
                 .build();
         var revisions = replace(series, advance(previous, PeiStatus.SUPERSEDED, actor, now).build());
@@ -354,7 +361,88 @@ public class PeiService {
         return new AccessDeniedException("Sem permissão para esta operação no PEI.");
     }
 
+    private static boolean isAnnex(PeiDocument pei) {
+        return PeiAnnexI.VERSION.equals(pei.getFormVersion());
+    }
+
+    private static Map<String, Object> contentForTeacher(PeiDocument source, String teacherName) {
+        var content = new LinkedHashMap<>(source.getContent());
+        if (isAnnex(source)) {
+            content.put("teacherName", teacherName);
+        }
+        return content;
+    }
+
+    private static Map<String, Object> annexEdit(PeiDocument source, Map<String, Object> submitted) {
+        var stored = source.getContent();
+        var content = new LinkedHashMap<String, Object>();
+        for (var field : IDENTIFICATION) {
+            content.put(field, stored.get(field));
+        }
+        submitted.forEach((field, value) -> {
+            if (IDENTIFICATION.contains(field) || "reviewWarning".equals(field)) {
+                return;
+            }
+            if (!validAnnexField(field, value)) {
+                throw new IllegalArgumentException("Campo inválido no Anexo I do PEI: " + field);
+            }
+            content.put(field, value);
+        });
+        content.put("reviewWarning", stored.get("reviewWarning"));
+        return content;
+    }
+
+    private static boolean validAnnexField(String field, Object value) {
+        return switch (field) {
+            case "generalObjectives", "syllabus", "prerequisites", "recoveryProposal",
+                 "observations", "location" -> value instanceof String;
+            case "specificObjectives", "eliminatedObjectives", "alternativeObjectives", "complementaryObjectives",
+                 "professionalSkills", "teachingStrategies", "methodologicalResources", "assessmentCriteria" ->
+                    value instanceof List<?> texts && texts.stream().allMatch(String.class::isInstance);
+            case "documentDate" -> validAnnexDate(value);
+            case "contents" -> value instanceof List<?> rows && rows.stream().allMatch(row ->
+                    row instanceof Map<?, ?> map && map.keySet().equals(Set.of("description", "workloadHours", "priority"))
+                            && map.get("description") instanceof String && map.get("priority") instanceof Boolean
+                            && (map.get("workloadHours") == null || finiteHours(map.get("workloadHours"))));
+            case "assessmentInstruments" -> allTextRows(value, Set.of("description", "justification"));
+            case "basicBibliography", "complementaryBibliography" -> allTextRows(value, BIBLIOGRAPHY_FIELDS);
+            case "skillsInventory" -> value instanceof Map<?, ?> inventory
+                    && PeiAnnexI.answerableIndicators().containsAll(inventory.keySet())
+                    && inventory.values().stream().allMatch(PeiService::validRating);
+            default -> false;
+        };
+    }
+
+    private static boolean validAnnexDate(Object value) {
+        if (!(value instanceof String text)) return false;
+        if (text.isEmpty()) return true;
+        if (!text.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}")) return false;
+        try {
+            return LocalDate.parse(text).getYear() > 0;
+        } catch (DateTimeParseException invalid) {
+            return false;
+        }
+    }
+
+    private static boolean finiteHours(Object value) {
+        return value instanceof Number number && Double.isFinite(number.doubleValue());
+    }
+
+    private static boolean allTextRows(Object value, Set<String> fields) {
+        return value instanceof List<?> rows && rows.stream().allMatch(row ->
+                row instanceof Map<?, ?> map && map.keySet().equals(fields)
+                        && map.values().stream().allMatch(String.class::isInstance));
+    }
+
+    private static boolean validRating(Object value) {
+        return value instanceof String rating && PeiAnnexI.ratings().contains(rating);
+    }
+
     private void validateApproval(PeiDocument pei) {
+        if (isAnnex(pei)) {
+            validateAnnexApproval(pei);
+            return;
+        }
         var content = pei.getContent();
         if (content == null || !hasText(content.get("generalObjectives"))
                 || REQUIRED_TEXT_LISTS.stream().anyMatch(field -> !hasTextList(content.get(field)))) {
@@ -369,6 +457,38 @@ public class PeiService {
         }
     }
 
+    private static void validateAnnexApproval(PeiDocument pei) {
+        var content = pei.getContent();
+        if (pei.getTeacherId() == null || content == null || !hasText(content.get("teacherName"))) {
+            throw new IllegalArgumentException("Identifique o docente responsável antes da aprovação.");
+        }
+        if (!hasText(content.get("generalObjectives")) || !hasTextList(content.get("teachingStrategies"))
+                || !hasTextList(content.get("assessmentCriteria"))) {
+            throw new IllegalArgumentException("Preencha os objetivos, as estratégias e os critérios de avaliação antes de aprovar.");
+        }
+        if (!(content.get("specificObjectives") instanceof List<?> objectives)
+                || objectives.size() < 2 || objectives.size() > 4 || !hasTextList(objectives)) {
+            throw new IllegalArgumentException("Preencha de 2 a 4 objetivos específicos antes de aprovar.");
+        }
+        if (!(content.get("contents") instanceof List<?> rows) || rows.isEmpty()
+                || !validAnnexField("contents", rows) || rows.stream().map(Map.class::cast).anyMatch(row ->
+                        !hasText(row.get("description")) || !(row.get("workloadHours") instanceof Number hours)
+                                || hours.doubleValue() <= 0)) {
+            throw new IllegalArgumentException("Informe os conteúdos e a carga horária de cada um antes de aprovar.");
+        }
+        if (!(content.get("assessmentInstruments") instanceof List<?> instruments) || instruments.isEmpty()
+                || !allTextRows(instruments, Set.of("description", "justification"))
+                || instruments.stream().map(Map.class::cast).anyMatch(instrument ->
+                        !hasText(instrument.get("description")) || !hasText(instrument.get("justification")))) {
+            throw new IllegalArgumentException("Informe os instrumentos de avaliação e justifique o uso de cada um.");
+        }
+        if (!(content.get("skillsInventory") instanceof Map<?, ?> inventory)
+                || !validAnnexField("skillsInventory", inventory)
+                || inventory.size() != PeiAnnexI.answerableIndicators().size()) {
+            throw new IllegalArgumentException("Escolha uma opção válida em cada indicador do inventário.");
+        }
+    }
+
     private static boolean hasText(Object value) {
         return value instanceof String text && !text.isBlank();
     }
@@ -377,12 +497,13 @@ public class PeiService {
         return value instanceof List<?> texts && !texts.isEmpty() && texts.stream().allMatch(PeiService::hasText);
     }
 
-    private Map<String, Object> template(Student student, Subject subject) {
+    private Map<String, Object> template(Student student, Subject subject, UserAccount teacher) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("student", student.getDisplayName());
         result.put("course", student.getCourse().getName());
         result.put("subject", subject.getName());
         result.put("workloadHours", subject.getWorkloadHours());
+        result.put("teacherName", teacher.getName());
         result.put("syllabus", subject.getSyllabus() == null ? "" : subject.getSyllabus());
         result.put("generalObjectives", "");
         result.put("specificObjectives", List.of());
@@ -399,13 +520,19 @@ public class PeiService {
         result.put("recoveryProposal", "");
         result.put("basicBibliography", List.of());
         result.put("complementaryBibliography", List.of());
-        result.put("skillsInventory", emptyInventory());
-        templates.findByDocumentTypeAndActiveTrueOrderByUpdatedAtDesc("PEI").stream().findFirst().ifPresent(model -> {
-            model.getDefaults().forEach((key,value) -> {
-                if (result.containsKey(key) && !java.util.Set.of("student","course","subject","workloadHours","reviewWarning").contains(key))
-                    result.put(key,value);
-            });
-        });
+        result.put("observations", "");
+        result.put("location", "");
+        result.put("documentDate", "");
+        var inventory = new LinkedHashMap<String, Object>();
+        PeiAnnexI.answerableIndicators().forEach(indicator -> inventory.put(indicator, "NAO_OBSERVADO"));
+        result.put("skillsInventory", inventory);
+        templates.findByDocumentTypeAndActiveTrueOrderByUpdatedAtDesc("PEI").stream().findFirst().ifPresent(model ->
+                model.getDefaults().forEach((field, value) -> {
+                    if (result.containsKey(field) && !IDENTIFICATION.contains(field) && !"skillsInventory".equals(field)
+                            && validAnnexField(field, value)) {
+                        result.put(field, value);
+                    }
+                }));
         result.put("reviewWarning", "Rascunho de apoio. Deve ser revisado pelo docente e pela equipe responsável antes da aprovação.");
         return result;
     }

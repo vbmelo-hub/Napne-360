@@ -121,6 +121,99 @@ class PeiWorkflowTest {
         verify(audit, times(1)).record(any(), any(), any(), any(), any(), any(), any());
     }
 
+    @Test void approvalOfOfficialRevisionKeepsTheOfficialContentAndReplacesTheVigentPlan() throws Exception {
+        draft.setFormVersion("IFAC_76_2025");
+        draft.setStatus(PeiStatus.IN_REVIEW);
+        draft.setContent(officialContent());
+        actor(RoleName.NAPNE);
+
+        action("draft", "approve", VERSION).andExpect(status().isOk())
+                .andExpect(jsonPath("$.formVersion").value("IFAC_76_2025"))
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.content.skillsInventory.oralCommunication1").value("REALIZA_COM_AJUDA"));
+
+        var saved = mongo.store.load(1L, 2L, "2026-2");
+        assertThat(saved.current().orElseThrow().getId()).isEqualTo("draft");
+        assertThat(saved.find("old").orElseThrow().getStatus()).isEqualTo(PeiStatus.SUPERSEDED);
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+            "specificObjectives|[\"Primeiro\"]",
+            "specificObjectives|[\"Primeiro\",\"Segundo\",\"Terceiro\",\"Quarto\",\"Quinto\"]",
+            "contents|[{\"description\":\"Tema\",\"workloadHours\":null,\"priority\":false}]",
+            "contents|[{\"description\":\"Tema\",\"workloadHours\":0,\"priority\":false}]",
+            "assessmentInstruments|[{\"description\":\"Relato oral\",\"justification\":\" \"}]",
+            "skillsInventory|{\"oralCommunication\":\"NAO_OBSERVADO\"}"
+    })
+    void incompleteOfficialApprovalKeepsThePreviousVigentPlan(String field, String jsonValue) throws Exception {
+        draft.setFormVersion("IFAC_76_2025");
+        draft.setStatus(PeiStatus.IN_REVIEW);
+        var content = officialContent();
+        content.put(field, new ObjectMapper().readValue(jsonValue, Object.class));
+        draft.setContent(content);
+        actor(RoleName.NAPNE);
+
+        action("draft", "approve", VERSION).andExpect(status().isBadRequest());
+
+        var untouched = mongo.store.load(1L, 2L, "2026-2");
+        assertThat(untouched.version()).isNull();
+        assertThat(untouched.current().orElseThrow().getId()).isEqualTo("old");
+        verifyNoInteractions(timeline, audit);
+    }
+
+    @Test void officialTransferUpdatesOnlyTheNewTeachersSnapshot() throws Exception {
+        transferFixture();
+        draft.setFormVersion("IFAC_76_2025");
+        draft.setContent(officialContent());
+
+        transfer(TRANSFER).andExpect(status().isOk())
+                .andExpect(jsonPath("$.formVersion").value("IFAC_76_2025"))
+                .andExpect(jsonPath("$.teacherId").value(12))
+                .andExpect(jsonPath("$.content.teacherName").value("Docente 12"))
+                .andExpect(jsonPath("$.content.skillsInventory.oralCommunication1").value("REALIZA_COM_AJUDA"));
+
+        var saved = mongo.store.load(1L, 2L, "2026-2");
+        assertThat(saved.find("draft").orElseThrow().getContent().get("teacherName")).isEqualTo("Docente original");
+        assertThat(saved.current().orElseThrow().getId()).isEqualTo("old");
+    }
+
+    @Test void replacementOfOfficialRevisionUsesTheResponsibleTeachersSnapshot() throws Exception {
+        approved.setFormVersion("IFAC_76_2025");
+        approved.setContent(officialContent());
+        draft.setStatus(PeiStatus.ARCHIVED);
+        actor(RoleName.TEACHER, 12L, CAMPUS);
+
+        action("old", "revisions", VERSION).andExpect(status().isOk())
+                .andExpect(jsonPath("$.formVersion").value("IFAC_76_2025"))
+                .andExpect(jsonPath("$.teacherId").value(12))
+                .andExpect(jsonPath("$.content.teacherName").value("Pessoa fictícia"))
+                .andExpect(jsonPath("$.content.generalObjectives").value("Objetivos"));
+
+        mvc.perform(get(PATH + "/old")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.content.teacherName").value("Docente original"));
+    }
+
+    private Map<String, Object> officialContent() {
+        var result = new LinkedHashMap<>(draft.getContent());
+        result.put("teacherName", "Docente original");
+        result.put("specificObjectives", List.of("Primeiro", "Segundo"));
+        result.put("contents", List.of(Map.of("description", "Tema", "workloadHours", 2, "priority", false)));
+        result.put("assessmentInstruments", List.of(Map.of("description", "Relato oral", "justification", "Permite explicar as etapas")));
+        var indicators = new LinkedHashMap<String, String>();
+        for (String group : List.of("oralCommunication", "readingAndWriting", "logicalMathematicalReasoning",
+                "socioemotionalSkills", "functionalAutonomy", "digitalTechnologies")) {
+            int count = group.equals("oralCommunication") || group.equals("digitalTechnologies") ? 4 : 5;
+            for (int number = 1; number <= count; number++) {
+                indicators.put(group + number, "NAO_OBSERVADO");
+            }
+        }
+        indicators.put("oralCommunication1", "REALIZA_COM_AJUDA");
+        result.put("skillsInventory", indicators);
+        return result;
+    }
+
     @Test void linkedTeacherCannotApproveAndReviewerCannotSubmit() throws Exception {
         draft.setStatus(PeiStatus.IN_REVIEW);
         action("draft", "approve", VERSION).andExpect(status().isForbidden());
