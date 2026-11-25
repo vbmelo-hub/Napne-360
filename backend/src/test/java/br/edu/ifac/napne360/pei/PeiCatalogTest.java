@@ -121,6 +121,31 @@ class PeiCatalogTest {
                 .andExpect(jsonPath("$.content.documentDate").value(""));
     }
 
+    @Test void officialDraftReusesInstitutionalTemplateTextWithoutFabricatingHoursOrRatings() throws Exception {
+        var defaults = Map.of("contents", List.of("Atividade institucional"),
+                "assessmentInstruments", List.of("Relato oral"),
+                "basicBibliography", List.of("Referência institucional fictícia"),
+                "skillsInventory", Map.of("oralCommunication", "REALIZA_COM_AJUDA"),
+                "teacherName", "Docente do exemplo");
+        when(templates.findByDocumentTypeAndActiveTrueOrderByUpdatedAtDesc("PEI"))
+                .thenReturn(List.of(DocumentTemplate.builder().defaults(defaults).build()));
+
+        mvc.perform(post("/api/v1/students/1/peis").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"subjectId\":3,\"academicTermId\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.contents[0].description").value("Atividade institucional"))
+                .andExpect(jsonPath("$.content.contents[0].workloadHours").hasJsonPath())
+                .andExpect(jsonPath("$.content.contents[0].workloadHours").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.content.contents[0].priority").value(false))
+                .andExpect(jsonPath("$.content.assessmentInstruments[0].description").value("Relato oral"))
+                .andExpect(jsonPath("$.content.assessmentInstruments[0].justification").value(""))
+                .andExpect(jsonPath("$.content.basicBibliography[0].title").value("Referência institucional fictícia"))
+                .andExpect(jsonPath("$.content.basicBibliography[0].author").value(""))
+                .andExpect(jsonPath("$.content.skillsInventory.oralCommunication1").value("NAO_OBSERVADO"))
+                .andExpect(jsonPath("$.content.skillsInventory.oralCommunication").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.content.teacherName").value("Docente"));
+    }
+
     @Test void officialSaveProtectsIdentificationAndRetainsStructuredContent() throws Exception {
         var created = mvc.perform(post("/api/v1/students/1/peis").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"subjectId\":3,\"academicTermId\":9}"))
@@ -134,7 +159,7 @@ class PeiCatalogTest {
                            "teacherName":"forjado","contents":[{"description":"Atividade prática","workloadHours":2.5,"priority":true}],
                            "assessmentInstruments":[{"description":"Relato oral","justification":"Permite explicar as etapas"}],
                            "basicBibliography":[{"title":"Título fictício","author":"Autoria fictícia","edition":"2","location":"Rio Branco","publisher":"Editora fictícia","year":"2020","lt":"Livre"}],
-                           "documentDate":"2026-11-25","observations":"Texto fictício","location":"Rio Branco"}}
+                           "documentDate":"2026-11-25","observations":"Texto fictício","location":"Rio Branco","reviewWarning":"forjado"}}
                         """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.formVersion").value("IFAC_76_2025"))
@@ -149,7 +174,9 @@ class PeiCatalogTest {
                 .andExpect(jsonPath("$.content.contents[0].priority").value(true))
                 .andExpect(jsonPath("$.content.assessmentInstruments[0].justification").value("Permite explicar as etapas"))
                 .andExpect(jsonPath("$.content.basicBibliography[0].lt").value("Livre"))
-                .andExpect(jsonPath("$.content.documentDate").value("2026-11-25")).andReturn();
+                .andExpect(jsonPath("$.content.documentDate").value("2026-11-25"))
+                .andExpect(jsonPath("$.content.reviewWarning").value(org.hamcrest.Matchers.startsWith("Rascunho de apoio.")))
+                .andReturn();
 
         var savedId = json.readTree(saved.getResponse().getContentAsString()).get("id").asText();
         var series = mongo.store.load(1L, 3L, "2026-2");

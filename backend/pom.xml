@@ -28,9 +28,20 @@
 	</scm>
 	<properties>
 		<java.version>21</java.version>
+		<openpdf.version>2.2.5</openpdf.version>
 		<jjwt.version>0.12.6</jjwt.version>
 	</properties>
 	<dependencies>
+		<dependency>
+			<groupId>com.github.librepdf</groupId>
+			<artifactId>openpdf</artifactId>
+			<version>${openpdf.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.github.librepdf</groupId>
+			<artifactId>openpdf-fonts-extra</artifactId>
+			<version>${openpdf.version}</version>
+		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>

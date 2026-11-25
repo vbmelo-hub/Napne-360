@@ -28,17 +28,22 @@ class PeiSeriesMappingTest {
                 .append("transferredBy", "napne@example.test")
                 .append("transferredAt", Date.from(Instant.parse("2026-11-25T19:00:00Z")))
                 .append("reason", "Substituição docente");
+        var content = new Document("teacherName", "Docente fictício").append("contents", List.of(
+                new Document("description", "Atividade prática").append("workloadHours", null).append("priority", true)));
         var raw = new Document("_id", "1:2:+2026-2").append("studentId", 1L).append("subjectId", 2L)
                 .append("academicTerm", "2026-2").append("version", 2L)
                 .append("revisions", List.of(new Document("_id", "previous").append("revision", 7),
-                        new Document("_id", "transferred").append("revision", 8).append("transfer", transfer)));
+                        new Document("_id", "transferred").append("revision", 8).append("transfer", transfer)
+                                .append("formVersion", "IFAC_76_2025").append("content", content)));
 
         var series = converter.read(PeiSeries.class, raw);
         var entity = context.getRequiredPersistentEntity(PeiSeries.class);
         var update = new UpdateMapper(converter).getMappedObject(
                 new Update().set("revisions", series.revisions()).set("version", 3L).getUpdateObject(), entity);
         var revisions = update.get("$set", Document.class).getList("revisions", Document.class);
-        assertThat(revisions.getFirst()).doesNotContainKey("transfer");
+        assertThat(revisions.getFirst()).doesNotContainKeys("transfer", "formVersion");
+        assertThat(revisions.getLast()).containsEntry("formVersion", "IFAC_76_2025")
+                .containsEntry("content", content);
         assertThat(revisions.getLast().get("transfer", Document.class)).isEqualTo(transfer);
     }
 

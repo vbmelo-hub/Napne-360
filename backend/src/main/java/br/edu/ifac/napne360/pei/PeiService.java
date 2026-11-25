@@ -366,10 +366,10 @@ public class PeiService {
     }
 
     private static Map<String, Object> contentForTeacher(PeiDocument source, String teacherName) {
-        var content = new LinkedHashMap<>(source.getContent());
-        if (isAnnex(source)) {
-            content.put("teacherName", teacherName);
-        }
+        var stored = source.getContent();
+        if (!isAnnex(source)) return stored == null ? null : new LinkedHashMap<>(stored);
+        var content = new LinkedHashMap<>(stored);
+        content.put("teacherName", teacherName);
         return content;
     }
 
@@ -528,13 +528,37 @@ public class PeiService {
         result.put("skillsInventory", inventory);
         templates.findByDocumentTypeAndActiveTrueOrderByUpdatedAtDesc("PEI").stream().findFirst().ifPresent(model ->
                 model.getDefaults().forEach((field, value) -> {
-                    if (result.containsKey(field) && !IDENTIFICATION.contains(field) && !"skillsInventory".equals(field)
-                            && validAnnexField(field, value)) {
-                        result.put(field, value);
+                    if (!result.containsKey(field) || IDENTIFICATION.contains(field) || "skillsInventory".equals(field)) {
+                        return;
+                    }
+                    var annexValue = annexTemplateValue(field, value);
+                    if (validAnnexField(field, annexValue)) {
+                        result.put(field, annexValue);
                     }
                 }));
         result.put("reviewWarning", "Rascunho de apoio. Deve ser revisado pelo docente e pela equipe responsável antes da aprovação.");
         return result;
+    }
+
+    private static Object annexTemplateValue(String field, Object value) {
+        if (!(value instanceof List<?> texts) || !texts.stream().allMatch(String.class::isInstance)) {
+            return value;
+        }
+        return switch (field) {
+            case "contents" -> texts.stream().map(text -> {
+                var row = new LinkedHashMap<String, Object>();
+                row.put("description", text);
+                row.put("workloadHours", null);
+                row.put("priority", false);
+                return row;
+            }).toList();
+            case "assessmentInstruments" -> texts.stream()
+                    .map(text -> Map.of("description", text, "justification", "")).toList();
+            case "basicBibliography", "complementaryBibliography" -> texts.stream()
+                    .map(text -> Map.of("title", text, "author", "", "edition", "", "location", "",
+                            "publisher", "", "year", "", "lt", "")).toList();
+            default -> value;
+        };
     }
 
     private List<String> suggestedStrategies(Long studentId, Long subjectId) {
