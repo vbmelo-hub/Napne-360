@@ -146,7 +146,8 @@ class CaseControllerIntegrationTest {
             assertThat(result.get(10, TimeUnit.SECONDS)).isEqualTo(400);
         }
         assertThat(cases.findById(legacy.getId()).orElseThrow().getStage()).isEqualTo(CaseStage.CLOSED);
-        verifyNoInteractions(records, projectionExecutor, audit);
+        verifyNoInteractions(records, audit);
+        verify(projectionExecutor, never()).execute(any(Runnable.class));
     }
 
     @Test void careRecordCreateRejectsFractionalCaseIdBeforeSave() throws Exception {
@@ -156,7 +157,8 @@ class CaseControllerIntegrationTest {
         });
 
         perform(careRecordPost(legacy.getId() + ".5"), actor).andExpect(status().isBadRequest());
-        verifyNoInteractions(records, projectionExecutor, audit);
+        verifyNoInteractions(records, audit);
+        verify(projectionExecutor, never()).execute(any(Runnable.class));
     }
 
     private MockHttpServletRequestBuilder careRecordPost(String caseIdJson) {
