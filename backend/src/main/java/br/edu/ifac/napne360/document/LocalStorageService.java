@@ -9,13 +9,16 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Set;
-import java.util.UUID;
 
 @Service
 public class LocalStorageService implements DocumentStorage {
@@ -29,26 +32,45 @@ public class LocalStorageService implements DocumentStorage {
         Files.createDirectories(this.root);
     }
 
-    public StoredFile store(Long studentId, MultipartFile file) throws IOException {
+    @Override
+    public PreparedFile prepare(Long studentId, String operationId, MultipartFile file) throws IOException {
         if (file.isEmpty() || file.getSize() > 10L * 1024 * 1024) throw new IllegalArgumentException("O arquivo deve ter entre 1 byte e 10 MB.");
-        if (!ALLOWED_TYPES.contains(file.getContentType())) throw new IllegalArgumentException("Tipo de arquivo não permitido.");
+        if (file.getContentType() == null || !ALLOWED_TYPES.contains(file.getContentType())) {
+            throw new IllegalArgumentException("Tipo de arquivo não permitido.");
+        }
         byte[] bytes;
         try (InputStream input = file.getInputStream()) {
             bytes = input.readNBytes(10 * 1024 * 1024 + 1);
         }
         if (bytes.length > 10 * 1024 * 1024) throw new IllegalArgumentException("Arquivo muito grande.");
         String extension = validatedExtension(file.getContentType(), bytes);
-        String storedName = studentId + "-" + UUID.randomUUID() + extension;
-        Path destination = root.resolve(storedName).normalize();
-        requireInsideRoot(destination);
-        MessageDigest digest;
-        try { digest = MessageDigest.getInstance("SHA-256"); }
-        catch (Exception exception) { throw new IllegalStateException(exception); }
-        digest.update(bytes);
-        Files.write(destination, bytes, java.nio.file.StandardOpenOption.CREATE_NEW);
-        return new StoredFile(storedName, HexFormat.of().formatHex(digest.digest()));
+        String storedName = studentId + "-" + operationId + extension;
+        return new PreparedFile(storedName, HexFormat.of().formatHex(sha256().digest(bytes)), bytes);
     }
 
+    @Override
+    public void write(PreparedFile file) throws IOException {
+        Path destination = root.resolve(file.storedName()).normalize();
+        requireInsideRoot(destination);
+        // All writers for this path share the reserved hash. Writing the same bytes
+        // without truncation keeps a verified file valid even if requests overlap.
+        Files.write(destination, file.bytes(), StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                StandardOpenOption.SYNC, LinkOption.NOFOLLOW_LINKS);
+    }
+
+    @Override
+    public boolean hasCompleteFile(String storedName, long size, String expectedSha256) throws IOException {
+        Path path = root.resolve(storedName).normalize();
+        requireInsideRoot(path);
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.size(path) != size) return false;
+        var digest = sha256();
+        try (var input = new DigestInputStream(Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS), digest)) {
+            return input.transferTo(OutputStream.nullOutputStream()) == size
+                    && HexFormat.of().formatHex(digest.digest()).equals(expectedSha256);
+        }
+    }
+
+    @Override
     public Resource load(String storedName) {
         try {
             Path path = root.resolve(storedName).normalize();
@@ -63,6 +85,14 @@ public class LocalStorageService implements DocumentStorage {
 
     private void requireInsideRoot(Path path) {
         if (!path.startsWith(root)) throw new SecurityException("Invalid storage path");
+    }
+
+    private MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 
     private String validatedExtension(String type, byte[] bytes) throws IOException {

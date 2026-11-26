@@ -99,7 +99,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     const apiSpy = jasmine.createSpyObj<ApiService>('ApiService', [
       'student', 'dossier', 'cases', 'records', 'peis', 'timeline',
       'attachments', 'studentSubjects', 'studentTeachers', 'courses',
-      'createRecord', 'updateRecord', 'references'
+      'createRecord', 'updateRecord', 'references', 'uploadAttachment'
     ]);
     const toastSpy = jasmine.createSpyObj<ToastService>('ToastService', ['show']);
 
@@ -143,6 +143,30 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     fixture = TestBed.createComponent(StudentDetailComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
+  });
+
+  it('reutiliza a chave do anexo após uma falha e exibe a revisão uma única vez', () => {
+    const file = new File(['%PDF-1.7'], 'ficticio.pdf', { type: 'application/pdf' });
+    const attachment = {
+      id: 'revisao-2', studentId: 1, previousVersionId: 'revisao-1', category: 'Fictício',
+      revision: 2, archived: false, originalName: 'ficticio.pdf', contentType: 'application/pdf',
+      size: file.size, uploadedBy: 'napne@test.local', uploadedAt: '2026-11-25T15:00:00Z'
+    };
+    apiService.uploadAttachment.and.returnValues(throwError(() => ({ status: 503 })), of(attachment));
+    component.attachmentCategory.setValue('Fictício');
+    component.previousAttachment.setValue('revisao-1');
+    component.selectedFile.set(file);
+
+    component.upload();
+    expect(component.selectedFile()).toBe(file);
+    const key = apiService.uploadAttachment.calls.first().args[4];
+    expect(key).toMatch(/^[0-9a-f]{32}$/);
+    component.attachments.set([attachment]);
+    component.upload();
+
+    expect(apiService.uploadAttachment.calls.mostRecent().args).toEqual([1, 'Fictício', file, 'revisao-1', key]);
+    expect(component.attachments()).toEqual([attachment]);
+    expect(component.selectedFile()).toBeNull();
   });
 
   function setSessionUser(user: SessionUser) {

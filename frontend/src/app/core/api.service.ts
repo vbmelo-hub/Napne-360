@@ -72,9 +72,14 @@ export class ApiService {
   studentSubjects(studentId: number) { return this.http.get<Subject[]>('/api/v1/catalog/student-subjects', { params: { studentId } }); }
   studentTeachers(studentId: number) { return this.http.get<{id:number,name:string,subjectId:number}[]>('/api/v1/catalog/student-teachers', { params: { studentId } }); }
   attachments(studentId: number) { return this.http.get<Attachment[]>(`/api/v1/students/${studentId}/attachments`); }
-  uploadAttachment(studentId: number, category: string, file: File, previousVersionId = '') {
-    const data = new FormData(); data.append('file', file);
-    return this.http.post<Attachment>(`/api/v1/students/${studentId}/attachments?category=${encodeURIComponent(category)}${previousVersionId?'&previousVersionId='+encodeURIComponent(previousVersionId):''}`, data);
+  uploadAttachment(studentId: number, category: string, file: File, previousVersionId = '', key?: string) {
+    const data = new FormData();
+    data.append('file', file);
+    let params = new HttpParams().set('category', category);
+    if (previousVersionId) params = params.set('previousVersionId', previousVersionId);
+    return this.http.post<Attachment>(`/api/v1/students/${studentId}/attachments`, data, {
+      params, headers: key ? { 'Idempotency-Key': key } : undefined
+    });
   }
   downloadAttachment(studentId: number, id: string) {
     return this.http.get(`/api/v1/students/${studentId}/attachments/${id}/content`, { responseType: 'blob' });

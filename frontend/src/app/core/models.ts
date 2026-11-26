@@ -198,6 +198,7 @@ export interface TimelineEvent {
 
 export interface Attachment {
   revision: number;
+  archived: boolean;
   previousVersionId: string|null;
   id: string;
   studentId: number;

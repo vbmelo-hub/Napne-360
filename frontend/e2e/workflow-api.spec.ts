@@ -66,13 +66,35 @@ test('caso completo: dossiê, acompanhamento, PEI e negação de acesso',async({
   expect(download.status()).toBe(200);
   expect((await download.body()).toString()).toContain('%PDF-1.4');
   expect((await request.get('/api/v1'+studentPath+`/attachments/${attachment.id}/content`,{headers:teacherHeaders})).status()).toBe(403);
-  const versionUpload=await request.post('/api/v1'+studentPath+`/attachments?category=ORIENTACAO_PEDAGOGICA&previousVersionId=${attachment.id}`,{headers,multipart:{
-    file:{name:'orientacao-teste-v2.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4\n% segunda versao ficticia\n%%EOF')}
-  }});
+  const versionUrl = '/api/v1' + studentPath + `/attachments?category=ORIENTACAO_PEDAGOGICA&previousVersionId=${attachment.id}`;
+  const versionOptions = {
+    headers: { ...headers, 'Idempotency-Key': 'workflow-repetir-versao' },
+    multipart: {
+      file: {
+        name: 'orientacao-teste-v2.pdf',
+        mimeType: 'application/pdf',
+        buffer: Buffer.from('%PDF-1.4\n% segunda versao ficticia\n%%EOF')
+      }
+    }
+  };
+  const versionUpload = await request.post(versionUrl, versionOptions);
   expect(versionUpload.status(),await versionUpload.text()).toBe(200);
-  expect((await versionUpload.json()).revision).toBe(2);
-  const documentTimeline=await (await request.get('/api/v1'+studentPath+'/timeline',{headers,params:{type:'ATTACHMENT'}})).json();
-  expect(documentTimeline.length).toBeGreaterThanOrEqual(2);
+  const version = await versionUpload.json();
+  expect(version.revision).toBe(2);
+  expect(version.previousVersionId).toBe(attachment.id);
+  expect(version).not.toHaveProperty('storedName');
+  expect(version).not.toHaveProperty('uploadPending');
+  expect(version).not.toHaveProperty('pendingProjections');
+  const replay = await request.post(versionUrl, versionOptions);
+  expect(replay.status(), await replay.text()).toBe(200);
+  expect((await replay.json()).id).toBe(version.id);
+  const list = await request.get('/api/v1' + studentPath + '/attachments', { headers });
+  expect(await list.json()).toEqual([version, attachment]);
+  await expect.poll(async () => {
+    const response = await request.get('/api/v1'+studentPath+'/timeline',{headers,params:{type:'ATTACHMENT'}});
+    const documents = await response.json();
+    return documents.length;
+  }).toBe(2);
   await request.post('/api/v1/auth/logout',{headers:teacherHeaders});
   expect((await request.get('/api/v1/auth/me',{headers:teacherHeaders})).status()).toBe(401);
 });
