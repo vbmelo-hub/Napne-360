@@ -79,17 +79,17 @@ test('caso completo: dossiê, acompanhamento, PEI e negação de acesso',async({
   };
   const versionUpload = await request.post(versionUrl, versionOptions);
   expect(versionUpload.status(),await versionUpload.text()).toBe(200);
-  const version = await versionUpload.json();
-  expect(version.revision).toBe(2);
-  expect(version.previousVersionId).toBe(attachment.id);
-  expect(version).not.toHaveProperty('storedName');
-  expect(version).not.toHaveProperty('uploadPending');
-  expect(version).not.toHaveProperty('pendingProjections');
+  const attachmentVersion = await versionUpload.json();
+  expect(attachmentVersion.revision).toBe(2);
+  expect(attachmentVersion.previousVersionId).toBe(attachment.id);
+  expect(attachmentVersion).not.toHaveProperty('storedName');
+  expect(attachmentVersion).not.toHaveProperty('uploadPending');
+  expect(attachmentVersion).not.toHaveProperty('pendingProjections');
   const replay = await request.post(versionUrl, versionOptions);
   expect(replay.status(), await replay.text()).toBe(200);
-  expect((await replay.json()).id).toBe(version.id);
+  expect((await replay.json()).id).toBe(attachmentVersion.id);
   const list = await request.get('/api/v1' + studentPath + '/attachments', { headers });
-  expect(await list.json()).toEqual([version, attachment]);
+  expect(await list.json()).toEqual([attachmentVersion, attachment]);
   await expect.poll(async () => {
     const response = await request.get('/api/v1'+studentPath+'/timeline',{headers,params:{type:'ATTACHMENT'}});
     const documents = await response.json();

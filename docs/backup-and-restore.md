@@ -21,7 +21,7 @@ Copie o conjunto para armazenamento institucional criptografado, com controle de
 
 ## Restaurar
 
-A restauração substitui dados atuais. Interrompa o acesso dos usuários, preserve um backup do estado corrente e use explicitamente:
+Use um projeto Compose isolado com volumes vazios para recuperar o conjunto completo. Em um destino reaproveitado, coleções MongoDB que só existem no destino permanecem após a importação. Interrompa o acesso dos usuários, preserve um backup do estado corrente e confirme a restauração com o comando abaixo.
 
 ```powershell
 .\scripts\restore.ps1 -BackupDirectory .\backups\20260911-120000 -ConfirmRestore

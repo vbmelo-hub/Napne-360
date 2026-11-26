@@ -50,12 +50,23 @@ test('API de casos restringe transferências e registra revisões concorrentes e
   const audit = (id: number) => apiJson<AuditPage>(request, '/audit', {
     headers, params: { resourceType: 'NAPNE_CASE', resourceId: id, size: 100 }
   });
-  const snapshot = async (endpoint: string, id: number) => ({
-    state: await fetchCase(endpoint),
-    history: await history(endpoint),
-    timeline: (await timeline()).map(event => event.id).sort(),
-    audit: (await audit(id)).content.map(event => event.id).sort((first, last) => first - last)
-  });
+  const waitForProjections = async (state: CaseView) => {
+    const count = state.version + 1;
+    await expect.poll(async () => {
+      const [events, auditLog] = await Promise.all([timeline(), audit(state.id)]);
+      return [events.filter(event => event.data['caseId'] === state.id).length, auditLog.totalElements];
+    }, { timeout: 15_000 }).toEqual([count, count]);
+  };
+  const snapshot = async (endpoint: string, id: number) => {
+    const state = await fetchCase(endpoint);
+    await waitForProjections(state);
+    return {
+      state,
+      history: await history(endpoint),
+      timeline: (await timeline()).map(event => event.id).sort(),
+      audit: (await audit(id)).content.map(event => event.id).sort((first, last) => first - last)
+    };
+  };
   const patch = (endpoint: string, data: object, auth = headers) =>
     request.patch('/api/v1' + endpoint, { headers: auth, data });
   const transfer = (responsibleId: number, version: number, auth = headers, note?: string) =>
@@ -74,6 +85,7 @@ test('API de casos restringe transferências e registra revisões concorrentes e
     for (const account of [inactive, pedagogical, distant]) {
       expect(candidates.map(candidate => candidate.id)).not.toContain(account.id);
     }
+    await waitForProjections(other);
     const initial = await snapshot(casePath, opened.id);
     expect(initial.history.content).toEqual([expect.objectContaining({
       caseId: opened.id, type: 'OPENED', version: opened.version, fromStage: null,
@@ -180,6 +192,7 @@ test('API de casos restringe transferências e registra revisões concorrentes e
     expect(persisted.version).toBe(current.version + 1);
     expect(await fetchCase()).toEqual(persisted);
     expect((await history()).totalElements).toBe(persisted.version + 1);
+    await waitForProjections(persisted);
     expect((await audit(opened.id)).totalElements).toBe(auditCount + 1);
     expect(await timeline()).toHaveLength(eventCount + 1);
     current = persisted;
@@ -223,6 +236,7 @@ test('API de casos restringe transferências e registra revisões concorrentes e
     expect((await history()).content[0]).toMatchObject({
       fromStage: 'CLOSED', toStage: 'SCREENING', reason: reopenReason, actorId: second.id
     });
+    await waitForProjections(reopened);
     expect(JSON.stringify(await timeline())).not.toContain(reopenReason);
     expect(JSON.stringify(await audit(current.id))).not.toContain(reopenReason);
 
@@ -231,6 +245,7 @@ test('API de casos restringe transferências e registra revisões concorrentes e
     const archived = await stage(otherClosed, 'ARCHIVED');
     expect(archived.closedAt).toBe(otherClosed.closedAt);
     expect(archived.allowedNextStages).toEqual([]);
+    await waitForProjections(archived);
     const beforeClosed = await snapshot(casePath, closed.id);
     const beforeArchived = await snapshot(otherPath, archived.id);
     expect((await patch(otherPath + '/stage', {

@@ -129,7 +129,9 @@ test('valida IDs, código legado, inatividade, omissão e remoção antes de per
   const term = await f.entry('ACADEMIC_TERM', 'Período fictício validado');
   const initial = await f.dossier();
   const history = async () => (await request.get(`${f.path}/dossier/history`, { headers: f.headers })).json();
-  const timeline = async () => (await request.get(`${f.path}/timeline`, { headers: f.headers })).json();
+  const timeline = async () => (await request.get(`${f.path}/timeline`, {
+    headers: f.headers, params: { type: 'DOSSIER' }
+  })).json();
   const initialTimeline = await timeline();
   for (const id of [2147483647, term.id, -1]) {
     const response = await request.put(`${f.path}/dossier`, { headers: f.headers, data: { ...initial, educationalNeeds: { categoryId: id } } });
@@ -185,6 +187,7 @@ test('valida IDs, código legado, inatividade, omissão e remoção antes de per
   expect(saved.educationalNeeds.categoryId).toBeFalsy();
   expect(saved.educationalNeeds.category).toBeFalsy();
   const beforeInvalid = await history();
+  await expect.poll(timeline, { timeout: 15_000 }).toHaveLength(beforeInvalid.length + 1);
   const beforeEvents = await timeline();
   const refused = await request.put(`${f.path}/dossier`, { headers: f.headers, data: { ...saved, educationalNeeds: { categoryId: category.id } } });
   expect(refused.status()).toBe(400);

@@ -72,6 +72,6 @@ public class AttachmentController {
     @ExceptionHandler(AttachmentService.UnavailableException.class)
     ProblemDetail unavailable() {
         return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
-                "O armazenamento está temporariamente indisponível. Repita a mesma operação em instantes.");
+                "A confirmação está temporariamente indisponível. Consulte os anexos antes de reenviar.");
     }
 }

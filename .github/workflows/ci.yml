@@ -40,11 +40,13 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Start integration databases
         run: docker compose up -d --wait mysql mongo
-      - name: Verify PEI recovery on standalone MongoDB
+      - name: Verify failure recovery on standalone MongoDB
         working-directory: backend
         env:
           NAPNE_TEST_PEI_MONGO_URI: mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=3000
-        run: ./mvnw -B -ntp -Dtest=PeiProjectionIntegrationTest test
+          NAPNE_TEST_MUTATION_MONGO_URI: mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=3000
+          NAPNE_TEST_ATTACHMENT_MONGO_URI: mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=3000
+        run: ./mvnw -B -ntp -Dtest=PeiProjectionIntegrationTest,MutationRecoveryIntegrationTest,AttachmentRecoveryIntegrationTest test
       - name: Test Nginx upload envelope
         run: |
           sudo apt-get update -qq

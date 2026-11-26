@@ -127,7 +127,9 @@ test('duas sessões preservam a primeira revisão do dossiê e recusam PUT incom
 
     const beforeIncomplete = current;
     const beforeHistory = await apiJson<DossierRevision[]>(request, revisionPath, { headers: firstHeaders });
-    const beforeTimeline = await apiJson<unknown[]>(request, timelinePath, { headers: firstHeaders });
+    const readTimeline = () => apiJson<unknown[]>(request, timelinePath, { headers: firstHeaders });
+    await expect.poll(readTimeline, { timeout: 15_000 }).toHaveLength(2);
+    const beforeTimeline = await readTimeline();
     expect(beforeTimeline).toHaveLength(2);
     expect(beforeTimeline).toEqual(expect.arrayContaining([
       expect.objectContaining({ eventType: 'DOSSIER_UPDATED' }),
@@ -141,7 +143,7 @@ test('duas sessões preservam a primeira revisão do dossiê e recusam PUT incom
     expect(rejected.status()).toBe(400);
     const afterIncomplete = await apiJson<DossierView>(request, dossierPath, { headers: firstHeaders });
     const afterHistory = await apiJson<DossierRevision[]>(request, revisionPath, { headers: firstHeaders });
-    const afterTimeline = await apiJson<unknown[]>(request, timelinePath, { headers: firstHeaders });
+    const afterTimeline = await readTimeline();
     expect(afterIncomplete).toMatchObject({
       version: beforeIncomplete.version,
       identification: beforeIncomplete.identification,

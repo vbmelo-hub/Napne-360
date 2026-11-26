@@ -85,7 +85,11 @@ for (const scenario of [
       headers: actorHeaders, data: { ...updated, version: 0, title: 'Não deve sobrescrever' }
     });
     expect(stale.status()).toBe(409);
-    const timeline = await (await request.get(`/api/v1/students/${student.id}/timeline`, { headers: actorHeaders })).json();
-    expect(timeline.some((event: { eventType: string }) => event.eventType === 'CARE_RECORD_UPDATED')).toBe(true);
+    await expect.poll(async () => {
+      const response = await request.get(`/api/v1/students/${student.id}/timeline`, { headers: actorHeaders });
+      expect(response.ok()).toBe(true);
+      const timeline: { eventType: string; data: { recordId?: string } }[] = await response.json();
+      return timeline.filter(event => event.eventType === 'CARE_RECORD_UPDATED' && event.data.recordId === updated?.id);
+    }, { timeout: 15_000 }).toHaveLength(1);
   });
 }
