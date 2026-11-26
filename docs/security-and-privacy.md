@@ -11,7 +11,9 @@
 | Gestão | Estudantes explicitamente vinculados | Supervisão pedagógica de leitura |
 | Administrador | Configuração técnica | Contas, estrutura e vínculos; sem acesso automático ao conteúdo estudantil |
 
-A autorização ocorre no servidor. O frontend oculta navegação sensível, mas não é o controle de segurança. Para usuários pedagógicos, o dossiê livre é redigido: informações destinadas ao ensino devem ser registradas em orientações pedagógicas. Somente NAPNE acessa anexos; não existe liberação automática de laudos por vínculo docente. Nome social é priorizado; dados civis/contato são omitidos de DTOs pedagógicos.
+A autorização ocorre no servidor. O frontend oculta navegação sensível, mas não é o controle de segurança. Para usuários pedagógicos, o dossiê livre é redigido: informações destinadas ao ensino devem ser registradas em orientações pedagógicas. Somente NAPNE acessa anexos; não existe liberação automática de laudos por vínculo docente.
+
+A identificação nas telas e em novos PEIs prioriza o nome social e usa o nome civil quando o cadastro não tem nome social. A projeção aos perfis pedagógicos omite o campo separado de nome civil, a data de nascimento e os dados de contato.
 
 O rascunho do PEI usa adaptações de orientação pedagógica ativa que o docente já pode consultar. A seleção considera o componente ou uma orientação geral do estudante. Planos históricos criados com o formato antigo podem conter um mapa de intervenções do dossiê. A consulta e a nova revisão omitem esse mapa e preservam o registro original no armazenamento legado.
 
