@@ -163,6 +163,21 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     return fixture.nativeElement.querySelector('select[formControlName="caseId"]');
   }
 
+  it('consulta novamente a linha do tempo quando a aba é aberta', () => {
+    apiService.timeline.calls.reset();
+    apiService.timeline.and.returnValue(of([{
+      id: 'pei-revisao-evento', eventType: 'PEI_REVISED', title: 'Nova versão do PEI',
+      actor: 'Docente fictício', visibility: 'PEDAGOGICAL', createdAt: '2026-11-25T21:00:00Z'
+    }]));
+    const tabs = Array.from(fixture.nativeElement.querySelectorAll('.student-tabs button')) as HTMLButtonElement[];
+    const timelineTab = tabs.find(button => button.textContent?.trim() === 'Linha do tempo');
+    expect(timelineTab).toBeDefined();
+    timelineTab?.click();
+    fixture.detectChanges();
+    expect(apiService.timeline).toHaveBeenCalledOnceWith(1, '');
+    expect(fixture.nativeElement.querySelector('.timeline')?.textContent).toContain('Nova versão do PEI');
+  });
+
   it('mantém o vínculo opcional mesmo com um caso ativo e envia somente a escolha explícita', () => {
     const active = careCase(50);
     const custom = careCase(51, { source: 'Solicitação do estudante', stage: 'CUSTOM_123', stageLabel: 'Visita inicial' });

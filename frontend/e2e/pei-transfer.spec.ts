@@ -145,20 +145,20 @@ test('NAPNE transfere rascunho devolvido e novo docente continua o PEI com hist√
     await expect(objective).toBeDisabled();
 
     const auditOptions = { params: { resourceType: 'PEI', resourceId: transferred.id } };
-    const audit = await apiJson<{ content: { action: string; actor: string; outcome: string }[] }>(request, '/audit', {
-      ...auditOptions, headers: napne.headers
-    });
-    expect(audit.content.filter(entry => entry.action === 'TRANSFER')).toMatchObject([
-      { actor: napne.email, outcome: 'SUCCESS' }
-    ]);
+    await expect.poll(async () => {
+      const audit = await apiJson<{ content: { action: string; actor: string; outcome: string }[] }>(request, '/audit', {
+        ...auditOptions, headers: napne.headers
+      });
+      return audit.content.filter(entry => entry.action === 'TRANSFER');
+    }).toMatchObject([{ actor: napne.email, outcome: 'SUCCESS' }]);
     expect((await request.get('/api/v1/audit', { ...auditOptions, headers: recipientSession.headers })).status()).toBe(403);
     type TimelineEvent = { eventType: string; visibility: string; data: { peiId?: string } };
     const timelinePath = `${fixture.path}/timeline`;
-    const events = await apiJson<TimelineEvent[]>(request, timelinePath, { headers: napne.headers });
-    expect(events.filter(event => event.eventType === 'PEI_TRANSFERRED')).toMatchObject([
+    const readTimeline = () => apiJson<TimelineEvent[]>(request, timelinePath, { headers: napne.headers });
+    await expect.poll(async () => (await readTimeline()).filter(event => event.eventType === 'PEI_TRANSFERRED')).toMatchObject([
       { visibility: 'RESTRICTED', data: { peiId: transferred.id } }
     ]);
-    expect(JSON.stringify(events)).not.toContain(reason);
+    expect(JSON.stringify(await readTimeline())).not.toContain(reason);
     const teacherEvents = await apiJson<TimelineEvent[]>(request, timelinePath, { headers: recipientSession.headers });
     expect(teacherEvents.some(event => event.eventType === 'PEI_SUBMITTED')).toBe(true);
     expect(teacherEvents.some(event => event.eventType === 'PEI_TRANSFERRED')).toBe(false);

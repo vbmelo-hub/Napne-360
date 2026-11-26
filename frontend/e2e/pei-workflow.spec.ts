@@ -221,19 +221,21 @@ test('CA19 serializa aberturas, edições e aprovações concorrentes sem duplic
   expect(revisions.map(revision => revision.revision).sort()).toEqual([1, 2]);
   expect(revisions.filter(revision => revision.status === 'APPROVED')).toEqual([approved]);
   expect(revisions.find(revision => revision.id === draft.id)?.content).toEqual(draft.content);
-  const timeline = await request.get(`${f.path}/timeline`, { headers: f.headers });
-  expect(timeline.status()).toBe(200);
-  const events = await timeline.json() as { eventType: string }[];
-  expect(events.filter(event => event.eventType === 'PEI_APPROVED')).toHaveLength(1);
+  await expect.poll(async () => {
+    const timeline = await request.get(`${f.path}/timeline`, { headers: f.headers });
+    expect(timeline.status()).toBe(200);
+    const events = await timeline.json() as { eventType: string }[];
+    return events.filter(event => event.eventType === 'PEI_APPROVED');
+  }).toHaveLength(1);
 
-  const audit = await request.get('/api/v1/audit', {
-    headers: f.headers, params: { resourceType: 'PEI', resourceId: approved.id }
-  });
-  expect(audit.status()).toBe(200);
-  const entries = (await audit.json()).content as { action: string; actor: string; outcome: string; occurredAt: string }[];
-  const approvals = entries.filter(entry => entry.action === 'APPROVE');
-  expect(approvals).toHaveLength(1);
-  expect(approvals[0]).toMatchObject({ actor: approved.reviewedBy, outcome: 'SUCCESS', occurredAt: expect.any(String) });
+  await expect.poll(async () => {
+    const audit = await request.get('/api/v1/audit', {
+      headers: f.headers, params: { resourceType: 'PEI', resourceId: approved.id }
+    });
+    expect(audit.status()).toBe(200);
+    const entries = (await audit.json()).content as { action: string; actor: string; outcome: string; occurredAt: string }[];
+    return entries.filter(entry => entry.action === 'APPROVE');
+  }).toMatchObject([{ actor: approved.reviewedBy, outcome: 'SUCCESS', occurredAt: expect.any(String) }]);
 
   const seriesKey = `${f.student.id}:${f.subject.id}:+${term.code}`;
   const persisted = JSON.parse(evaluateMongo(`

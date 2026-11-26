@@ -18,7 +18,7 @@ import { CaseCardComponent } from './case-card.component';
   @if(loadError()){<div class="error" role="alert"><strong>Não foi possível carregar o acompanhamento.</strong><p>{{loadError()}}</p><button class="secondary" (click)="loadAll()">Tentar novamente</button></div>}
   @if(student();as value){
     <header class="student-header"><span class="avatar" aria-hidden="true">{{initials(value.displayName)}}</span><div class="student-identity"><span class="eyebrow">Matrícula {{value.registration}}</span><h1>{{value.displayName}}</h1><div class="student-meta"><span>{{value.course}}</span><span>{{value.campus}}</span></div></div><div class="student-head-actions"><span [class]="'badge badge--'+tone(value.status)">{{label(value.status)}}</span>@if(auth.hasRole('NAPNE')){<button type="button" class="secondary compact" (click)="openStudentEdit()">Editar cadastro</button>}</div></header>
-    <nav class="tabs student-tabs" aria-label="Seções do acompanhamento">@for(item of visibleTabs();track item.id){<button type="button" [attr.aria-current]="tab()===item.id?'page':null" [class.selected]="tab()===item.id" (click)="tab.set(item.id)">{{item.label}}</button>}</nav>
+    <nav class="tabs student-tabs" aria-label="Seções do acompanhamento">@for(item of visibleTabs();track item.id){<button type="button" [attr.aria-current]="tab()===item.id?'page':null" [class.selected]="tab()===item.id" (click)="selectTab(item.id)">{{item.label}}</button>}</nav>
 
     @if(tab()==='dossier'){
       <section class="section-header"><div><span class="eyebrow">Informações consolidadas</span><h2>Dossiê do estudante</h2><p>Organize o contexto educacional e os apoios necessários em seções temáticas.</p></div>@if(auth.hasRole('NAPNE')){<button class="secondary" (click)="loadHistory()">Consultar histórico</button>}</section>
@@ -175,6 +175,10 @@ export class StudentDetailComponent implements OnInit{
     return [{id,code:'',label:`${snapshot||'Categoria registrada'} · referência histórica`},...active];
   });
   ngOnInit(){if(!this.auth.hasRole('NAPNE'))this.tab.set('records');this.loadAll();if(this.auth.hasRole('NAPNE'))this.loadCategories();if(this.canCreatePei())this.loadAcademicTerms()}
+  protected selectTab(id: string) {
+    this.tab.set(id);
+    if (id === 'timeline') this.refreshTimeline('carregar a linha do tempo');
+  }
   canCreatePei(){return this.auth.hasRole('TEACHER')}
   loadCategories(){
     if(!this.auth.hasRole('NAPNE')||this.dossier()?.redacted||this.categoriesLoading()||this.dossierSaving())return;

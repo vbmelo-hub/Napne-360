@@ -18,7 +18,7 @@ O PEI guarda as revisões em uma série por estudante, componente e código de p
 
 A mesma gravação do PEI inclui a pendência de linha do tempo e auditoria no documento da série. A API devolve a revisão confirmada e a aplicação processa a pendência em segundo plano. Se uma gravação falhar, o processamento tenta novamente e remove a pendência após confirmar os dois registros. Cada registro usa a mesma chave da operação para impedir duplicação em novas tentativas. A versão da série protege o conteúdo de alterações concorrentes.
 
-O intervalo da varredura é configurável em `NAPNE_PEI_PROJECTION_RETRY_DELAY_MS` e tem padrão de 30 segundos. As leituras de socket usam limites configuráveis em `NAPNE_SQL_SOCKET_TIMEOUT_MS` e `NAPNE_MONGO_SOCKET_TIMEOUT_MS`, ambos de 15 segundos por padrão.
+O intervalo da varredura é configurável em `NAPNE_PEI_PROJECTION_RETRY_DELAY_MS` e tem padrão de 30 segundos. As leituras de socket usam limites configuráveis em `NAPNE_SQL_SOCKET_TIMEOUT_MS` e `NAPNE_MONGO_SOCKET_TIMEOUT_MS`, ambos de 15 segundos por padrão. A recuperação cobre as operações que foram gravadas com a pendência na série.
 
 A reconciliação dos demais fluxos entre bancos e a recuperação de uploads órfãos permanecem pendentes.
 

@@ -335,12 +335,14 @@ describe('Casos no acompanhamento do estudante', () => {
     const refresh = http.expectOne(studentUrl + '/timeline?limit=100');
 
     click(fixture.nativeElement, 'Linha do tempo');
+    const openedTimeline = http.expectOne(studentUrl + '/timeline?limit=100');
     field<HTMLSelectElement>(fixture.nativeElement, '.section-header select', 'DOSSIER');
     const event = { id: '1', actor: 'Pessoa inicial', createdAt: '2026-11-17T12:00:00Z' };
     http.expectOne(studentUrl + '/timeline?limit=100&type=DOSSIER').flush([
       { ...event, eventType: 'DOSSIER_UPDATED', title: 'Edição do dossiê' }
     ]);
     refresh.flush([{ ...event, eventType: 'CASE_STAGE_CHANGED', title: 'Mudança de caso' }]);
+    openedTimeline.flush([{ ...event, eventType: 'CASE_STAGE_CHANGED', title: 'Mudança de caso' }]);
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('.timeline').textContent).toContain('Edição do dossiê');
     expect(fixture.nativeElement.querySelector('.timeline').textContent).not.toContain('Mudança de caso');
