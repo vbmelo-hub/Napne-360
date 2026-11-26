@@ -27,7 +27,9 @@ A restauração substitui dados atuais. Interrompa o acesso dos usuários, prese
 .\scripts\restore.ps1 -BackupDirectory .\backups\20260911-120000 -ConfirmRestore
 ```
 
-Antes de iniciar a restauração, o script confere se o manifesto lista os três artefatos uma vez cada e valida seus tamanhos e hashes. Em seguida, restaura MySQL e MongoDB, substitui o conteúdo do volume de anexos e reinicia o backend. A flag obrigatória evita restauração acidental. Em caso de falha durante a importação, mantenha o ambiente fechado e use um conjunto de backup íntegro para repetir o procedimento.
+O script exige `-ConfirmRestore`, confere os três artefatos do manifesto, valida seus tamanhos e hashes e extrai o ZIP em um diretório temporário antes de acessar o destino. Depois, para o backend se estiver ativo, restaura MySQL e MongoDB e substitui os anexos com o backend parado. Só inicia o backend após completar essas três etapas.
+
+Uma falha na validação deixa o destino intacto. Uma falha durante a importação pode deixar os dados parcialmente restaurados e o backend permanece parado. Se a aplicação falhar ao subir após a importação, o script tenta pará-la novamente. Mantenha o acesso fechado e repita a operação com um conjunto íntegro antes de reabrir o ambiente.
 
 ## Exercício de recuperação
 
