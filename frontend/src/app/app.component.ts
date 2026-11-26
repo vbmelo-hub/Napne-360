@@ -20,7 +20,6 @@ import { ToastOutletComponent } from './shared/toast-outlet.component';
             @if (auth.hasRole('ADMIN')) {<a routerLink="/administracao" routerLinkActive="active" (click)="closeMenu()"><span class="nav-icon" aria-hidden="true">▦</span><span>Administração</span></a>}
             <a routerLink="/conta" routerLinkActive="active" (click)="closeMenu()"><span class="nav-icon" aria-hidden="true">○</span><span>Minha conta</span></a>
           </nav>
-          <div class="sidebar-note"><strong>Ambiente protegido</strong><p>Consulte apenas dados necessários ao acompanhamento educacional.</p></div>
         </aside>
         @if (menuOpen()) {<button class="shell-backdrop" type="button" aria-label="Fechar menu" (click)="closeMenu()"></button>}
         <div class="shell-content">
