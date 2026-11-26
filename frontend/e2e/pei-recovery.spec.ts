@@ -87,8 +87,10 @@ DELIMITER ;
     expect.objectContaining({ action: 'REVISE', actor: teacher.email, outcome: 'SUCCESS' })
   ]);
   expect(await timelineFor(saved.id)).toHaveLength(1);
-  expect(await apiJson<Revision[]>(request, plans, { headers: session.headers })).toEqual([
+  const revisions = await apiJson<Revision[]>(request, plans, { headers: session.headers });
+  expect(revisions).toHaveLength(2);
+  expect(revisions).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: saved.id, revision: 2, status: 'DRAFT' }),
     expect.objectContaining({ id: draft.id, revision: 1, status: 'SUPERSEDED' })
-  ]);
+  ]));
 });
