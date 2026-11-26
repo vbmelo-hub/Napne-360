@@ -1,6 +1,6 @@
 # Backup e restauração
 
-O NAPNE 360 usa três fontes que devem pertencer ao mesmo ponto lógico de recuperação: MySQL, MongoDB e o volume de anexos. Faça o procedimento em janela de manutenção ou com a aplicação sem escrita para evitar um conjunto inconsistente.
+O NAPNE 360 usa três fontes que devem pertencer ao mesmo ponto lógico de recuperação: MySQL, MongoDB e o volume de anexos. Antes do backup, bloqueie novas escritas e aguarde o processamento das pendências de segundo plano, incluindo as de linha do tempo, auditoria e anexos. Mantenha a janela sem escritas até a cópia dos três artefatos terminar. Os scripts operam nessas fontes em sequência, sem snapshot ou rollback distribuído.
 
 ## Criar backup
 
@@ -27,7 +27,7 @@ A restauração substitui dados atuais. Interrompa o acesso dos usuários, prese
 .\scripts\restore.ps1 -BackupDirectory .\backups\20260911-120000 -ConfirmRestore
 ```
 
-O script valida os hashes, restaura MySQL e MongoDB, substitui o conteúdo do volume de anexos e reinicia o backend. A flag obrigatória evita restauração acidental.
+Antes de iniciar a restauração, o script confere se o manifesto lista os três artefatos uma vez cada e valida seus tamanhos e hashes. Em seguida, restaura MySQL e MongoDB, substitui o conteúdo do volume de anexos e reinicia o backend. A flag obrigatória evita restauração acidental. Em caso de falha durante a importação, mantenha o ambiente fechado e use um conjunto de backup íntegro para repetir o procedimento.
 
 ## Exercício de recuperação
 

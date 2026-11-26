@@ -1,9 +1,12 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$OutputRoot = (Join-Path $PSScriptRoot '..\backups')
 )
 
 $ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+}
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $backupDirectory = Join-Path $OutputRoot $timestamp
