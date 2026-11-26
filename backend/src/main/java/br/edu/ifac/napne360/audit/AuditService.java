@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+
 @Service
 @RequiredArgsConstructor
 public class AuditService {
@@ -28,6 +30,13 @@ public class AuditService {
                 .ipAddress(request == null ? null : request.getRemoteAddr())
                 .details(sanitize(details))
                 .build());
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 10)
+    public void recordPeiMutation(String key, Long actorId, String ipAddress, String action,
+                                  String revisionId, int revision, Instant occurredAt) {
+        repository.insertPeiMutationIfAbsent(key, actorId, action, revisionId, ipAddress, occurredAt,
+                "Revisão " + revision);
     }
 
     private String sanitize(String value) {

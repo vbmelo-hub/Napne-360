@@ -30,4 +30,6 @@ public class AuditEvent {
     private Instant occurredAt = Instant.now();
     @Column(length = 500)
     private String details;
+    @Column(length = 128, unique = true)
+    private String projectionKey;
 }

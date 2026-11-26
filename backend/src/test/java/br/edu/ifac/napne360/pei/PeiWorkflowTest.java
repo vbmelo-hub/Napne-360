@@ -22,22 +22,28 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.MediaType;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -61,6 +67,7 @@ class PeiWorkflowTest {
     PeiDocument approved;
     PeiDocument draft;
     MockMvc mvc;
+    PeiProjectionService projections;
 
     @BeforeEach void setUp() {
         setUpController(access);
@@ -78,8 +85,13 @@ class PeiWorkflowTest {
     }
 
     private void setUpController(AccessGuard guard) {
+        setUpController(guard, Runnable::run);
+    }
+
+    private void setUpController(AccessGuard guard, Executor executor) {
+        projections = new PeiProjectionService(mongo.store, timeline, audit, executor);
         var service = new PeiService(catalog, mongo.store, mock(CareRecordService.class),
-                subjects, current, timeline, audit, guard, mock(DocumentTemplateRepository.class), assignments);
+                subjects, current, projections, guard, mock(DocumentTemplateRepository.class), assignments);
         mvc = MockMvcBuilders.standaloneSetup(new PeiController(service, guard))
                 .setControllerAdvice(new ApiExceptionHandler()).build();
     }
@@ -91,8 +103,77 @@ class PeiWorkflowTest {
                 .andExpect(jsonPath("$.allowedActions", containsInAnyOrder("EDIT", "SUBMIT")));
         update("draft", "{\"content\":{},\"version\":0}").andExpect(status().isConflict());
         assertThat(approved.getStatus()).isEqualTo(PeiStatus.APPROVED);
-        verify(timeline, times(1)).append(any(), any(), any(), any(), any(), any());
-        verify(audit, times(1)).record(any(), any(), any(), any(), any(), any(), any());
+        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(audit, times(1)).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
+    }
+
+    @Test void editSucceedsAndAuditIsAttemptedWhenTimelineFailsAfterTheRevisionWrite() throws Exception {
+        doThrow(new DataAccessResourceFailureException("timeline indisponível")).doNothing()
+                .when(timeline).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+
+        update("draft", "{\"content\":{\"notes\":\"Novo\"},\"version\":0}")
+                .andExpect(status().isOk()).andExpect(jsonPath("$.revision").value(8));
+
+        var saved = mongo.store.load(1L, 2L, "2026-2");
+        assertThat(saved.find("draft").orElseThrow().getStatus()).isEqualTo(PeiStatus.SUPERSEDED);
+        assertThat(saved.revisions()).extracting(PeiDocument::getRevision).containsExactly(7, 3, 8);
+        assertThat(saved.pendingProjections()).singleElement()
+                .satisfies(event -> assertThat(event.action()).isEqualTo("REVISE"));
+        verify(audit).recordPeiMutation(any(), any(), any(), eq("REVISE"), any(), eq(8), any());
+
+        new PeiProjectionService(mongo.store, timeline, audit, Runnable::run).retryPending();
+        assertThat(mongo.store.load(1L, 2L, "2026-2").pendingProjections()).isEmpty();
+    }
+
+    @Test void submitSucceedsWhenAuditFailsAfterTheTimelineWrite() throws Exception {
+        doThrow(new DataAccessResourceFailureException("auditoria indisponível"))
+                .when(audit).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
+
+        action("draft", "submit", VERSION).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("IN_REVIEW"));
+
+        var saved = mongo.store.load(1L, 2L, "2026-2");
+        assertThat(saved.find("draft").orElseThrow().getStatus()).isEqualTo(PeiStatus.IN_REVIEW);
+        assertThat(saved.pendingProjections()).extracting(PeiProjection::key).containsExactly("pei:draft:1");
+        verify(timeline).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test void requestReturnsWhileProjectionIsBlocked() throws Exception {
+        var started = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        doAnswer(call -> {
+            started.countDown();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            return null;
+        }).when(timeline).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        try (var worker = Executors.newSingleThreadExecutor()) {
+            setUpController(access, worker);
+            try {
+                assertTimeoutPreemptively(Duration.ofSeconds(3), () ->
+                        action("draft", "submit", VERSION).andExpect(status().isOk())
+                                .andExpect(jsonPath("$.status").value("IN_REVIEW")));
+                assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+                assertThat(mongo.store.load(1L, 2L, "2026-2").pendingProjections())
+                        .extracting(PeiProjection::key).containsExactly("pei:draft:1");
+            } finally {
+                release.countDown();
+            }
+        }
+        assertThat(mongo.store.load(1L, 2L, "2026-2").pendingProjections()).isEmpty();
+    }
+
+    @Test void rejectedDispatchLeavesDurableWorkForTheRetry() throws Exception {
+        setUpController(access, task -> { throw new RejectedExecutionException("fila cheia"); });
+
+        action("draft", "submit", VERSION).andExpect(status().isOk());
+        verifyNoInteractions(timeline, audit);
+        assertThat(mongo.store.load(1L, 2L, "2026-2").pendingProjections())
+                .extracting(PeiProjection::key).containsExactly("pei:draft:1");
+
+        projections.retryPending();
+        assertThat(mongo.store.load(1L, 2L, "2026-2").pendingProjections()).isEmpty();
+        verify(timeline).appendOnce(eq("pei:draft:1"), any(), eq("PEI_SUBMITTED"), any(), any(), any(), any(), any());
+        verify(audit).recordPeiMutation(eq("pei:draft:1"), any(), any(), eq("SUBMIT"), eq("draft"), eq(7), any());
     }
 
     @ParameterizedTest @ValueSource(strings = {
@@ -117,8 +198,8 @@ class PeiWorkflowTest {
         mvc.perform(get(PATH + "/old")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUPERSEDED"));
         action("draft", "approve", VERSION).andExpect(status().isConflict());
-        verify(timeline, times(1)).append(any(), any(), any(), any(), any(), any());
-        verify(audit, times(1)).record(any(), any(), any(), any(), any(), any(), any());
+        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(audit, times(1)).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test void approvalOfOfficialRevisionKeepsTheOfficialContentAndReplacesTheVigentPlan() throws Exception {
@@ -264,9 +345,9 @@ class PeiWorkflowTest {
         assertThat(previous.getTeacherId()).isEqualTo(9L);
         assertThat(previous.getContent()).isEqualTo(draft.getContent());
         assertThat(saved.find(id).orElseThrow().getContent()).isEqualTo(draft.getContent());
-        verify(timeline).append(eq(1L), eq("PEI_TRANSFERRED"), anyString(), anyString(),
-                eq(TimelineVisibility.RESTRICTED), eq(Map.of("peiId", id, "subjectId", 2L, "revision", 8)));
-        verify(audit).record(any(), any(), eq("TRANSFER"), eq("PEI"), eq(id), eq("SUCCESS"), eq("Revisão 8"));
+        verify(timeline).appendOnce(eq("pei:" + id + ":0"), eq(1L), eq("PEI_TRANSFERRED"), anyString(), anyString(),
+                eq(TimelineVisibility.RESTRICTED), eq(Map.of("peiId", id, "subjectId", 2L, "revision", 8)), any());
+        verify(audit).recordPeiMutation(eq("pei:" + id + ":0"), any(), any(), eq("TRANSFER"), eq(id), eq(8), any());
 
         transfer(TRANSFER).andExpect(status().isConflict());
         actor(RoleName.TEACHER, 12L, CAMPUS);
@@ -407,7 +488,7 @@ class PeiWorkflowTest {
     @Test void simultaneousTransfersCreateOneDraftAndOneSuccessEvent() throws Exception {
         transferFixture();
         var imported = mongo.store.load(1L, 2L, "2026-2");
-        mongo.store.save(imported, imported.revisions());
+        mongo.seed(imported);
 
         race(() -> transfer(TRANSFER).andReturn().getResponse().getStatus());
 
@@ -416,8 +497,8 @@ class PeiWorkflowTest {
         assertThat(saved.revisions().stream().filter(plan -> plan.getStatus() == PeiStatus.DRAFT))
                 .singleElement().extracting(PeiDocument::getTeacherId).isEqualTo(12L);
         assertThat(saved.current().orElseThrow().getId()).isEqualTo("old");
-        verify(timeline, times(1)).append(any(), any(), any(), any(), any(), any());
-        verify(audit, times(1)).record(any(), any(), any(), any(), any(), any(), any());
+        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(audit, times(1)).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test void replacementCopiesContentAndKeepsVigentUntilApproval() throws Exception {
@@ -535,14 +616,14 @@ class PeiWorkflowTest {
             assertThat(plan.getStatus()).isEqualTo(PeiStatus.DRAFT);
             assertThat(plan.getRevision()).isEqualTo(1);
         });
-        verify(timeline, times(1)).append(any(), any(), any(), any(), any(), any());
-        verify(audit, times(1)).record(any(), any(), any(), any(), any(), any(), any());
+        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(audit, times(1)).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test void concurrentApprovalsKeepOneVigentAndOneSuccessEvent() throws Exception {
         draft.setStatus(PeiStatus.IN_REVIEW);
         var imported = mongo.store.load(1L, 2L, "2026-2");
-        mongo.store.save(imported, imported.revisions());
+        mongo.seed(imported);
         actor(RoleName.NAPNE);
 
         race(() -> action("draft", "approve", VERSION).andReturn().getResponse().getStatus());
@@ -551,14 +632,14 @@ class PeiWorkflowTest {
         assertThat(saved.revisions()).hasSize(2);
         assertThat(saved.find("old").orElseThrow().getStatus()).isEqualTo(PeiStatus.SUPERSEDED);
         assertThat(saved.current().orElseThrow().getId()).isEqualTo("draft");
-        verify(timeline, times(1)).append(any(), any(), any(), any(), any(), any());
-        verify(audit, times(1)).record(any(), any(), any(), any(), any(), any(), any());
+        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(audit, times(1)).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test void failedApprovalWriteDoesNotChangeCurrentPlanOrEmitEffects() throws Exception {
         draft.setStatus(PeiStatus.IN_REVIEW);
         var imported = mongo.store.load(1L, 2L, "2026-2");
-        mongo.store.save(imported, imported.revisions());
+        mongo.seed(imported);
         actor(RoleName.NAPNE);
         mongo.beforeWrite = () -> { throw new org.springframework.dao.DataAccessResourceFailureException("Falha simulada"); };
 

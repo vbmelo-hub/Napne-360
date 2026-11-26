@@ -41,7 +41,8 @@ class PeiServiceTest {
     @BeforeEach void setup() {
         mongo = new PeiMongoFixture(peis);
         service = new PeiService(mock(br.edu.ifac.napne360.identity.ReferenceCatalogService.class), mongo.store,
-                careRecords, subjects, currentUser, timeline, audit, access, templates, assignments);
+                careRecords, subjects, currentUser, new PeiProjectionService(mongo.store, timeline, audit, Runnable::run),
+                access, templates, assignments);
         pei = PeiDocument.builder().id("p1").studentId(1L).subjectId(2L).teacherId(9L).academicTerm("2026-2").build();
         when(peis.findById("p1")).thenReturn(Optional.of(pei));
         lenient().when(peis.findByStudentIdAndSubjectIdAndAcademicTermOrderByRevisionDesc(1L, 2L, "2026-2"))

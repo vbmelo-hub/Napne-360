@@ -37,6 +37,7 @@ class PeiSeriesMappingTest {
                                 .append("formVersion", "IFAC_76_2025").append("content", content)));
 
         var series = converter.read(PeiSeries.class, raw);
+        assertThat(series.pendingProjections()).isEmpty();
         var entity = context.getRequiredPersistentEntity(PeiSeries.class);
         var update = new UpdateMapper(converter).getMappedObject(
                 new Update().set("revisions", series.revisions()).set("version", 3L).getUpdateObject(), entity);
@@ -58,7 +59,7 @@ class PeiSeriesMappingTest {
         var plans = List.of(
                 PeiDocument.builder().id(legacyId).storageVersion(3L).build(),
                 PeiDocument.builder().id(newId).storageVersion(0L).allowedActions(List.of("EDIT")).build());
-        var series = new PeiSeries("1:2:+2026-2", 1L, 2L, "2026-2", 2L, plans);
+        var series = new PeiSeries("1:2:+2026-2", 1L, 2L, "2026-2", 2L, plans, List.of());
         var raw = new Document();
         converter.write(series, raw);
         var revisions = raw.getList("revisions", Document.class);

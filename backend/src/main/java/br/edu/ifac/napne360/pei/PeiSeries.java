@@ -1,6 +1,7 @@
 package br.edu.ifac.napne360.pei;
 
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -12,11 +13,16 @@ import java.util.Objects;
 import java.util.Optional;
 
 @Document("pei_series")
+@CompoundIndex(name = "pei_pending_projections", def = "{'pendingProjections.key': 1}", sparse = true)
 record PeiSeries(@Id String id, @Indexed Long studentId, Long subjectId, String academicTerm,
-                 Long version, List<PeiDocument> revisions) {
+                 Long version, List<PeiDocument> revisions, List<PeiProjection> pendingProjections) {
     private static final Comparator<PeiDocument> LEGACY_PRIORITY = Comparator
             .comparingInt(PeiDocument::getRevision)
             .thenComparing(PeiDocument::getId);
+
+    PeiSeries {
+        pendingProjections = pendingProjections == null ? List.of() : pendingProjections;
+    }
 
     static String key(Long studentId, Long subjectId, String term) {
         return studentId + ":" + subjectId + ":" + (term == null ? "-" : "+" + term);
@@ -33,7 +39,7 @@ record PeiSeries(@Id String id, @Indexed Long studentId, Long subjectId, String 
                     .storageVersion(Objects.requireNonNullElse(p.getStorageVersion(), 0L))
                     .content(legacyContent(p)).build();
         }).toList();
-        return new PeiSeries(key(studentId, subjectId, term), studentId, subjectId, term, null, revisions);
+        return new PeiSeries(key(studentId, subjectId, term), studentId, subjectId, term, null, revisions, List.of());
     }
 
     private static Map<String, Object> legacyContent(PeiDocument plan) {
@@ -62,9 +68,9 @@ record PeiSeries(@Id String id, @Indexed Long studentId, Long subjectId, String 
         return Math.incrementExact(revisions.stream().mapToInt(PeiDocument::getRevision).max().orElse(0));
     }
 
-    PeiSeries next(List<PeiDocument> newRevisions) {
+    PeiSeries next(List<PeiDocument> newRevisions, PeiProjection projection) {
         return new PeiSeries(id, studentId, subjectId, academicTerm,
-                version == null ? 0L : Math.incrementExact(version), List.copyOf(newRevisions));
+                version == null ? 0L : Math.incrementExact(version), List.copyOf(newRevisions), List.of(projection));
     }
 
     private static boolean isOpen(PeiDocument p) {

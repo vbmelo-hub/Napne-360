@@ -1,6 +1,5 @@
 package br.edu.ifac.napne360.pei;
 
-import br.edu.ifac.napne360.audit.AuditService;
 import br.edu.ifac.napne360.common.ConflictException;
 import br.edu.ifac.napne360.common.NotFoundException;
 import br.edu.ifac.napne360.document.CareRecordDocument;
@@ -18,7 +17,6 @@ import br.edu.ifac.napne360.student.AssignmentType;
 import br.edu.ifac.napne360.student.Student;
 import br.edu.ifac.napne360.student.StudentAssignment;
 import br.edu.ifac.napne360.student.StudentAssignmentRepository;
-import br.edu.ifac.napne360.timeline.TimelineService;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -57,8 +55,7 @@ public class PeiService {
     private final CareRecordService careRecords;
     private final SubjectRepository subjects;
     private final CurrentUserService currentUser;
-    private final TimelineService timeline;
-    private final AuditService audit;
+    private final PeiProjectionService projections;
     private final br.edu.ifac.napne360.security.AccessGuard access;
     private final br.edu.ifac.napne360.document.DocumentTemplateRepository templates;
     private final StudentAssignmentRepository assignments;
@@ -323,11 +320,15 @@ public class PeiService {
     private PeiDocument persist(PeiSeries series, List<PeiDocument> revisions, PeiDocument plan, UserAccount actor,
                                 Permissions permissions, String action, String event, String title,
                                 TimelineVisibility visibility, Authentication auth, HttpServletRequest http) {
-        store.save(series, revisions);
-        timeline.append(plan.getStudentId(), event, title, actor.getName(), visibility,
-                Map.of("peiId", plan.getId(), "subjectId", plan.getSubjectId(), "revision", plan.getRevision()));
-        audit.record(auth, http, action, "PEI", plan.getId(), "SUCCESS", "Revisão " + plan.getRevision());
-        return project(series.next(revisions), plan, actor, permissions);
+        var projection = new PeiProjection("pei:" + plan.getId() + ":" + plan.getStorageVersion(),
+                plan.getStudentId(), plan.getSubjectId(), plan.getId(), plan.getRevision(), plan.getUpdatedAt(),
+                auth == null ? null : actor.getId(), actor.getName(), http == null ? null : http.getRemoteAddr(),
+                action, event, title, visibility);
+        var after = series.next(revisions, projection);
+        var response = project(after, plan, actor, permissions);
+        store.save(series, after, projection);
+        projections.enqueue(series.id(), projection);
+        return response;
     }
 
     private static ArrayList<PeiDocument> replace(PeiSeries series, PeiDocument plan) {

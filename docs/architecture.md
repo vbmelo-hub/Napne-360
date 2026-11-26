@@ -16,7 +16,11 @@ Não há transação distribuída. Uma falha entre a gravação do agregado, lin
 
 O PEI guarda as revisões em uma série por estudante, componente e código de período. Uma gravação condicional no MongoDB efetiva a aprovação e a substituição da versão vigente juntas. O token de versão da revisão protege ações enviadas a partir de uma tela desatualizada. Séries legadas preservam IDs, conteúdo autorizado e metadados históricos. Quando já existem vários rascunhos ou versões em revisão, vale a de maior número para o trabalho em andamento. A mesma regra identifica o vigente entre aprovados legados. As demais versões seguem consultáveis como substituídas.
 
-Outbox ou reconciliação de eventos e auditoria entre bancos e o tratamento de uploads órfãos permanecem pendentes. Uma repetição após conflito preserva o estado do PEI. Ela não recompõe um evento que falhou após a gravação.
+A mesma gravação do PEI inclui a pendência de linha do tempo e auditoria no documento da série. A API devolve a revisão confirmada e a aplicação processa a pendência em segundo plano. Se uma gravação falhar, o processamento tenta novamente e remove a pendência após confirmar os dois registros. Cada registro usa a mesma chave da operação para impedir duplicação em novas tentativas. A versão da série protege o conteúdo de alterações concorrentes.
+
+O intervalo da varredura é configurável em `NAPNE_PEI_PROJECTION_RETRY_DELAY_MS` e tem padrão de 30 segundos. As leituras de socket usam limites configuráveis em `NAPNE_SQL_SOCKET_TIMEOUT_MS` e `NAPNE_MONGO_SOCKET_TIMEOUT_MS`, ambos de 15 segundos por padrão.
+
+A reconciliação dos demais fluxos entre bancos e a recuperação de uploads órfãos permanecem pendentes.
 
 ## Execução
 

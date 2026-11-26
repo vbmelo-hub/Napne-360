@@ -31,12 +31,21 @@ public class TimelineController {
         int safeLimit = Math.max(1, Math.min(limit, 200));
         return timeline.findByStudentIdOrderByCreatedAtDesc(studentId).stream()
                 .filter(event -> restricted || event.getVisibility() != TimelineVisibility.RESTRICTED)
-                .filter(event -> !event.getData().containsKey("subjectId") ||
-                        access.canViewSubject(studentId, ((Number) event.getData().get("subjectId")).longValue()))
+                .filter(event -> canViewEvent(studentId, event))
                 .filter(event -> type == null || type.isBlank() || event.getEventType().toUpperCase().startsWith(type.toUpperCase()))
                 .filter(event -> from == null || !event.getCreatedAt().isBefore(from))
                 .filter(event -> to == null || !event.getCreatedAt().isAfter(to))
                 .limit(safeLimit)
                 .toList();
+    }
+
+    private boolean canViewEvent(Long studentId, TimelineEventDocument event) {
+        var type = event.getEventType();
+        var subject = event.getData().get("subjectId");
+        if (type != null && type.startsWith("PEI_")) {
+            return access.canViewPei(studentId, subject instanceof Number id ? id.longValue() : null);
+        }
+        return !event.getData().containsKey("subjectId")
+                || access.canViewSubject(studentId, ((Number) subject).longValue());
     }
 }

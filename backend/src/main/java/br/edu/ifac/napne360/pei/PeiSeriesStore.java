@@ -2,6 +2,7 @@ package br.edu.ifac.napne360.pei;
 
 import br.edu.ifac.napne360.common.ConflictException;
 import lombok.RequiredArgsConstructor;
+import org.bson.Document;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.mongodb.core.MongoOperations;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -13,6 +14,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Repository
 @RequiredArgsConstructor
@@ -49,8 +51,7 @@ class PeiSeriesStore {
         return List.copyOf(series.values());
     }
 
-    void save(PeiSeries before, List<PeiDocument> revisions) {
-        PeiSeries after = before.next(revisions);
+    void save(PeiSeries before, PeiSeries after, PeiProjection projection) {
         if (before.version() == null) {
             try {
                 mongo.insert(after);
@@ -60,8 +61,21 @@ class PeiSeriesStore {
             }
         }
         var expected = Query.query(Criteria.where("id").is(before.id()).and("version").is(before.version()));
-        var update = new Update().set("revisions", after.revisions()).set("version", after.version());
+        var update = new Update().set("revisions", after.revisions()).set("version", after.version())
+                .push("pendingProjections", projection);
         if (mongo.updateFirst(expected, update, PeiSeries.class).getMatchedCount() != 1) throw conflict();
+    }
+
+    Stream<PeiSeries> pendingProjections() {
+        var query = Query.query(Criteria.where("pendingProjections.key").exists(true)).cursorBatchSize(50);
+        query.fields().include("pendingProjections");
+        return mongo.stream(query, PeiSeries.class);
+    }
+
+    void acknowledgeProjection(String seriesId, String projectionKey) {
+        var filter = Query.query(Criteria.where("id").is(seriesId));
+        var update = new Update().pull("pendingProjections", new Document("key", projectionKey));
+        mongo.updateFirst(filter, update, PeiSeries.class);
     }
 
     private static ConflictException conflict() {
