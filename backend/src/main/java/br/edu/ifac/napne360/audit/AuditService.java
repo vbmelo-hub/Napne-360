@@ -35,8 +35,14 @@ public class AuditService {
     @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 10)
     public void recordPeiMutation(String key, Long actorId, String ipAddress, String action,
                                   String revisionId, int revision, Instant occurredAt) {
-        repository.insertPeiMutationIfAbsent(key, actorId, action, revisionId, ipAddress, occurredAt,
-                "Revisão " + revision);
+        recordProjection(key, actorId, ipAddress, action, "PEI", revisionId, "Revisão " + revision, occurredAt);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 10)
+    public void recordProjection(String key, Long actorId, String ipAddress, String action, String resourceType,
+                                 String resourceId, String details, Instant occurredAt) {
+        repository.insertProjectionIfAbsent(key, actorId, action, resourceType, resourceId, ipAddress, occurredAt,
+                sanitize(details));
     }
 
     private String sanitize(String value) {
