@@ -19,6 +19,7 @@ import br.edu.ifac.napne360.student.StudentRepository;
 import br.edu.ifac.napne360.timeline.TimelineEventDocument;
 import br.edu.ifac.napne360.timeline.TimelineRepository;
 import br.edu.ifac.napne360.timeline.TimelineService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.h2.api.Trigger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -33,12 +34,18 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionSystemException;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Connection;
@@ -80,9 +87,11 @@ class MutationRecoveryIntegrationTest {
     private final AtomicInteger failedTimelines = new AtomicInteger();
 
     @Autowired MockMvc mvc;
+    @Autowired ObjectMapper json;
     @Autowired MongoTemplate mongo;
     @Autowired JdbcTemplate sql;
-    @Autowired TransactionTemplate transactions;
+    @Autowired PlatformTransactionManager transactionManager;
+    @MockitoSpyBean TransactionTemplate transactions;
     @Autowired CampusRepository campuses;
     @Autowired CourseRepository courses;
     @Autowired StudentRepository students;
@@ -208,6 +217,38 @@ class MutationRecoveryIntegrationTest {
         });
     }
 
+    @Test void linkedCareRecordReturnsConfirmedMongoWriteWhenSqlLockTransactionFailsOnCommit() throws Exception {
+        var linked = cases.saveAndFlush(NapneCase.builder().student(student).responsible(actor).source("Legado fictício").build());
+        doAnswer(call -> {
+            TransactionCallback<?> work = call.getArgument(0);
+            return new TransactionTemplate(transactionManager).execute(status -> {
+                var saved = work.doInTransaction(status);
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override public void beforeCommit(boolean readOnly) {
+                        throw new TransactionSystemException("Falha fictícia ao concluir a transação do bloqueio");
+                    }
+                });
+                return saved;
+            });
+        }).when(transactions).execute(any());
+
+        var response = request(post(studentPath() + "/records").content("""
+                {"caseId":%d,"type":"CASE_STUDY","title":"Atendimento confirmado"}
+                """.formatted(linked.getId())));
+        var confirmed = records.findByStudentIdOrderByCreatedAtDesc(student.getId());
+        assertThat(confirmed).singleElement().satisfies(record -> {
+            assertThat(record.getCaseId()).isEqualTo(linked.getId());
+            assertThat(record.getTitle()).isEqualTo("Atendimento confirmado");
+        });
+        assertThat(response.getStatus()).as("resposta da gravação confirmada no MongoDB").isEqualTo(200);
+        var id = confirmed.getFirst().getId();
+        assertThat(json.readTree(response.getContentAsString()).get("id").asText()).isEqualTo(id);
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            assertThat(events()).extracting(TimelineEventDocument::getEventType).containsExactly("CARE_RECORD_CREATED");
+            assertThat(auditFor("CARE_RECORD", id)).extracting(AuditEvent::getAction).containsExactly("CREATE");
+        });
+    }
+
     @Test void caseAndHistoryCommitDuringTimelineOutageAndTheEventIsRecoveredOnce() throws Exception {
         failTimeline.set(true);
         int response = perform(post(studentPath() + "/cases").content("{\"source\":\"Abertura fictícia\"}"));
@@ -255,11 +296,15 @@ class MutationRecoveryIntegrationTest {
                 }));
     }
 
-    private int perform(MockHttpServletRequestBuilder request) throws Exception {
-        return mvc.perform(request.with(user(actor.getEmail()).roles("NAPNE")).with(value -> {
+    private int perform(MockHttpServletRequestBuilder builder) throws Exception {
+        return request(builder).getStatus();
+    }
+
+    private MockHttpServletResponse request(MockHttpServletRequestBuilder builder) throws Exception {
+        return mvc.perform(builder.with(user(actor.getEmail()).roles("NAPNE")).with(value -> {
             value.setRemoteAddr("192.0.2.41");
             return value;
-        }).contentType(MediaType.APPLICATION_JSON)).andReturn().getResponse().getStatus();
+        }).contentType(MediaType.APPLICATION_JSON)).andReturn().getResponse();
     }
 
     private String studentPath() {

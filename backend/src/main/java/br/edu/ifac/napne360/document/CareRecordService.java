@@ -13,6 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.bson.types.ObjectId;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.access.AccessDeniedException;
@@ -24,9 +25,11 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CareRecordService {
     private static final Set<CareRecordType> PEDAGOGICAL_VISIBLE = Set.of(
             CareRecordType.PEDAGOGICAL_GUIDANCE, CareRecordType.ACTION_PLAN,
@@ -75,12 +78,23 @@ public class CareRecordService {
     }
 
     private CareRecordDocument saveWithCaseLock(CareRecordDocument draft) {
-        return transactions.execute(status -> {
-            var linkedCase = cases.findByIdAndStudentIdForLink(draft.getCaseId(), draft.getStudentId())
-                    .orElseThrow(() -> new IllegalArgumentException("Caso inválido para o estudante."));
-            if (!linkedCase.getStage().isActive()) throw new IllegalArgumentException("O caso não está ativo.");
-            return records.save(draft);
-        });
+        var saved = new AtomicReference<CareRecordDocument>();
+        try {
+            return transactions.execute(status -> {
+                var linkedCase = cases.findByIdAndStudentIdForLink(draft.getCaseId(), draft.getStudentId())
+                        .orElseThrow(() -> new IllegalArgumentException("Caso inválido para o estudante."));
+                if (!linkedCase.getStage().isActive()) throw new IllegalArgumentException("O caso não está ativo.");
+                var record = records.save(draft);
+                saved.set(record);
+                return record;
+            });
+        } catch (RuntimeException e) {
+            var record = saved.get();
+            if (record == null) throw e;
+            // SQL only holds the case lock. The Mongo acknowledgement already confirms the new record.
+            log.warn("Falha ao concluir o bloqueio do caso após a gravação do acompanhamento {}", record.getId(), e);
+            return record;
+        }
     }
 
     public CareRecordDocument update(Long studentId, String id, CareRecordRequest request, Authentication auth, HttpServletRequest http) {
