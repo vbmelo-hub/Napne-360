@@ -5,7 +5,6 @@ import br.edu.ifac.napne360.common.ApiExceptionHandler;
 import br.edu.ifac.napne360.identity.*;
 import br.edu.ifac.napne360.security.AccessGuard;
 import br.edu.ifac.napne360.security.CurrentUserService;
-import br.edu.ifac.napne360.timeline.TimelineService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,7 +29,7 @@ class DossierCatalogTest {
     final DossierRepository dossiers = mock(DossierRepository.class);
     final ReferenceEntryRepository entries = mock(ReferenceEntryRepository.class);
     final CurrentUserService currentUser = mock(CurrentUserService.class);
-    final TimelineService timeline = mock(TimelineService.class);
+    final DocumentMutationOutbox projections = mock(DocumentMutationOutbox.class);
     final AuditService audit = mock(AuditService.class);
     final ObjectMapper json = Jackson2ObjectMapperBuilder.json().build();
     DossierService service;
@@ -38,7 +37,7 @@ class DossierCatalogTest {
     MockMvc mvc;
 
     @BeforeEach void setup() {
-        service = new DossierService(dossiers, currentUser, timeline, audit, new ReferenceCatalogService(entries));
+        service = new DossierService(dossiers, currentUser, projections, audit, new ReferenceCatalogService(entries));
         document = DossierDocument.builder().id("d1").studentId(1L).version(3L)
                 .educationalNeeds(new LinkedHashMap<>(Map.of("categoryId", 7L, "category", "Nome histórico", "notes", "Antes", "extra", Map.of("ok", true)))).build();
         when(dossiers.findByStudentId(1L)).thenReturn(Optional.of(document));
@@ -76,7 +75,7 @@ class DossierCatalogTest {
         org.junit.jupiter.api.Assertions.assertAll(
                 () -> assertThat(result.getResponse().getStatus()).isEqualTo(400),
                 () -> assertThat(json.<JsonNode>valueToTree(document)).isEqualTo(before),
-                () -> verifyNoInteractions(dossiers, entries, timeline, audit));
+                () -> verifyNoInteractions(dossiers, entries, projections, audit));
     }
 
     @Test void putAcceptsEmptySectionsAndNullInitialVersion() throws Exception {
@@ -97,7 +96,7 @@ class DossierCatalogTest {
                 .andExpect(status().isConflict());
         assertThat(json.<JsonNode>valueToTree(document)).isEqualTo(before);
         verify(dossiers, never()).save(any());
-        verifyNoInteractions(entries, timeline, audit);
+        verifyNoInteractions(entries, projections, audit);
     }
 
     private ObjectNode completePutBody() {
@@ -191,6 +190,6 @@ class DossierCatalogTest {
         JsonNode before = json.valueToTree(document);
         assertThatThrownBy(() -> save(needs)).isInstanceOf(IllegalArgumentException.class);
         assertThat(json.<JsonNode>valueToTree(document)).isEqualTo(before);
-        verify(dossiers, never()).save(any()); verifyNoInteractions(timeline,audit);
+        verify(dossiers, never()).save(any()); verifyNoInteractions(projections, audit);
     }
 }

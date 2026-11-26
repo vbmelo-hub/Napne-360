@@ -5,16 +5,19 @@ import br.edu.ifac.napne360.identity.ReferenceCatalogService;
 import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.security.CurrentUserService;
-import br.edu.ifac.napne360.timeline.TimelineService;
+import br.edu.ifac.napne360.timeline.MutationProjection;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
+import org.bson.types.ObjectId;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -22,7 +25,7 @@ import java.util.Map;
 public class DossierService {
     private final DossierRepository dossiers;
     private final CurrentUserService currentUser;
-    private final TimelineService timeline;
+    private final DocumentMutationOutbox projections;
     private final AuditService audit;
     private final ReferenceCatalogService catalog;
 
@@ -58,10 +61,27 @@ public class DossierService {
         document.setInitialInterventions(copy(request.initialInterventions()));
         document.setUpdatedBy(user.getEmail());
         document.setUpdatedAt(Instant.now());
-        document = dossiers.save(document);
-        timeline.append(studentId, "DOSSIER_UPDATED", "Dossiê atualizado", user.getName(), TimelineVisibility.RESTRICTED,
-                Map.of("version", document.getVersion() == null ? 0 : document.getVersion()));
-        audit.record(auth, http, "UPDATE", "DOSSIER", studentId, "SUCCESS", "Versão atualizada");
+        if (document.getId() == null) document.setId(new ObjectId().toHexString());
+        Long before = document.getVersion();
+        long version = before == null ? 0L : before + 1;
+        var event = new MutationProjection("dossier:" + document.getId() + ":" + version, studentId,
+                "DOSSIER_UPDATED", "Dossiê atualizado", user.getName(), TimelineVisibility.RESTRICTED,
+                Map.of("version", version), auth == null ? null : user.getId(), http == null ? null : http.getRemoteAddr(),
+                "UPDATE", "DOSSIER", studentId.toString(), "Versão atualizada", document.getUpdatedAt());
+        if (before == null) {
+            document.setPendingProjections(List.of(event));
+            document = dossiers.save(document);
+        } else {
+            var changes = new Update().set("identification", document.getIdentification())
+                    .set("educationalNeeds", document.getEducationalNeeds()).set("healthAndSupport", document.getHealthAndSupport())
+                    .set("familyContext", document.getFamilyContext()).set("schoolHistory", document.getSchoolHistory())
+                    .set("strengths", document.getStrengths()).set("difficulties", document.getDifficulties())
+                    .set("initialInterventions", document.getInitialInterventions()).set("history", document.getHistory())
+                    .set("updatedBy", document.getUpdatedBy()).set("updatedAt", document.getUpdatedAt());
+            projections.update(document.getId(), before, changes, event, DossierDocument.class);
+            document.setVersion(version);
+        }
+        projections.enqueue(document.getId(), DossierDocument.class, event);
         return view(document, true);
     }
 

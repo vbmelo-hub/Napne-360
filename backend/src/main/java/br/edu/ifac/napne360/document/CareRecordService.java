@@ -1,19 +1,20 @@
 package br.edu.ifac.napne360.document;
 
-import br.edu.ifac.napne360.audit.AuditService;
 import br.edu.ifac.napne360.common.ConflictException;
 import br.edu.ifac.napne360.common.NotFoundException;
 import br.edu.ifac.napne360.identity.ReferenceIdDeserializer;
 import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.security.CurrentUserService;
-import br.edu.ifac.napne360.timeline.TimelineService;
+import br.edu.ifac.napne360.timeline.MutationProjection;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
+import org.bson.types.ObjectId;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -32,8 +33,7 @@ public class CareRecordService {
             CareRecordType.TEACHER_FEEDBACK, CareRecordType.TUTOR_OBSERVATION);
     private final CareRecordRepository records;
     private final CurrentUserService currentUser;
-    private final TimelineService timeline;
-    private final AuditService audit;
+    private final DocumentMutationOutbox projections;
     private final br.edu.ifac.napne360.security.AccessGuard access;
     private final br.edu.ifac.napne360.casework.NapneCaseRepository cases;
     private final DocumentTemplateRepository templates;
@@ -63,13 +63,14 @@ public class CareRecordService {
         templates.findByDocumentTypeAndActiveTrueOrderByUpdatedAtDesc(request.type().name()).stream().findFirst()
                 .ifPresent(model -> content.putAll(model.getDefaults()));
         if (request.content()!=null) content.putAll(request.content());
-        CareRecordDocument draft = CareRecordDocument.builder().studentId(studentId).caseId(request.caseId())
+        CareRecordDocument draft = CareRecordDocument.builder().id(new ObjectId().toHexString()).studentId(studentId).caseId(request.caseId())
                 .subjectId(request.subjectId()).type(request.type()).status(request.status() == null ? RecordStatus.DRAFT : request.status())
                 .title(request.title()).content(content)
                 .createdBy(user.getEmail()).updatedBy(user.getEmail()).build();
+        var event = mutation(draft, 0L, "CREATE", "CARE_RECORD_CREATED", "Registro de acompanhamento criado", user, auth, http);
+        draft.setPendingProjections(List.of(event));
         CareRecordDocument value = draft.getCaseId() == null ? records.save(draft) : saveWithCaseLock(draft);
-        appendEvent(studentId, "CARE_RECORD_CREATED", "Registro de acompanhamento criado", user, value);
-        audit.record(auth, http, "CREATE", "CARE_RECORD", value.getId(), "SUCCESS", value.getType().name());
+        projections.enqueue(value.getId(), CareRecordDocument.class, event);
         return value;
     }
 
@@ -105,20 +106,28 @@ public class CareRecordService {
         value.setContent(request.content() == null ? Map.of() : request.content());
         value.setUpdatedBy(user.getEmail());
         value.setUpdatedAt(Instant.now());
-        value = records.save(value);
-        appendEvent(studentId, "CARE_RECORD_UPDATED", "Registro de acompanhamento atualizado", user, value);
-        audit.record(auth, http, "UPDATE", "CARE_RECORD", value.getId(), "SUCCESS", value.getType().name());
+        long version = value.getVersion() + 1;
+        var event = mutation(value, version, "UPDATE", "CARE_RECORD_UPDATED", "Registro de acompanhamento atualizado", user, auth, http);
+        var changes = new Update().set("title", value.getTitle()).set("status", value.getStatus())
+                .set("content", value.getContent()).set("history", value.getHistory())
+                .set("updatedBy", value.getUpdatedBy()).set("updatedAt", value.getUpdatedAt());
+        projections.update(value.getId(), value.getVersion(), changes, event, CareRecordDocument.class);
+        value.setVersion(version);
+        projections.enqueue(value.getId(), CareRecordDocument.class, event);
         return projectCaseLink(value, user);
     }
 
-    private void appendEvent(Long studentId, String eventType, String title, UserAccount user, CareRecordDocument value) {
+    private MutationProjection mutation(CareRecordDocument value, long version, String action, String eventType,
+                                        String title, UserAccount user, Authentication auth, HttpServletRequest http) {
         TimelineVisibility visibility = PEDAGOGICAL_VISIBLE.contains(value.getType())
                 ? TimelineVisibility.PEDAGOGICAL : TimelineVisibility.RESTRICTED;
         Map<String, Object> eventData = new java.util.LinkedHashMap<>();
         eventData.put("recordId", value.getId());
         eventData.put("type", value.getType().name());
         if (value.getSubjectId() != null) eventData.put("subjectId", value.getSubjectId());
-        timeline.append(studentId, eventType, title, user.getName(), visibility, eventData);
+        return new MutationProjection("care-record:" + value.getId() + ":" + version, value.getStudentId(), eventType,
+                title, user.getName(), visibility, eventData, auth == null ? null : user.getId(), http == null ? null : http.getRemoteAddr(),
+                action, "CARE_RECORD", value.getId(), value.getType().name(), value.getUpdatedAt());
     }
 
     private void validateType(UserAccount user, CareRecordType type) {

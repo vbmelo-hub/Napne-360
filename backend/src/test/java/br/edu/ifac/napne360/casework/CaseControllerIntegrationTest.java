@@ -7,7 +7,7 @@ import br.edu.ifac.napne360.document.DocumentTemplateRepository;
 import br.edu.ifac.napne360.identity.*;
 import br.edu.ifac.napne360.student.Student;
 import br.edu.ifac.napne360.student.StudentRepository;
-import br.edu.ifac.napne360.timeline.TimelineService;
+import br.edu.ifac.napne360.timeline.MutationProjection;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,6 +24,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -53,7 +54,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/** Real MVC, method security and H2 transactions; only cross-store effects are mocked. */
+/** Real MVC, method security and case transactions. Projection recovery is covered separately. */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -70,7 +71,8 @@ class CaseControllerIntegrationTest {
     @Autowired CaseStageConfigurationRepository stageConfigurations;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired JdbcTemplate sql;
-    @MockitoBean TimelineService timeline;
+    @MockitoBean CaseMutationOutbox projections;
+    @MockitoBean(name = "mutationProjectionExecutor") ThreadPoolTaskExecutor projectionExecutor;
     @MockitoBean AuditService audit;
     @MockitoBean CareRecordRepository records;
     @MockitoBean DocumentTemplateRepository templates;
@@ -102,24 +104,26 @@ class CaseControllerIntegrationTest {
         when(records.save(any(CareRecordDocument.class))).thenAnswer(call -> {
             assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("Mongo save").isEqualTo(linked);
             CareRecordDocument saved = call.getArgument(0);
-            saved.setId("r1");
             assertThat(saved.getCaseId()).isEqualTo(linked ? legacy.getId() : null);
             return saved;
         });
         doAnswer(call -> {
-            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("timeline").isFalse();
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("projection dispatch").isFalse();
             return null;
-        }).when(timeline).append(eq(student.getId()), eq("CARE_RECORD_CREATED"), anyString(), anyString(), any(), anyMap());
-        doAnswer(call -> {
-            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("audit entry").isFalse();
-            return null;
-        }).when(audit).record(any(), any(), eq("CREATE"), eq("CARE_RECORD"), eq("r1"), eq("SUCCESS"), eq("CASE_STUDY"));
+        }).when(projectionExecutor).execute(any(Runnable.class));
 
         perform(careRecordPost(linked ? legacy.getId().toString() : "null"), actor).andExpect(status().isOk());
-        var effects = inOrder(records, timeline, audit);
-        effects.verify(records).save(any(CareRecordDocument.class));
-        effects.verify(timeline).append(eq(student.getId()), eq("CARE_RECORD_CREATED"), anyString(), anyString(), any(), anyMap());
-        effects.verify(audit).record(any(), any(), eq("CREATE"), eq("CARE_RECORD"), eq("r1"), eq("SUCCESS"), eq("CASE_STUDY"));
+        var effects = inOrder(records, projectionExecutor);
+        var saved = org.mockito.ArgumentCaptor.forClass(CareRecordDocument.class);
+        effects.verify(records).save(saved.capture());
+        effects.verify(projectionExecutor).execute(any(Runnable.class));
+        assertThat(saved.getValue().getPendingProjections()).singleElement().satisfies(event -> {
+            assertThat(event.eventType()).isEqualTo("CARE_RECORD_CREATED");
+            assertThat(event.studentId()).isEqualTo(student.getId());
+            assertThat(event.resourceId()).isEqualTo(saved.getValue().getId());
+            assertThat(event.action()).isEqualTo("CREATE");
+            assertThat(event.details()).isEqualTo("CASE_STUDY");
+        });
     }
 
     @Test void careRecordLinkWaitsForCaseClosureAndRejectsCommittedTerminalStage() throws Exception {
@@ -142,18 +146,17 @@ class CaseControllerIntegrationTest {
             assertThat(result.get(10, TimeUnit.SECONDS)).isEqualTo(400);
         }
         assertThat(cases.findById(legacy.getId()).orElseThrow().getStage()).isEqualTo(CaseStage.CLOSED);
-        verifyNoInteractions(records, timeline, audit);
+        verifyNoInteractions(records, projectionExecutor, audit);
     }
 
     @Test void careRecordCreateRejectsFractionalCaseIdBeforeSave() throws Exception {
         when(records.save(any(CareRecordDocument.class))).thenAnswer(call -> {
             CareRecordDocument saved = call.getArgument(0);
-            saved.setId("r1");
             return saved;
         });
 
         perform(careRecordPost(legacy.getId() + ".5"), actor).andExpect(status().isBadRequest());
-        verifyNoInteractions(records, timeline, audit);
+        verifyNoInteractions(records, projectionExecutor, audit);
     }
 
     private MockHttpServletRequestBuilder careRecordPost(String caseIdJson) {
@@ -168,25 +171,26 @@ class CaseControllerIntegrationTest {
         body.put("stage", "SCREENING").put("summary", "Não persistir");
         perform(patch(stagePath()).content(body.toString()), actor).andExpect(status().isConflict());
         assertThat(snapshot()).isEqualTo(before);
-        assertThat(historyCount()).isZero(); verifyNoInteractions(timeline, audit);
+        assertThat(historyCount()).isZero(); verifyNoInteractions(projections, audit);
     }
 
     @ParameterizedTest @ValueSource(strings = {"1.5", "\"0\"", "true", "[]", "{}", "9223372036854775808"})
     void versionIsNeverCoercedFromNonIntegerJson(String version) throws Exception {
         perform(patch(stagePath()).content("{\"stage\":\"SCREENING\",\"version\":" + version + "}"), actor).andExpect(status().isBadRequest());
         perform(patch(responsiblePath()).content(transferBody(candidate.getId(), version, null)), actor).andExpect(status().isBadRequest());
-        assertThat(snapshot().get("VERSION")).isEqualTo(0L); verifyNoInteractions(timeline, audit);
+        assertThat(snapshot().get("VERSION")).isEqualTo(0L); verifyNoInteractions(projections, audit);
     }
 
     @Test void zeroVersionReturnsFlushedVersionAndSecondClientConflicts() throws Exception {
         perform(patch(stagePath()).content(stageBody("SCREENING", "Resumo", 0)), actor).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1));
         assertThat(snapshot().get("VERSION")).isEqualTo(1L);
-        clearInvocations(timeline, audit);
+        clearInvocations(projections, audit);
         perform(patch(stagePath()).content(stageBody("WELCOMING", "Não persistir", 0)), actor).andExpect(status().isConflict());
-        assertThat(historyCount()).isEqualTo(1); verifyNoInteractions(timeline, audit);
+        assertThat(historyCount()).isEqualTo(1); verifyNoInteractions(projections, audit);
         perform(patch(stagePath()).content(stageBody("WELCOMING", "Resumo", 1)), actor).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(2));
-        verify(timeline).append(eq(student.getId()), eq("CASE_STAGE_CHANGED"), anyString(), eq(actor.getName()), eq(TimelineVisibility.RESTRICTED),
-                eq(Map.of("caseId", legacy.getId(), "from", "SCREENING", "to", "WELCOMING")));
+        verifyProjection("CASE_STAGE_CHANGED", actor.getId(), actor.getName(),
+                Map.of("caseId", legacy.getId(), "from", "SCREENING", "to", "WELCOMING"),
+                "UPDATE_STAGE", "SCREENING -> WELCOMING");
     }
 
     @Test void transferPreservesFieldsAndWritesSnapshotsWithoutLeakingReason() throws Exception {
@@ -212,9 +216,9 @@ class CaseControllerIntegrationTest {
         assertThat(frozen.get("fromResponsible").asText()).isEqualTo("Autor da abertura");
         assertThat(frozen.get("toResponsible").asText()).isEqualTo("Outro NAPNE");
         assertThat(frozen.get("actor").asText()).isEqualTo("Autor da abertura");
-        verify(timeline).append(eq(student.getId()), eq("CASE_RESPONSIBLE_CHANGED"), anyString(), eq("Autor da abertura"), eq(TimelineVisibility.RESTRICTED),
-                eq(Map.of("caseId", legacy.getId(), "fromResponsibleId", actor.getId(), "toResponsibleId", candidate.getId())));
-        verify(audit).record(any(), any(), eq("UPDATE_RESPONSIBLE"), eq("NAPNE_CASE"), eq(legacy.getId()), eq("SUCCESS"), isNull());
+        verifyProjection("CASE_RESPONSIBLE_CHANGED", actor.getId(), "Autor da abertura",
+                Map.of("caseId", legacy.getId(), "fromResponsibleId", actor.getId(), "toResponsibleId", candidate.getId()),
+                "UPDATE_RESPONSIBLE", null);
     }
 
     @ParameterizedTest @ValueSource(strings = {"missing", "null", "old"})
@@ -222,13 +226,13 @@ class CaseControllerIntegrationTest {
         String body = "{\"responsibleId\":" + candidate.getId() + (input.equals("missing") ? "" : ",\"version\":" + (input.equals("null") ? "null" : "1")) + "}";
         var before = snapshot();
         perform(patch(responsiblePath()).content(body), actor).andExpect(status().isConflict());
-        assertThat(snapshot()).isEqualTo(before); assertThat(historyCount()).isZero(); verifyNoInteractions(timeline, audit);
+        assertThat(snapshot()).isEqualTo(before); assertThat(historyCount()).isZero(); verifyNoInteractions(projections, audit);
     }
 
     @ParameterizedTest @ValueSource(strings = {"null", "0", "-1", "1.9", "\"1\"", "true", "[]", "{}", "9223372036854775808"})
     void invalidResponsibleIdsAre400NotCoerced(String id) throws Exception {
         perform(patch(responsiblePath()).content("{\"version\":0,\"responsibleId\":" + id + "}"), actor).andExpect(status().isBadRequest());
-        assertThat(historyCount()).isZero(); verifyNoInteractions(timeline, audit);
+        assertThat(historyCount()).isZero(); verifyNoInteractions(projections, audit);
     }
 
     @ParameterizedTest @ValueSource(strings = {"inactive", "otherCampus", "teacher", "noCampus", "missing"})
@@ -240,7 +244,7 @@ class CaseControllerIntegrationTest {
         users.saveAndFlush(candidate);
         var before = snapshot();
         perform(patch(responsiblePath()).content(transferBody(kind.equals("missing") ? Long.MAX_VALUE : candidate.getId(), "0", null)), actor).andExpect(status().isBadRequest());
-        assertThat(snapshot()).isEqualTo(before); assertThat(historyCount()).isZero(); verifyNoInteractions(timeline, audit);
+        assertThat(snapshot()).isEqualTo(before); assertThat(historyCount()).isZero(); verifyNoInteractions(projections, audit);
     }
 
     @ParameterizedTest @ValueSource(strings = {"CLOSED", "ARCHIVED"})
@@ -248,15 +252,15 @@ class CaseControllerIntegrationTest {
         legacy.setStage(new CaseStage(state)); legacy.setClosedAt(Instant.parse("2026-02-01T10:00:00Z")); cases.saveAndFlush(legacy);
         var before = snapshot();
         perform(patch(responsiblePath()).content(transferBody(candidate.getId(), before.get("VERSION").toString(), null)), actor).andExpect(status().isConflict());
-        assertThat(snapshot()).isEqualTo(before); history(legacy.getId(), 0, 20); verifyNoInteractions(timeline, audit);
+        assertThat(snapshot()).isEqualTo(before); history(legacy.getId(), 0, 20); verifyNoInteractions(projections, audit);
     }
 
     @Test void sameResponsibleAndIdenticalStageAreNoOpsIncludingClosureDate() throws Exception {
         perform(patch(responsiblePath()).content(transferBody(actor.getId(), "0", "Não cria revisão")), actor).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(0));
         perform(patch(stagePath()).content(stageBody("CLOSED", "Resumo", 0)), actor).andExpect(status().isOk());
-        var closed = snapshot(); clearInvocations(timeline, audit);
+        var closed = snapshot(); clearInvocations(projections, audit);
         perform(patch(stagePath()).content(stageBody("CLOSED", "Resumo", 1)), actor).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1));
-        assertThat(snapshot()).isEqualTo(closed); assertThat(historyCount()).isEqualTo(1); verifyNoInteractions(timeline, audit);
+        assertThat(snapshot()).isEqualTo(closed); assertThat(historyCount()).isEqualTo(1); verifyNoInteractions(projections, audit);
     }
 
     @ParameterizedTest @ValueSource(strings = {"RECEIVED", "SCREENING", "WELCOMING", "CASE_STUDY", "GUIDANCE_ISSUED",
@@ -283,7 +287,7 @@ class CaseControllerIntegrationTest {
                 .andExpect(status().isBadRequest());
         assertThat(snapshot()).isEqualTo(before);
         assertThat(historyCount()).isZero();
-        verifyNoInteractions(timeline, audit);
+        verifyNoInteractions(projections, audit);
         perform(patch(stagePath()).content(stageBody("FOLLOW_UP", "Resumo reservado", 0)), actor)
                 .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1));
         perform(patch(stagePath()).content(stageBody("RECEIVED", "Resumo reservado", 1)), actor)
@@ -294,7 +298,7 @@ class CaseControllerIntegrationTest {
 
     @Test void closesReopensAndArchivesWithClosureDateAndRestrictedHistory() throws Exception {
         closeCase();
-        clearInvocations(timeline, audit);
+        clearInvocations(projections, audit);
         String reason = "R".repeat(500);
         perform(patch(stagePath()).content(stageBody("SCREENING", "Resumo reservado", 1, "  \u00A0" + reason + "\uFEFF  ")), candidate)
                 .andExpect(status().isOk()).andExpect(jsonPath("$.stage").value("SCREENING"))
@@ -312,9 +316,9 @@ class CaseControllerIntegrationTest {
         assertThat(reopened.get("fromResponsibleId").asLong()).isEqualTo(actor.getId());
         assertThat(reopened.get("toResponsibleId").asLong()).isEqualTo(actor.getId());
         assertThat(reopened.get("reason").asText()).isEqualTo(reason);
-        verify(timeline).append(eq(student.getId()), eq("CASE_STAGE_CHANGED"), anyString(), eq(candidate.getName()),
-                eq(TimelineVisibility.RESTRICTED), eq(Map.of("caseId", legacy.getId(), "from", "CLOSED", "to", "SCREENING")));
-        verify(audit).record(any(), any(), eq("UPDATE_STAGE"), eq("NAPNE_CASE"), eq(legacy.getId()), eq("SUCCESS"), eq("CLOSED -> SCREENING"));
+        verifyProjection("CASE_STAGE_CHANGED", candidate.getId(), candidate.getName(),
+                Map.of("caseId", legacy.getId(), "from", "CLOSED", "to", "SCREENING"),
+                "UPDATE_STAGE", "CLOSED -> SCREENING");
 
         perform(patch(stagePath()).content(stageBody("CLOSED", "Resumo reservado", 2)), actor).andExpect(status().isOk());
         var closed = snapshot();
@@ -339,7 +343,7 @@ class CaseControllerIntegrationTest {
                 "TOO_LONG".equals(reason) ? "R".repeat(501) : reason)), actor).andExpect(status().isBadRequest());
         assertThat(snapshot()).isEqualTo(before);
         assertThat(historyCount()).isEqualTo(1);
-        verifyNoInteractions(timeline, audit);
+        verifyNoInteractions(projections, audit);
     }
 
     @Test void closedRejectsOtherActiveDestinationsSummaryOnlyAndUnauthorizedReopening() throws Exception {
@@ -359,14 +363,14 @@ class CaseControllerIntegrationTest {
                 .andExpect(status().isConflict());
         assertThat(snapshot()).isEqualTo(before);
         assertThat(historyCount()).isEqualTo(1);
-        verifyNoInteractions(timeline, audit);
+        verifyNoInteractions(projections, audit);
     }
 
     @Test void archivedAllowsConsultationAndExactNoOpButRejectsMutations() throws Exception {
         closeCase();
         perform(patch(stagePath()).content(stageBody("ARCHIVED", "Resumo reservado", 1)), actor).andExpect(status().isOk());
         var before = snapshot();
-        clearInvocations(timeline, audit);
+        clearInvocations(projections, audit);
         for (var option : CaseStageCatalogue.DEFAULTS.stages()) {
             perform(patch(stagePath()).content(stageBody(option.code().code(), "Resumo alterado", 2, "Motivo fictício")), actor)
                     .andExpect(status().isBadRequest());
@@ -377,20 +381,21 @@ class CaseControllerIntegrationTest {
                 .andExpect(jsonPath("$.stage").value("ARCHIVED"));
         assertThat(history(legacy.getId(), 0, 20).get("totalElements").asInt()).isEqualTo(2);
         assertThat(snapshot()).isEqualTo(before);
-        verifyNoInteractions(timeline, audit);
+        verifyNoInteractions(projections, audit);
     }
 
     private void closeCase() throws Exception {
         perform(patch(stagePath()).content(stageBody("CLOSED", "Resumo reservado", 0)), actor)
                 .andExpect(status().isOk()).andExpect(jsonPath("$.closedAt").isNotEmpty());
-        clearInvocations(timeline, audit);
+        clearInvocations(projections, audit);
     }
 
     @Test void changingOnlySummaryCreatesRevisionWithOnlyMetadataInGeneralEvent() throws Exception {
         perform(patch(stagePath()).content(stageBody("RECEIVED", "Novo resumo reservado", 0)), actor).andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1));
         assertThat(history(legacy.getId(), 0, 20).get("content").get(0).get("type").asText()).isEqualTo("STAGE_CHANGED");
-        verify(timeline).append(eq(student.getId()), eq("CASE_STAGE_CHANGED"), anyString(), eq(actor.getName()), eq(TimelineVisibility.RESTRICTED),
-                eq(Map.of("caseId", legacy.getId(), "from", "RECEIVED", "to", "RECEIVED")));
+        verifyProjection("CASE_STAGE_CHANGED", actor.getId(), actor.getName(),
+                Map.of("caseId", legacy.getId(), "from", "RECEIVED", "to", "RECEIVED"),
+                "UPDATE_STAGE", "RECEIVED -> RECEIVED");
     }
 
     @Test void openingKeepsCreatorAndInitialVersionWithoutBackfillingLegacy() throws Exception {
@@ -441,12 +446,12 @@ class CaseControllerIntegrationTest {
             perform(get("/api/v1/cases/" + legacy.getId() + suffix), forbidden).andExpect(status().isForbidden());
         perform(patch(responsiblePath()).content(transferBody(candidate.getId(), "0", null)), forbidden).andExpect(status().isForbidden());
         perform(patch(stagePath()).content(stageBody("SCREENING", null, 0)), forbidden).andExpect(status().isForbidden());
-        assertThat(historyCount()).isZero(); verifyNoInteractions(timeline, audit);
+        assertThat(historyCount()).isZero(); verifyNoInteractions(projections, audit);
     }
 
     @Test void reasonIsOptionalAndLimitedTo500Characters() throws Exception {
         perform(patch(responsiblePath()).content(transferBody(candidate.getId(), "0", "x".repeat(501))), actor).andExpect(status().isBadRequest());
-        assertThat(historyCount()).isZero(); verifyNoInteractions(timeline, audit);
+        assertThat(historyCount()).isZero(); verifyNoInteractions(projections, audit);
         perform(patch(responsiblePath()).content(transferBody(candidate.getId(), "0", "x".repeat(500))), actor).andExpect(status().isOk());
         perform(patch(responsiblePath()).content(transferBody(actor.getId(), "1", null)), actor).andExpect(status().isOk());
         assertThat(history(legacy.getId(), 0, 20).get("content").get(0).get("reason").isNull()).isTrue();
@@ -461,7 +466,7 @@ class CaseControllerIntegrationTest {
             perform(patch(responsiblePath()).content(transferBody(candidate.getId(), "0", null)), actor).andExpect(status().isConflict());
             assertThat(snapshot()).isEqualTo(before);
             assertThat(historyCount()).isZero();
-            verifyNoInteractions(timeline, audit);
+            verifyNoInteractions(projections, audit);
         } finally {
             sql.execute("alter table case_history drop constraint " + constraint);
         }
@@ -775,6 +780,23 @@ class CaseControllerIntegrationTest {
         return result(perform(get("/api/v1/cases/" + id + "/history?page=" + page + "&size=" + size), actor).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
     }
     private JsonNode result(String body) throws Exception { return json.readTree(body); }
+    private void verifyProjection(String eventType, Long authorId, String authorName, Map<String, Object> data,
+                                  String action, String details) {
+        var captured = org.mockito.ArgumentCaptor.forClass(MutationProjection.class);
+        verify(projections, atLeastOnce()).stage(captured.capture());
+        assertThat(captured.getAllValues()).filteredOn(event -> eventType.equals(event.eventType()) && data.equals(event.data()))
+                .singleElement().satisfies(event -> {
+                    assertThat(event.studentId()).isEqualTo(student.getId());
+                    assertThat(event.actorId()).isEqualTo(authorId);
+                    assertThat(event.actorName()).isEqualTo(authorName);
+                    assertThat(event.visibility()).isEqualTo(TimelineVisibility.RESTRICTED);
+                    assertThat(event.action()).isEqualTo(action);
+                    assertThat(event.resourceType()).isEqualTo("NAPNE_CASE");
+                    assertThat(event.resourceId()).isEqualTo(legacy.getId().toString());
+                    assertThat(event.details()).isEqualTo(details);
+                });
+    }
+
     private Map<String, Object> snapshot() { return sql.queryForMap("select stage, summary, opened_at, closed_at, responsible_user_id, version from napne_case where id=?", legacy.getId()); }
     private long historyCount() { return sql.queryForObject("select count(*) from case_history where case_id=?", Long.class, legacy.getId()); }
 }

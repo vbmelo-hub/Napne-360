@@ -1,6 +1,5 @@
 package br.edu.ifac.napne360.casework;
 
-import br.edu.ifac.napne360.audit.AuditService;
 import br.edu.ifac.napne360.common.NotFoundException;
 import br.edu.ifac.napne360.common.ConflictException;
 import br.edu.ifac.napne360.identity.ReferenceIdDeserializer;
@@ -10,7 +9,7 @@ import br.edu.ifac.napne360.identity.UserAccountRepository;
 import br.edu.ifac.napne360.security.AccessGuard;
 import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.student.Student;
-import br.edu.ifac.napne360.timeline.TimelineService;
+import br.edu.ifac.napne360.timeline.MutationProjection;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotBlank;
@@ -36,8 +35,7 @@ import java.util.Objects;
 public class CaseService {
     private final NapneCaseRepository cases;
     private final CurrentUserService currentUser;
-    private final TimelineService timeline;
-    private final AuditService audit;
+    private final CaseMutationOutbox projections;
     private final CaseHistoryRepository history;
     private final UserAccountRepository users;
     private final AccessGuard access;
@@ -59,9 +57,8 @@ public class CaseService {
         NapneCase value = cases.saveAndFlush(NapneCase.builder().student(student).source(request.source().trim())
                 .summary(request.summary()).responsible(user).build());
         recordHistory(value, CaseHistory.Type.OPENED, null, null, user, value.getOpenedAt(), null, catalogue);
-        timeline.append(student.getId(), "CASE_OPENED", "Caso NAPNE aberto", user.getName(), TimelineVisibility.RESTRICTED,
-                Map.of("caseId", value.getId(), "stage", value.getStage().code()));
-        audit.record(auth, http, "CREATE", "NAPNE_CASE", value.getId(), "SUCCESS", null);
+        stageProjection(value, user, auth, http, value.getOpenedAt(), "CASE_OPENED", "Caso NAPNE aberto",
+                Map.of("caseId", value.getId(), "stage", value.getStage().code()), "CREATE", null);
         return view(value, catalogue);
     }
 
@@ -94,9 +91,9 @@ public class CaseService {
         else if (next.isActive()) value.setClosedAt(null);
         value = cases.saveAndFlush(value);
         recordHistory(value, CaseHistory.Type.STAGE_CHANGED, previous, value.getResponsible(), user, occurredAt, reason, catalogue);
-        timeline.append(value.getStudent().getId(), "CASE_STAGE_CHANGED", "Etapa do caso atualizada", user.getName(),
-                TimelineVisibility.RESTRICTED, Map.of("caseId", value.getId(), "from", previous.code(), "to", next.code()));
-        audit.record(auth, http, "UPDATE_STAGE", "NAPNE_CASE", value.getId(), "SUCCESS", previous.code() + " -> " + next.code());
+        stageProjection(value, user, auth, http, occurredAt, "CASE_STAGE_CHANGED", "Etapa do caso atualizada",
+                Map.of("caseId", value.getId(), "from", previous.code(), "to", next.code()), "UPDATE_STAGE",
+                previous.code() + " -> " + next.code());
         return view(value, catalogue);
     }
 
@@ -135,11 +132,12 @@ public class CaseService {
         UserAccount actor = currentUser.require();
         value.setResponsible(next);
         value = cases.saveAndFlush(value);
+        Instant occurredAt = Instant.now();
         recordHistory(value, CaseHistory.Type.RESPONSIBLE_CHANGED, value.getStage(), previous, actor,
-                Instant.now(), request.reason(), catalogue);
-        timeline.append(value.getStudent().getId(), "CASE_RESPONSIBLE_CHANGED", "Responsável pelo caso atualizado", actor.getName(),
-                TimelineVisibility.RESTRICTED, Map.of("caseId", value.getId(), "fromResponsibleId", previous.getId(), "toResponsibleId", next.getId()));
-        audit.record(auth, http, "UPDATE_RESPONSIBLE", "NAPNE_CASE", value.getId(), "SUCCESS", null);
+                occurredAt, request.reason(), catalogue);
+        stageProjection(value, actor, auth, http, occurredAt, "CASE_RESPONSIBLE_CHANGED", "Responsável pelo caso atualizado",
+                Map.of("caseId", value.getId(), "fromResponsibleId", previous.getId(), "toResponsibleId", next.getId()),
+                "UPDATE_RESPONSIBLE", null);
         return view(value, catalogue);
     }
 
@@ -176,7 +174,6 @@ public class CaseService {
 
     private void recordHistory(NapneCase value, CaseHistory.Type type, CaseStage fromStage, UserAccount from,
                                UserAccount actor, Instant occurredAt, String reason, CaseStageCatalogue catalogue) {
-        // Flush history before cross-store effects: a SQL constraint failure rolls back the case and emits no success event.
         history.saveAndFlush(CaseHistory.builder().napneCase(value).version(value.getVersion()).type(type)
                 .fromStage(fromStage).toStage(value.getStage())
                 .fromStageLabel(catalogue.label(fromStage)).toStageLabel(catalogue.label(value.getStage()))
@@ -184,6 +181,13 @@ public class CaseService {
                 .fromResponsible(from == null ? null : from.getName()).toResponsibleId(value.getResponsible().getId())
                 .toResponsible(value.getResponsible().getName()).actorId(actor.getId()).actor(actor.getName())
                 .occurredAt(occurredAt).reason(reason).build());
+    }
+
+    private void stageProjection(NapneCase value, UserAccount actor, Authentication auth, HttpServletRequest http, Instant occurredAt,
+                                 String type, String title, Map<String, Object> data, String action, String details) {
+        projections.stage(new MutationProjection("case:" + value.getId() + ":" + value.getVersion(), value.getStudent().getId(),
+                type, title, actor.getName(), TimelineVisibility.RESTRICTED, data, auth == null ? null : actor.getId(),
+                http == null ? null : http.getRemoteAddr(), action, "NAPNE_CASE", value.getId().toString(), details, occurredAt));
     }
 
     private CaseView view(NapneCase value, CaseStageCatalogue catalogue) {

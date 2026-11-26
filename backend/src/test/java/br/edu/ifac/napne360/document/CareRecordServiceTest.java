@@ -1,6 +1,5 @@
 package br.edu.ifac.napne360.document;
 
-import br.edu.ifac.napne360.audit.AuditService;
 import br.edu.ifac.napne360.casework.NapneCase;
 import br.edu.ifac.napne360.casework.NapneCaseRepository;
 import br.edu.ifac.napne360.common.ApiExceptionHandler;
@@ -10,9 +9,7 @@ import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.security.AccessGuard;
 import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.student.Student;
-import br.edu.ifac.napne360.timeline.TimelineEventDocument;
-import br.edu.ifac.napne360.timeline.TimelineRepository;
-import br.edu.ifac.napne360.timeline.TimelineService;
+import br.edu.ifac.napne360.timeline.MutationProjection;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -57,11 +54,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class CareRecordServiceTest {
     @Mock CareRecordRepository records;
     @Mock CurrentUserService currentUser;
-    @Mock AuditService audit;
+    @Mock DocumentMutationOutbox projections;
     @Mock AccessGuard access;
     @Mock NapneCaseRepository cases;
     @Mock DocumentTemplateRepository templates;
-    @Mock TimelineRepository events;
     @Mock PlatformTransactionManager transactionManager;
     private final ObjectMapper json = Jackson2ObjectMapperBuilder.json().build();
     private CareRecordService service;
@@ -72,7 +68,7 @@ class CareRecordServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(transactionManager.getTransaction(any())).thenAnswer(call -> new SimpleTransactionStatus());
-        service = new CareRecordService(records, currentUser, new TimelineService(events), audit, access, cases,
+        service = new CareRecordService(records, currentUser, projections, access, cases,
                 templates, new TransactionTemplate(transactionManager));
         mvc = MockMvcBuilders.standaloneSetup(new CareRecordController(service, access))
                 .setControllerAdvice(new ApiExceptionHandler())
@@ -95,8 +91,6 @@ class CareRecordServiceTest {
     @ValueSource(strings = {"absent", "null", "0", "3", "5"})
     void missingOrMismatchedVersionReturns409BeforeAnyMutation(String version) throws Exception {
         allowUpdate();
-        // Only the unfixed implementation reaches save; preserve its normal successful response for RED.
-        lenient().when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         ObjectNode payload = payload();
         if (version.equals("absent")) payload.remove("version");
         else if (version.equals("null")) payload.putNull("version");
@@ -110,14 +104,13 @@ class CareRecordServiceTest {
                 () -> assertThat(response.getResponse().getStatus()).isEqualTo(409),
                 () -> assertThat(json.<JsonNode>valueToTree(record)).isEqualTo(before),
                 () -> verify(records, never()).save(any()),
-                () -> verifyNoInteractions(events, audit));
+                () -> verifyNoInteractions(projections));
     }
 
     @Test
     void persistedRecordWithoutStoredVersionStillRejectsMissingClientVersion() throws Exception {
         allowUpdate();
         record.setVersion(null);
-        lenient().when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         ObjectNode payload = payload();
         payload.remove("version");
         JsonNode before = json.valueToTree(record);
@@ -129,7 +122,7 @@ class CareRecordServiceTest {
                 () -> assertThat(response.getResponse().getStatus()).isEqualTo(409),
                 () -> assertThat(json.<JsonNode>valueToTree(record)).isEqualTo(before),
                 () -> verify(records, never()).save(any()),
-                () -> verifyNoInteractions(events, audit));
+                () -> verifyNoInteractions(projections));
     }
 
     @ParameterizedTest
@@ -139,7 +132,6 @@ class CareRecordServiceTest {
         record.setType(type);
         record.setCaseId(7L);
         allowUpdate();
-        when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         Instant beforeUpdate = Instant.now();
         ObjectNode payload = payload();
         payload.put("caseId", 7L);
@@ -159,15 +151,18 @@ class CareRecordServiceTest {
         assertThat(result.getCreatedAt()).isEqualTo(Instant.parse("2026-11-01T10:00:00Z"));
         assertThat(result.getUpdatedBy()).isEqualTo(user.getEmail());
         assertThat(result.getUpdatedAt()).isAfterOrEqualTo(beforeUpdate);
-        assertThat(result.getVersion()).isEqualTo(4L); // Mongo, not the service, increments @Version at save.
+        assertThat(result.getVersion()).isEqualTo(5L);
         assertThat(result.getHistory()).containsExactly(
                 new CareRecordDocument.Revision(3L, "Versão mais antiga", RecordStatus.DRAFT,
                         Map.of("notes", "Texto inicial"), "autor@example.test", Instant.parse("2026-11-01T10:00:00Z")),
                 new CareRecordDocument.Revision(4L, "Rascunho anterior", RecordStatus.DRAFT,
                         Map.of("notes", "Texto anterior", "extra", Map.of("flag", true)),
                         "revisor@example.test", Instant.parse("2026-11-02T11:00:00Z")));
-        verify(records).save(record);
-        verify(audit).record(null, null, "UPDATE", "CARE_RECORD", "r1", "SUCCESS", type.name());
+        var event = ArgumentCaptor.forClass(MutationProjection.class);
+        verify(projections).update(eq("r1"), eq(4L), any(), event.capture(), eq(CareRecordDocument.class));
+        assertThat(event.getValue().action()).isEqualTo("UPDATE");
+        assertThat(event.getValue().resourceId()).isEqualTo("r1");
+        assertThat(event.getValue().details()).isEqualTo(type.name());
     }
 
     // Losing the append or widening restricted records to PEDAGOGICAL must fail this contract.
@@ -177,24 +172,23 @@ class CareRecordServiceTest {
         user.setRoles(Set.of(RoleName.NAPNE));
         record.setType(type);
         allowUpdate();
-        when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         ObjectNode payload = payload();
         payload.put("type", type.name());
 
         service.update(1L, "r1", request(payload), null, null);
 
-        var event = ArgumentCaptor.forClass(TimelineEventDocument.class);
-        verify(events).save(event.capture());
-        assertThat(event.getValue().getStudentId()).isEqualTo(1L);
-        assertThat(event.getValue().getEventType()).isEqualTo("CARE_RECORD_UPDATED");
-        assertThat(event.getValue().getActor()).isEqualTo("Docente de teste");
-        assertThat(event.getValue().getTitle()).isEqualTo("Registro de acompanhamento atualizado");
+        var event = ArgumentCaptor.forClass(MutationProjection.class);
+        verify(projections).enqueue(anyString(), eq(CareRecordDocument.class), event.capture());
+        assertThat(event.getValue().studentId()).isEqualTo(1L);
+        assertThat(event.getValue().eventType()).isEqualTo("CARE_RECORD_UPDATED");
+        assertThat(event.getValue().actorName()).isEqualTo("Docente de teste");
+        assertThat(event.getValue().title()).isEqualTo("Registro de acompanhamento atualizado");
         TimelineVisibility expected = switch (type) {
             case PEDAGOGICAL_GUIDANCE, ACTION_PLAN, TEACHER_FEEDBACK, TUTOR_OBSERVATION -> TimelineVisibility.PEDAGOGICAL;
             default -> TimelineVisibility.RESTRICTED;
         };
-        assertThat(event.getValue().getVisibility()).isEqualTo(expected);
-        assertThat(event.getValue().getData()).containsExactlyInAnyOrderEntriesOf(
+        assertThat(event.getValue().visibility()).isEqualTo(expected);
+        assertThat(event.getValue().data()).containsExactlyInAnyOrderEntriesOf(
                 Map.of("recordId", "r1", "type", type.name(), "subjectId", 2L));
     }
 
@@ -206,17 +200,16 @@ class CareRecordServiceTest {
         record.setSubjectId(null);
         when(records.findById("r1")).thenReturn(Optional.of(record));
         when(access.canWritePedagogical(1L)).thenReturn(true);
-        when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         ObjectNode payload = payload();
         payload.put("type", "CASE_STUDY");
         payload.putNull("subjectId");
 
         service.update(1L, "r1", request(payload), null, null);
 
-        var event = ArgumentCaptor.forClass(TimelineEventDocument.class);
-        verify(events).save(event.capture());
-        assertThat(event.getValue().getData()).containsExactlyInAnyOrderEntriesOf(Map.of("recordId", "r1", "type", "CASE_STUDY"));
-        assertThat(event.getValue().getVisibility()).isEqualTo(TimelineVisibility.RESTRICTED);
+        var event = ArgumentCaptor.forClass(MutationProjection.class);
+        verify(projections).enqueue(anyString(), eq(CareRecordDocument.class), event.capture());
+        assertThat(event.getValue().data()).containsExactlyInAnyOrderEntriesOf(Map.of("recordId", "r1", "type", "CASE_STUDY"));
+        assertThat(event.getValue().visibility()).isEqualTo(TimelineVisibility.RESTRICTED);
         assertThat(record.getCreatedBy()).isEqualTo("outro@example.test");
     }
 
@@ -234,7 +227,7 @@ class CareRecordServiceTest {
                 .andExpect(status().isForbidden());
         assertThat(json.<JsonNode>valueToTree(record)).isEqualTo(before);
         verify(records, never()).save(any());
-        verifyNoInteractions(events, audit);
+        verifyNoInteractions(projections);
     }
 
     @Test
@@ -267,14 +260,13 @@ class CareRecordServiceTest {
         lenient().when(records.findById("r1")).thenReturn(Optional.of(record));
         lenient().when(access.canWritePedagogical(1L)).thenReturn(true);
         lenient().when(access.canViewSubject(1L, 2L)).thenReturn(true);
-        lenient().when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         var before = json.<JsonNode>valueToTree(record);
 
         mvc.perform(put("/api/v1/students/1/records/r1").contentType(MediaType.APPLICATION_JSON)
                         .content(payload().put("caseId", 7.5).toString()))
                 .andExpect(status().isBadRequest());
         assertThat(json.<JsonNode>valueToTree(record)).isEqualTo(before);
-        verifyNoInteractions(currentUser, records, cases, events, audit);
+        verifyNoInteractions(currentUser, records, cases, projections);
     }
 
     @Test
@@ -287,13 +279,14 @@ class CareRecordServiceTest {
     @Test
     void mongoConcurrentSaveFailureReturns409WithoutSuccessEventOrAudit() throws Exception {
         allowUpdate();
-        when(records.save(any())).thenThrow(new OptimisticLockingFailureException("Concurrent update"));
+        doThrow(new OptimisticLockingFailureException("Concurrent update")).when(projections)
+                .update(eq("r1"), eq(4L), any(), any(), eq(CareRecordDocument.class));
 
         mvc.perform(put("/api/v1/students/1/records/r1").contentType(MediaType.APPLICATION_JSON)
                         .content(json.writeValueAsBytes(payload())))
                 .andExpect(status().isConflict());
 
-        verifyNoInteractions(events, audit);
+        verify(projections, never()).enqueue(any(), any(), any());
     }
 
     @Test
@@ -302,11 +295,7 @@ class CareRecordServiceTest {
         when(access.canViewSubject(1L, 2L)).thenReturn(true);
         when(templates.findByDocumentTypeAndActiveTrueOrderByUpdatedAtDesc("TEACHER_FEEDBACK"))
                 .thenReturn(List.of(DocumentTemplate.builder().defaults(Map.of("fromTemplate", true, "notes", "Padrão")).build()));
-        when(records.save(any())).thenAnswer(invocation -> {
-            CareRecordDocument created = invocation.getArgument(0);
-            created.setId("new-record");
-            return created;
-        });
+        when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         ObjectNode payload = payload();
         payload.remove("version");
         payload.remove("status");
@@ -318,13 +307,14 @@ class CareRecordServiceTest {
                 .andExpect(jsonPath("$.content.fromTemplate").value(true))
                 .andExpect(jsonPath("$.content.notes").value("Texto revisado"))
                 .andExpect(jsonPath("$.history").isEmpty())
-                .andExpect(jsonPath("$.createdBy").value("autor@example.test"));
-        var event = ArgumentCaptor.forClass(TimelineEventDocument.class);
-        verify(events).save(event.capture());
-        assertThat(event.getValue().getEventType()).isEqualTo("CARE_RECORD_CREATED");
-        assertThat(event.getValue().getVisibility()).isEqualTo(TimelineVisibility.PEDAGOGICAL);
-        assertThat(event.getValue().getData()).containsExactlyInAnyOrderEntriesOf(
-                Map.of("recordId", "new-record", "type", "TEACHER_FEEDBACK", "subjectId", 2L));
+                .andExpect(jsonPath("$.createdBy").value("autor@example.test"))
+                .andExpect(jsonPath("$.pendingProjections").doesNotExist());
+        var event = ArgumentCaptor.forClass(MutationProjection.class);
+        verify(projections).enqueue(anyString(), eq(CareRecordDocument.class), event.capture());
+        assertThat(event.getValue().eventType()).isEqualTo("CARE_RECORD_CREATED");
+        assertThat(event.getValue().visibility()).isEqualTo(TimelineVisibility.PEDAGOGICAL);
+        assertThat(event.getValue().data()).containsExactlyInAnyOrderEntriesOf(
+                Map.of("recordId", event.getValue().resourceId(), "type", "TEACHER_FEEDBACK", "subjectId", 2L));
     }
 
     @Test
@@ -335,11 +325,7 @@ class CareRecordServiceTest {
                 .stage(new br.edu.ifac.napne360.casework.CaseStage("CUSTOM_0123456789abcdef0123456789abcdef")).build();
         when(access.canWritePedagogical(1L)).thenReturn(true);
         when(cases.findByIdAndStudentIdForLink(7L, 1L)).thenReturn(Optional.of(activeCase));
-        when(records.save(any())).thenAnswer(invocation -> {
-            CareRecordDocument created = invocation.getArgument(0);
-            created.setId("linked-record");
-            return created;
-        });
+        when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         var request = new CareRecordService.CareRecordRequest(7L, null, CareRecordType.CASE_STUDY,
                 RecordStatus.ACTIVE, "Encaminhamento", Map.of("notes", "nota"), null);
 
@@ -348,9 +334,9 @@ class CareRecordServiceTest {
         assertThat(created.getCaseId()).isEqualTo(7L);
         verify(cases).findByIdAndStudentIdForLink(7L, 1L);
         verify(cases, never()).findById(7L);
-        var event = ArgumentCaptor.forClass(TimelineEventDocument.class);
-        verify(events).save(event.capture());
-        assertThat(event.getValue().getData()).doesNotContainKey("caseId");
+        var event = ArgumentCaptor.forClass(MutationProjection.class);
+        verify(projections).enqueue(anyString(), eq(CareRecordDocument.class), event.capture());
+        assertThat(event.getValue().data()).doesNotContainKey("caseId");
     }
 
     @ParameterizedTest
@@ -370,13 +356,12 @@ class CareRecordServiceTest {
         }
         var request = new CareRecordService.CareRecordRequest(7L, null, CareRecordType.CASE_STUDY,
                 RecordStatus.ACTIVE, "Encaminhamento", Map.of(), null);
-        lenient().when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         assertThatThrownBy(() -> service.create(1L, request, null, null)).isInstanceOf(IllegalArgumentException.class);
 
         verify(records, never()).save(any());
         verify(cases).findByIdAndStudentIdForLink(7L, 1L);
-        verifyNoInteractions(events, audit);
+        verifyNoInteractions(projections);
     }
 
     @Test
@@ -390,7 +375,7 @@ class CareRecordServiceTest {
 
         verify(records, never()).save(any());
         verify(cases, never()).findByIdAndStudentIdForLink(any(), any());
-        verifyNoInteractions(events, audit);
+        verifyNoInteractions(projections);
     }
 
     @Test
@@ -424,7 +409,6 @@ class CareRecordServiceTest {
     void nonNapneUpdateAcceptsRedactedNullAndReturnsRedactedCopy() throws Exception {
         record.setCaseId(7L);
         allowUpdate();
-        when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         ObjectNode payload = payload();
         payload.putNull("caseId");
 
@@ -433,7 +417,7 @@ class CareRecordServiceTest {
         assertThat(record.getCaseId()).isEqualTo(7L);
         assertThat(result.getCaseId()).isNull();
         assertThat(result).isNotSameAs(record);
-        assertThat(result.getVersion()).isEqualTo(4L);
+        assertThat(result.getVersion()).isEqualTo(5L);
         assertThat(result.getHistory()).hasSize(2);
     }
 
@@ -459,6 +443,6 @@ class CareRecordServiceTest {
         assertThatThrownBy(() -> service.update(studentId, "r1", request, null, null)).isInstanceOf(exception);
         assertThat(json.<JsonNode>valueToTree(record)).isEqualTo(before);
         verify(records, never()).save(any());
-        verifyNoInteractions(events, audit);
+        verifyNoInteractions(projections);
     }
 }
