@@ -142,11 +142,13 @@ public class CaseService {
     }
 
     @Transactional(readOnly = true)
-    public HistoryPage history(Long caseId, int page, int size) {
+    public HistoryPage history(Long caseId, int page, int size, CaseHistory.Type type) {
         requireCase(caseId);
         if (page < 0 || size < 1 || size > 100 || (long) page * size > Integer.MAX_VALUE)
             throw new IllegalArgumentException("Paginação inválida.");
-        var values = history.findByNapneCaseId(caseId, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "version", "id")));
+        var pagination = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "version", "id"));
+        var values = type == null ? history.findByNapneCaseId(caseId, pagination)
+                : history.findByNapneCaseIdAndType(caseId, type, pagination);
         return new HistoryPage(values.getContent().stream().map(entry -> new CaseHistoryView(entry.getId(), caseId, entry.getVersion(), entry.getType(),
                 entry.getFromStage(), entry.getToStage(), entry.getFromResponsibleId(), entry.getFromResponsible(),
                 entry.getToResponsibleId(), entry.getToResponsible(), entry.getActorId(), entry.getActor(), entry.getOccurredAt(), entry.getReason(),

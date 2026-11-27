@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -55,6 +57,33 @@ class TimelineControllerTest {
         when(users.require()).thenReturn(UserAccount.builder().id(11L).campus(campus).roles(Set.of(RoleName.NAPNE)).build());
         assertThat(controller.list(1L, null, null, null, 100)).extracting(TimelineEventDocument::getId)
                 .containsExactly("generic", "legacy", "own", "restricted");
+    }
+
+    @Test void pagedTimelineCountsOnlyVisibleMatchingEventsAndReachesBeyondTheLegacyLimit() {
+        var campus = Campus.builder().id(4L).build();
+        var users = mock(CurrentUserService.class);
+        var students = mock(StudentRepository.class);
+        var assignments = mock(StudentAssignmentRepository.class);
+        var timeline = mock(TimelineRepository.class);
+        var controller = new TimelineController(timeline, new AccessGuard(users, students, assignments), users);
+        when(students.findById(1L)).thenReturn(Optional.of(Student.builder().id(1L).campus(campus).build()));
+        when(assignments.existsByStudentIdAndUserIdAndActiveTrue(1L, 9L)).thenReturn(true);
+        when(assignments.existsByStudentIdAndUserIdAndSubjectIdAndAssignmentTypeAndActiveTrue(
+                1L, 9L, 2L, AssignmentType.TEACHER)).thenReturn(true);
+        when(users.require()).thenReturn(UserAccount.builder().id(9L).campus(campus).roles(Set.of(RoleName.TEACHER)).build());
+        when(timeline.streamByStudentIdOrderByCreatedAtDescIdDesc(1L)).thenAnswer(invocation -> Stream.concat(Stream.of(
+                event("wrong-type", "CARE_RECORD_CREATED", TimelineVisibility.PEDAGOGICAL, Map.of()),
+                event("wrong-subject", "PEI_SUBMITTED", TimelineVisibility.PEDAGOGICAL, Map.of("subjectId", 3L)),
+                event("restricted", "PEI_TRANSFERRED", TimelineVisibility.RESTRICTED, Map.of("subjectId", 2L))),
+                IntStream.range(0, 103).mapToObj(i -> event("pei-" + i, "PEI_SUBMITTED",
+                        TimelineVisibility.PEDAGOGICAL, Map.of("subjectId", 2L)))));
+
+        var first = controller.page(1L, "PEI", null, null, 0, 10);
+        assertThat(first.totalElements()).isEqualTo(103);
+        assertThat(first.totalPages()).isEqualTo(11);
+        assertThat(first.content()).hasSize(10).first().extracting(TimelineEventDocument::getId).isEqualTo("pei-0");
+        var last = controller.page(1L, "PEI", null, null, 10, 10);
+        assertThat(last.content()).extracting(TimelineEventDocument::getId).containsExactly("pei-100", "pei-101", "pei-102");
     }
 
     private TimelineEventDocument event(String id, String type, TimelineVisibility visibility, Map<String, Object> data) {

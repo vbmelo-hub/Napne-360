@@ -4,6 +4,7 @@ import br.edu.ifac.napne360.common.ConflictException;
 import br.edu.ifac.napne360.common.NotFoundException;
 import br.edu.ifac.napne360.identity.ReferenceIdDeserializer;
 import br.edu.ifac.napne360.identity.RoleName;
+import br.edu.ifac.napne360.identity.SubjectRepository;
 import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.timeline.MutationProjection;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 @Service
 @RequiredArgsConstructor
@@ -40,6 +42,7 @@ public class CareRecordService {
     private final br.edu.ifac.napne360.security.AccessGuard access;
     private final br.edu.ifac.napne360.casework.NapneCaseRepository cases;
     private final DocumentTemplateRepository templates;
+    private final SubjectRepository subjects;
     private final TransactionTemplate transactions;
 
     public List<CareRecordDocument> list(Long studentId, CareRecordType type) {
@@ -72,27 +75,40 @@ public class CareRecordService {
                 .createdBy(user.getEmail()).updatedBy(user.getEmail()).build();
         var event = mutation(draft, 0L, "CREATE", "CARE_RECORD_CREATED", "Registro de acompanhamento criado", user, auth, http);
         draft.setPendingProjections(List.of(event));
-        CareRecordDocument value = draft.getCaseId() == null ? records.save(draft) : saveWithCaseLock(draft);
+        CareRecordDocument value = withLinkLocks(draft.getCaseId(), studentId, draft.getSubjectId(),
+                () -> records.save(draft));
         projections.enqueue(value.getId(), CareRecordDocument.class, event);
         return value;
     }
 
-    private CareRecordDocument saveWithCaseLock(CareRecordDocument draft) {
+    private CareRecordDocument withLinkLocks(Long caseId, Long studentId, Long subjectId,
+                                             Supplier<CareRecordDocument> mutation) {
+        if (caseId == null && subjectId == null) return mutation.get();
+
         var saved = new AtomicReference<CareRecordDocument>();
         try {
             return transactions.execute(status -> {
-                var linkedCase = cases.findByIdAndStudentIdForLink(draft.getCaseId(), draft.getStudentId())
-                        .orElseThrow(() -> new IllegalArgumentException("Caso inválido para o estudante."));
-                if (!linkedCase.getStage().isActive()) throw new IllegalArgumentException("O caso não está ativo.");
-                var record = records.save(draft);
+                if (caseId != null) {
+                    var linkedCase = cases.findByIdAndStudentIdForLink(caseId, studentId)
+                            .orElseThrow(() -> new IllegalArgumentException("Caso inválido para o estudante."));
+                    if (!linkedCase.getStage().isActive()) throw new IllegalArgumentException("O caso não está ativo.");
+                }
+                if (subjectId != null) {
+                    var subject = subjects.findByIdForUpdate(subjectId)
+                            .orElseThrow(() -> new NotFoundException("Componente não encontrado."));
+                    if (!subject.isActive() || !subject.getCourse().isActive()) {
+                        throw new ConflictException("O componente está arquivado.");
+                    }
+                }
+                var record = mutation.get();
                 saved.set(record);
                 return record;
             });
         } catch (RuntimeException e) {
             var record = saved.get();
             if (record == null) throw e;
-            // SQL only holds the case lock. The Mongo acknowledgement already confirms the new record.
-            log.warn("Falha ao concluir o bloqueio do caso após a gravação do acompanhamento {}", record.getId(), e);
+            // Mongo has already acknowledged the write. The SQL transaction only holds link locks.
+            log.warn("Falha ao concluir o bloqueio de vínculos após a gravação do acompanhamento {}", record.getId(), e);
             return record;
         }
     }
@@ -125,7 +141,11 @@ public class CareRecordService {
         var changes = new Update().set("title", value.getTitle()).set("status", value.getStatus())
                 .set("content", value.getContent()).set("history", value.getHistory())
                 .set("updatedBy", value.getUpdatedBy()).set("updatedAt", value.getUpdatedAt());
-        projections.update(value.getId(), value.getVersion(), changes, event, CareRecordDocument.class);
+        Long subjectLock = value.getStatus() == RecordStatus.DRAFT ? value.getSubjectId() : null;
+        withLinkLocks(null, studentId, subjectLock, () -> {
+            projections.update(value.getId(), value.getVersion(), changes, event, CareRecordDocument.class);
+            return value;
+        });
         value.setVersion(version);
         projections.enqueue(value.getId(), CareRecordDocument.class, event);
         return projectCaseLink(value, user);

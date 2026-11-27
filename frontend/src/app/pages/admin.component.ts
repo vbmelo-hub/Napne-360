@@ -1,24 +1,51 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ApiService } from '../core/api.service';
+import { createListView } from '../core/list-view';
 import { Campus, UserView } from '../core/models';
 import { errorMessage, labelFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 import { ModalShellComponent } from '../shared/modal-shell.component';
+import { PaginationComponent } from '../shared/pagination.component';
 import { AdminAcademicComponent } from './admin-academic.component';
 import { AdminCaseStagesComponent } from './admin-case-stages.component';
 import { AdminReferencesComponent } from './admin-references.component';
 
-@Component({standalone:true,imports:[ReactiveFormsModule,AdminAcademicComponent,AdminReferencesComponent,AdminCaseStagesComponent,ConfirmDialogComponent,ModalShellComponent],template:`
+@Component({standalone:true,imports:[ReactiveFormsModule,AdminAcademicComponent,AdminReferencesComponent,AdminCaseStagesComponent,ConfirmDialogComponent,ModalShellComponent,PaginationComponent],template:`
   <header class="page-header"><div><span class="eyebrow">Configuração institucional</span><h1>Administração técnica</h1><p>Gerencie a estrutura e os acessos do sistema. Este perfil não recebe acesso automático aos dossiês.</p></div></header>
   <nav class="tabs admin-tabs" aria-label="Áreas da administração">@for(item of tabs;track item.id){<button type="button" [class.selected]="tab()===item.id" [attr.aria-current]="tab()===item.id?'page':null" (click)="selectTab(item.id)">{{item.label}}</button>}</nav>
   @if(tab()==='users'){
     <section class="card users-card"><div class="section-header"><div><h2>Contas cadastradas</h2><p>Perfis, campus e situação de acesso.</p></div><button (click)="showUserForm.set(true)">Nova conta</button></div>
-      @if(loading()){<div class="loading-grid"><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-card"></span></div>}@else if(users().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhuma conta cadastrada</h3><p>Crie a primeira conta institucional para começar.</p></div>}@else{<div class="table-wrap"><table class="mobile-cards"><thead><tr><th>Usuário</th><th>Campus</th><th>Perfis</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>@for(u of users();track u.id){<tr><td data-label="Usuário"><strong>{{u.name}}</strong><small>{{u.email}}</small></td><td data-label="Campus">{{campusLabel(u.campusId)}}</td><td data-label="Perfis"><div class="roles">@for(role of u.roles;track role){<span class="badge badge--info">{{label(role)}}</span>}</div></td><td data-label="Situação"><span [class]="u.active?'badge badge--success':'badge'">{{u.active?'Ativa':'Inativa'}}</span></td><td><div class="row"><button class="secondary compact" (click)="editAccess(u)">Acessos</button><button class="secondary compact" (click)="askToggle(u)">{{u.active?'Inativar':'Reativar'}}</button></div></td></tr>}</tbody></table></div>}
+      @if (!loading() && users().length) {
+        <div class="list-filter-toolbar">
+          <label class="list-filter">Filtrar contas
+            <input type="search" [value]="userList.query()" (input)="userList.setQuery($any($event.target).value)">
+          </label>
+        </div>
+      }
+      @if(loading()){<div class="loading-grid"><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-card"></span></div>}@else if(users().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhuma conta cadastrada</h3><p>Crie a primeira conta institucional para começar.</p></div>}
+      @else if (!userList.totalElements()) {
+        <p class="empty-state">Nenhuma conta corresponde ao filtro.</p>
+      } @else {<div class="table-wrap"><table class="mobile-cards"><thead><tr><th>Usuário</th><th>Campus</th><th>Perfis</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>@for(u of userList.items();track u.id){<tr><td data-label="Usuário"><strong>{{u.name}}</strong><small>{{u.email}}</small></td><td data-label="Campus">{{campusLabel(u.campusId)}}</td><td data-label="Perfis"><div class="roles">@for(role of u.roles;track role){<span class="badge badge--info">{{label(role)}}</span>}</div></td><td data-label="Situação"><span [class]="u.active?'badge badge--success':'badge'">{{u.active?'Ativa':'Inativa'}}</span></td><td><div class="row"><button class="secondary compact" (click)="editAccess(u)">Acessos</button><button class="secondary compact" (click)="askToggle(u)">{{u.active?'Inativar':'Reativar'}}</button></div></td></tr>}</tbody></table></div>}
+      @if (!loading() && userList.totalPages() > 1) {
+        <app-pagination class="list-pagination" [page]="userList.page()" [totalPages]="userList.totalPages()"
+          label="Paginação de contas" (pageChange)="userList.setPage($event)" />
+      }
     </section>
   }
-  @if(tab()==='campuses'){<section class="admin-grid"><form class="card stack" [formGroup]="campusForm" (ngSubmit)="createCampus()"><div class="section-header"><div><h2>Novo campus</h2><p>Cadastre uma unidade institucional.</p></div></div><label class="required">Nome<input formControlName="name"></label><label class="required">Código<input formControlName="code"></label><div><button [disabled]="campusForm.invalid||busy()">Criar campus</button></div></form><section class="card"><h2>Campi cadastrados</h2>@for(c of campuses();track c.id){<article class="campus-row"><div><strong>{{c.name}}</strong><small>{{c.code}}</small></div><span [class]="c.active?'badge badge--success':'badge'">{{c.active?'Ativo':'Inativo'}}</span></article>}</section></section>}
+  @if(tab()==='campuses'){<section class="admin-grid"><form class="card stack" [formGroup]="campusForm" (ngSubmit)="createCampus()"><div class="section-header"><div><h2>Novo campus</h2><p>Cadastre uma unidade institucional.</p></div></div><label class="required">Nome<input formControlName="name"></label><label class="required">Código<input formControlName="code"></label><div><button [disabled]="campusForm.invalid||busy()">Criar campus</button></div></form><section class="card"><h2>Campi cadastrados</h2>@if (campuses().length) {
+      <label class="list-filter">Filtrar campi
+        <input type="search" [value]="campusList.query()" (input)="campusList.setQuery($any($event.target).value)">
+      </label>
+    }
+    @if (!campusList.totalElements()) {
+      <p class="empty-state">{{campusList.query().trim() ? 'Nenhum campus corresponde ao filtro.' : 'Nenhum campus cadastrado.'}}</p>
+    }
+    @for(c of campusList.items();track c.id){<article class="campus-row"><div><strong>{{c.name}}</strong><small>{{c.code}}</small></div><span [class]="c.active?'badge badge--success':'badge'">{{c.active?'Ativo':'Inativo'}}</span></article>}
+    <app-pagination [page]="campusList.page()" [totalPages]="campusList.totalPages()"
+      label="Paginação de campi" (pageChange)="campusList.setPage($event)" />
+    </section></section>}
   @if(tab()==='academic'){<app-admin-academic />}
   @if(tab()==='references'){<app-admin-references />}
   @if(caseStagesOpened()){<app-admin-case-stages [hidden]="tab()!=='case-stages'" />}
@@ -28,6 +55,15 @@ import { AdminReferencesComponent } from './admin-references.component';
 `,styles:[`.admin-tabs{margin:0 0 1rem}.users-card{padding:0;overflow:hidden}.users-card .section-header{padding:1.25rem 1.5rem;margin:0}.users-card .table-wrap{border-radius:0;border-left:0;border-right:0;border-bottom:0}.users-card td strong,.users-card td small{display:block}.users-card td small{color:var(--ink-600)}.roles{display:flex;gap:.25rem;flex-wrap:wrap}.admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;align-items:start}.campus-row{display:flex;align-items:center;justify-content:space-between;padding:.85rem 0;border-top:1px solid var(--border)}.campus-row strong,.campus-row small{display:block}.campus-row small{color:var(--ink-600)}.role-checks{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}.role-checks label{display:flex;align-items:center;border:1px solid var(--border);border-radius:.5rem;padding:.7rem}.role-checks input{width:auto}.security-box{display:grid;grid-template-columns:1fr 1fr auto;align-items:end;gap:1rem;background:var(--surface-soft);border:1px solid var(--border);border-radius:.75rem;padding:1rem}.security-box p{color:var(--ink-600);font-size:.82rem;margin:0}@media(max-width:800px){.admin-grid{grid-template-columns:1fr}.security-box{grid-template-columns:1fr}.role-checks{grid-template-columns:1fr}}` ]})
 export class AdminComponent implements OnInit{
   private readonly api=inject(ApiService);private readonly fb=inject(FormBuilder);private readonly toast=inject(ToastService);readonly tabs=[{id:'users',label:'Usuários e acessos'},{id:'campuses',label:'Campi'},{id:'academic',label:'Cursos, componentes e vínculos'},{id:'references',label:'Cadastros de referência'},{id:'case-stages',label:'Etapas dos casos'}];readonly tab=signal('users');readonly roles=[{value:'ADMIN',label:'Administrador técnico'},{value:'NAPNE',label:'Equipe NAPNE'},{value:'COTEP',label:'COTEP'},{value:'COURSE_COORDINATOR',label:'Coordenação de curso'},{value:'TEACHER',label:'Professor'},{value:'TUTOR',label:'Monitor/Tutor'},{value:'MANAGEMENT',label:'Gestão'}];readonly users=signal<UserView[]>([]);readonly campuses=signal<Campus[]>([]);readonly loading=signal(true);readonly busy=signal(false);readonly showUserForm=signal(false);readonly accessUser=signal<UserView|null>(null);readonly toggleCandidate=signal<UserView|null>(null);readonly toggleDescription=computed(()=>{const u=this.toggleCandidate();return u?(u.active?`O acesso de ${u.name} será bloqueado e as sessões serão revogadas.`:`O acesso de ${u.name} será restaurado.`):''});readonly label=labelFor;readonly userForm=this.fb.nonNullable.group({name:['',Validators.required],email:['',[Validators.required,Validators.email]],password:['',[Validators.required,Validators.minLength(12),Validators.maxLength(72)]],campusId:[''],role:['NAPNE',Validators.required]});readonly permissionForm=this.fb.nonNullable.group({userId:['',Validators.required],roles:[[]as string[],Validators.required]});readonly resetSecret=this.fb.nonNullable.control('',[Validators.required,Validators.minLength(12),Validators.maxLength(72)]);readonly campusForm=this.fb.nonNullable.group({name:['',Validators.required],code:['',Validators.required]});
+  readonly userList = createListView(this.users, user => [
+    user.name, user.email,
+    this.campuses().find(campus => campus.id === user.campusId)?.name ?? 'Sem campus',
+    ...user.roles.map(labelFor), user.active ? 'Ativa' : 'Inativa',
+  ]);
+  readonly campusList = createListView(this.campuses, campus => [
+    campus.name, campus.code, campus.active ? 'Ativo' : 'Inativo',
+  ]);
+
   readonly caseStagesOpened = signal(false);
 
   selectTab(tab: string) {

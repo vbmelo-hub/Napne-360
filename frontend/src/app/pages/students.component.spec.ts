@@ -21,11 +21,28 @@ describe('StudentsComponent — envio da busca', () => {
     ] }).compileComponents();
     http = TestBed.inject(HttpTestingController);
     fixture = TestBed.createComponent(StudentsComponent); fixture.detectChanges();
-    initialLoad = http.expectOne(request => request.url === '/api/v1/students' && request.params.get('query') === '');
+    initialLoad = http.expectOne(request => request.url === '/api/v1/students'
+      && request.params.get('query') === '' && request.params.get('size') === '10');
     http.expectOne('/api/v1/catalog/courses').flush([]); fixture.detectChanges();
   });
 
   afterEach(() => { http.verify(); sessionStorage.clear(); });
+
+  it('navega por número de página sem aplicar o termo ainda não enviado', () => {
+    initialLoad.flush({ content: [student], number: 0, size: 10, totalElements: 32, totalPages: 4 });
+    fixture.detectChanges();
+    const dom = fixture.nativeElement as HTMLElement;
+    const search = dom.querySelector<HTMLInputElement>('#search')!;
+    search.value = 'Termo ainda em edição';
+    search.dispatchEvent(new Event('input'));
+
+    dom.querySelector<HTMLButtonElement>('button[aria-label="Página 3"]')!.click();
+    const page = http.expectOne(request => request.url === '/api/v1/students'
+      && request.params.get('page') === '2' && request.params.get('query') === '');
+    page.flush({ content: [student], number: 2, size: 10, totalElements: 32, totalPages: 4 });
+    fixture.detectChanges();
+    expect(dom.querySelector('[aria-current="page"]')?.textContent?.trim()).toBe('3');
+  });
 
   for (const origin of ['botão', 'Enter'] as const) {
     it(`cancela navegação nativa por ${origin} e busca texto digitado a partir da página zero`, () => {

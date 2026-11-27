@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiAnnexI, PeiCreateRequest, PeiTransferCandidate, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
+import { LIST_PAGE_SIZE } from './list-view';
+import { AdminCourse, AdminSubject, Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiAnnexI, PeiCreateRequest, PeiTransferCandidate, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
 
 type PeiVersionAction = Exclude<PeiAction, 'EDIT' | 'TRANSFER'>;
 
@@ -10,7 +11,8 @@ export class ApiService {
 
 
   students(query = '', page = 0) {
-    const params = new HttpParams().set('query', query).set('page', page).set('size', 20).set('sort', 'updatedAt,desc');
+    const params = new HttpParams().set('query', query).set('page', page).set('size', LIST_PAGE_SIZE)
+      .append('sort', 'updatedAt,desc').append('sort', 'id,desc');
     return this.http.get<Page<StudentSummary>>('/api/v1/students', { params });
   }
   student(id: number) { return this.http.get<StudentDetails>(`/api/v1/students/${id}`); }
@@ -33,17 +35,18 @@ export class ApiService {
   changeCaseResponsible(id: number, value: {responsibleId: number; version: number; reason?: string | null}) {
     return this.http.patch<NapneCase>(`/api/v1/cases/${id}/responsible`, value);
   }
-  caseHistory(id: number, page: number) {
-    const params = new HttpParams().set('page', page).set('size', 20);
+  caseHistory(id: number, page: number, type = '') {
+    let params = new HttpParams().set('page', page).set('size', LIST_PAGE_SIZE);
+    if (type) params = params.set('type', type);
     return this.http.get<Page<CaseHistoryView>>(`/api/v1/cases/${id}/history`, {params});
   }
   records(id: number) { return this.http.get<CareRecord[]>(`/api/v1/students/${id}/records`); }
   createRecord(id: number, value: object) { return this.http.post<CareRecord>(`/api/v1/students/${id}/records`, value); }
   updateRecord(studentId: number, recordId: string, value: object) { return this.http.put<CareRecord>(`/api/v1/students/${studentId}/records/${recordId}`, value); }
-  timeline(id: number, type = '') {
-    let params = new HttpParams().set('limit', 100);
+  timeline(id: number, type = '', page = 0) {
+    let params = new HttpParams().set('page', page).set('size', LIST_PAGE_SIZE);
     if (type) params = params.set('type', type);
-    return this.http.get<TimelineEvent[]>(`/api/v1/students/${id}/timeline`, { params });
+    return this.http.get<Page<TimelineEvent>>(`/api/v1/students/${id}/timeline/page`, { params });
   }
   peis(id: number) { return this.http.get<Pei[]>(`/api/v1/students/${id}/peis`); }
   pei(studentId: number, id: string) { return this.http.get<Pei>(`/api/v1/students/${studentId}/peis/${id}`); }
@@ -88,10 +91,16 @@ export class ApiService {
   users() { return this.http.get<UserView[]>('/api/v1/admin/users'); }
   createUser(value: object) { return this.http.post<UserView>('/api/v1/admin/users', value); }
   createCampus(value: object) { return this.http.post<Campus>('/api/v1/admin/campuses', value); }
-  adminCourses() { return this.http.get<Course[]>('/api/v1/admin/courses'); }
-  adminSubjects() { return this.http.get<Subject[]>('/api/v1/admin/subjects'); }
-  createCourse(value:object) { return this.http.post<Course>('/api/v1/admin/courses',value); }
-  createSubject(value:object) { return this.http.post<Subject>('/api/v1/admin/subjects',value); }
+  adminCourses() { return this.http.get<AdminCourse[]>('/api/v1/admin/courses'); }
+  adminSubjects() { return this.http.get<AdminSubject[]>('/api/v1/admin/subjects'); }
+  createCourse(value:object) { return this.http.post<AdminCourse>('/api/v1/admin/courses',value); }
+  updateCourse(id: number, value: { campusId: number; name: string; code: string }) {
+    return this.http.put<AdminCourse>(`/api/v1/admin/courses/${id}`, value);
+  }
+  archiveCourse(id: number) {
+    return this.http.patch<AdminCourse>(`/api/v1/admin/courses/${id}/archive`, null);
+  }
+  createSubject(value:object) { return this.http.post<AdminSubject>('/api/v1/admin/subjects',value); }
   registrations() { return this.http.get<{id:number,registration:string,campusId:number,courseId:number}[]>('/api/v1/admin/student-registrations'); }
   assignments() { return this.http.get<{id:number,studentId:number,userId:number,subjectId:number|null,assignmentType:string,active:boolean}[]>('/api/v1/admin/assignments'); }
   createAssignment(value:object) { return this.http.post('/api/v1/admin/assignments',value); }

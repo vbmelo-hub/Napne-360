@@ -49,7 +49,7 @@ class PeiCatalogTest {
         var student = Student.builder().id(1L).civilName("Estudante fictício").course(course).build();
         when(access.requireView(1L)).thenReturn(student);
         when(access.canTeachPei(1L,3L)).thenReturn(true);
-        when(subjects.findById(3L)).thenReturn(Optional.of(Subject.builder().id(3L).course(course).name("Componente fictício").workloadHours(60).build()));
+        when(subjects.findByIdForUpdate(3L)).thenReturn(Optional.of(Subject.builder().id(3L).course(course).name("Componente fictício").workloadHours(60).build()));
         when(current.require()).thenReturn(UserAccount.builder().id(12L).name("Docente").email("docente@example.test").roles(Set.of(RoleName.TEACHER)).build());
         term = ReferenceEntry.builder().id(9L).kind(ReferenceEntry.Kind.ACADEMIC_TERM).code("2026-2").label("Segundo semestre").build();
         when(entries.findById(9L)).thenReturn(Optional.of(term));

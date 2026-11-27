@@ -4,7 +4,10 @@ import br.edu.ifac.napne360.casework.NapneCase;
 import br.edu.ifac.napne360.casework.NapneCaseRepository;
 import br.edu.ifac.napne360.common.ApiExceptionHandler;
 import br.edu.ifac.napne360.common.NotFoundException;
+import br.edu.ifac.napne360.identity.Course;
 import br.edu.ifac.napne360.identity.RoleName;
+import br.edu.ifac.napne360.identity.Subject;
+import br.edu.ifac.napne360.identity.SubjectRepository;
 import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.security.AccessGuard;
 import br.edu.ifac.napne360.security.CurrentUserService;
@@ -58,6 +61,7 @@ class CareRecordServiceTest {
     @Mock AccessGuard access;
     @Mock NapneCaseRepository cases;
     @Mock DocumentTemplateRepository templates;
+    @Mock SubjectRepository subjects;
     @Mock PlatformTransactionManager transactionManager;
     private final ObjectMapper json = Jackson2ObjectMapperBuilder.json().build();
     private CareRecordService service;
@@ -69,13 +73,15 @@ class CareRecordServiceTest {
     void setUp() {
         lenient().when(transactionManager.getTransaction(any())).thenAnswer(call -> new SimpleTransactionStatus());
         service = new CareRecordService(records, currentUser, projections, access, cases,
-                templates, new TransactionTemplate(transactionManager));
+                templates, subjects, new TransactionTemplate(transactionManager));
         mvc = MockMvcBuilders.standaloneSetup(new CareRecordController(service, access))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(json)).build();
         user = UserAccount.builder().name("Docente de teste").email("autor@example.test")
                 .roles(Set.of(RoleName.TEACHER)).build();
         lenient().when(currentUser.require()).thenReturn(user);
+        lenient().when(subjects.findByIdForUpdate(2L)).thenReturn(Optional.of(Subject.builder().id(2L)
+                .course(Course.builder().id(1L).build()).build()));
         record = CareRecordDocument.builder().id("r1").studentId(1L).subjectId(2L)
                 .type(CareRecordType.TEACHER_FEEDBACK).title("Rascunho anterior")
                 .content(new LinkedHashMap<>(Map.of("notes", "Texto anterior", "extra", Map.of("flag", true))))

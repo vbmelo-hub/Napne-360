@@ -1,9 +1,11 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ApiService } from '../core/api.service';
+import { createListView, LIST_PAGE_SIZE } from '../core/list-view';
 import { CaseStageConfiguration } from '../core/models';
 import { errorMessage } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
+import { PaginationComponent } from '../shared/pagination.component';
 
 interface DraftStage {
   id: number;
@@ -14,6 +16,7 @@ interface DraftStage {
 @Component({
   selector: 'app-admin-case-stages',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [PaginationComponent],
   template: `
     <form class="card stack stages-form" (submit)="$event.preventDefault(); save()">
       <header class="section-header">
@@ -45,9 +48,13 @@ interface DraftStage {
       @if (version() !== null) {
         <fieldset class="stack" [disabled]="busy()">
           <legend class="sr-only">Nomes e ordem das etapas dos casos</legend>
+          <label class="list-filter">Filtrar etapas
+            <input #stageFilter type="search" [value]="stageList.query()" (input)="filterStages(stageFilter.value)">
+          </label>
           <ol class="stages-list">
-            @for (stage of stages(); track stage.id) {
-              @let position = $index + 1;
+            @for (stage of stageList.items(); track stage.id) {
+              @let stageIndex = stageOrder().get(stage.id) ?? 0;
+              @let position = stageIndex + 1;
               @let issue = nameError(stage.label);
               <li class="stage-row">
                 <div>
@@ -62,11 +69,11 @@ interface DraftStage {
                   }
                 </div>
                 <div class="row stage-actions">
-                  @if ($index <= lastActiveIndex()) {
-                    <button type="button" class="secondary compact" [disabled]="$first"
-                      [attr.aria-label]="'Subir etapa ' + position" (click)="move($index, -1)">Subir</button>
-                    <button type="button" class="secondary compact" [disabled]="$index === lastActiveIndex()"
-                      [attr.aria-label]="'Descer etapa ' + position" (click)="move($index, 1)">Descer</button>
+                  @if (stageIndex <= lastActiveIndex()) {
+                    <button type="button" class="secondary compact" [disabled]="stageIndex === 0"
+                      [attr.aria-label]="'Subir etapa ' + position" (click)="move(stageIndex, -1)">Subir</button>
+                    <button type="button" class="secondary compact" [disabled]="stageIndex === lastActiveIndex()"
+                      [attr.aria-label]="'Descer etapa ' + position" (click)="move(stageIndex, 1)">Descer</button>
                     @if (stage.code === null) {
                       <button type="button" class="secondary compact"
                         [attr.aria-label]="'Remover etapa ' + position + ' do rascunho'"
@@ -79,7 +86,15 @@ interface DraftStage {
               </li>
             }
           </ol>
+          @if (!stageList.totalElements()) {
+            <p class="empty-state">Nenhuma etapa corresponde ao filtro.</p>
+          }
+          <app-pagination [page]="stageList.page()" [totalPages]="stageList.totalPages()"
+            label="Paginação das etapas" (pageChange)="stageList.setPage($event)" />
 
+          @if (invalid() && (stageList.totalPages() > 1 || stageList.query().trim())) {
+            <p role="status">Revise os nomes das etapas antes de salvar, inclusive os das outras páginas.</p>
+          }
           <div class="row">
             <button type="button" class="secondary" (click)="add()">Adicionar etapa</button>
             <button type="submit" [disabled]="conflict() || invalid()">Salvar etapas</button>
@@ -119,6 +134,11 @@ export class AdminCaseStagesComponent implements OnInit {
   protected readonly error = signal('');
   protected readonly lastActiveIndex = computed(() => this.stages().length - 3);
   protected readonly invalid = computed(() => this.stages().some(stage => this.nameError(stage.label)));
+  protected readonly stageOrder = computed(() => new Map(this.stages().map((stage, index) => [stage.id, index])));
+  private readonly filterLabels = signal(new Map<number, string>());
+  protected readonly stageList = createListView(this.stages, stage => [
+    this.filterLabels().get(stage.id) ?? stage.label, stage.code,
+  ]);
 
   ngOnInit() {
     this.load();
@@ -141,6 +161,12 @@ export class AdminCaseStagesComponent implements OnInit {
     this.stages.update(stages => stages.map(stage => stage.id === id ? { ...stage, label } : stage));
   }
 
+  protected filterStages(query: string) {
+    // Keep the results steady while the operator edits an inline name.
+    this.filterLabels.set(new Map(this.stages().map(stage => [stage.id, stage.label])));
+    this.stageList.setQuery(query);
+  }
+
   protected nameError(label: string) {
     const name = label.trim();
     if (!name) return 'Informe o nome da etapa.';
@@ -154,12 +180,16 @@ export class AdminCaseStagesComponent implements OnInit {
     const stages = [...this.stages()];
     [stages[index], stages[destination]] = [stages[destination], stages[index]];
     this.stages.set(stages);
+    if (!this.stageList.query().trim()) this.stageList.setPage(Math.floor(destination / LIST_PAGE_SIZE));
   }
 
   protected add() {
     const stages = [...this.stages()];
-    stages.splice(this.lastActiveIndex() + 1, 0, { id: this.nextId++, code: null, label: '' });
+    const index = this.lastActiveIndex() + 1;
+    stages.splice(index, 0, { id: this.nextId++, code: null, label: '' });
     this.stages.set(stages);
+    this.stageList.reset();
+    this.stageList.setPage(Math.floor(index / LIST_PAGE_SIZE));
   }
 
   protected removeDraft(id: number) {
@@ -189,6 +219,7 @@ export class AdminCaseStagesComponent implements OnInit {
   }
 
   private apply(configuration: CaseStageConfiguration) {
+    this.filterLabels.set(new Map());
     this.stages.set(configuration.stages.map(stage => ({ ...stage, id: this.nextId++ })));
     this.version.set(configuration.version);
     this.conflict.set(false);

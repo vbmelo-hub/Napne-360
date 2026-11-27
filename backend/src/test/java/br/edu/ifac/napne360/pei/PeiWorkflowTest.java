@@ -605,7 +605,7 @@ class PeiWorkflowTest {
     @Test void twoFirstDraftsRaceForOneSeriesAndOnlyWinnerEmitsEffects() throws Exception {
         var course = Course.builder().id(4L).name("Curso fictício").build();
         when(access.requireView(1L)).thenReturn(Student.builder().id(1L).course(course).civilName("Pessoa fictícia").build());
-        when(subjects.findById(2L)).thenReturn(Optional.of(Subject.builder().id(2L).course(course).build()));
+        when(subjects.findByIdForUpdate(2L)).thenReturn(Optional.of(Subject.builder().id(2L).course(course).build()));
         when(catalog.academicTerm(5L, null)).thenReturn(ReferenceEntry.builder().id(5L).code("2026-1").label("Primeiro").build());
 
         race(() -> mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON)

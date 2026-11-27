@@ -28,13 +28,13 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     sessionStorage.setItem('napne360.session', JSON.stringify({ token: 'test', id: 2,
       name: 'NAPNE fictício', email: 'napne@test.local', roles: ['NAPNE'], campusId: 1 }));
     api = jasmine.createSpyObj<ApiService>('ApiService', [
-      'student', 'dossier', 'cases', 'records', 'peis', 'timeline', 'attachments',
+      'student', 'dossier', 'cases', 'records', 'peis', 'attachments',
       'studentSubjects', 'studentTeachers', 'courses', 'references', 'saveDossier', 'createPei'
     ]);
     api.student.and.returnValue(of(student));
     api.dossier.and.returnValue(of(baseDossier));
     api.cases.and.returnValue(of([])); api.records.and.returnValue(of([])); api.peis.and.returnValue(of([]));
-    api.timeline.and.returnValue(of([])); api.attachments.and.returnValue(of([])); api.courses.and.returnValue(of([]));
+    api.attachments.and.returnValue(of([])); api.courses.and.returnValue(of([]));
     api.studentSubjects.and.returnValue(of([{ id: 100, name: 'Componente', code: 'COMP', workloadHours: 60, courseId: 10 }]));
     api.studentTeachers.and.returnValue(of([{ id: 2, name: 'Docente fictício', subjectId: 100 }]));
     api.references.and.callFake(kind => of(kind === 'NEED_CATEGORY'
@@ -75,6 +75,30 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     const form = (fixture.nativeElement as HTMLElement).querySelector<HTMLFormElement>('.dossier-layout');
     form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); fixture.detectChanges();
   }
+
+  it('localiza PEI histórico pelo nome registrado do componente arquivado', () => {
+    api.studentSubjects.and.returnValue(of([]));
+    api.peis.and.returnValue(of([{ ...pei, status: 'ARCHIVED', content: { subject: 'Introdução à Programação' } }]));
+    start();
+    const dom = view('pei');
+    expect(dom.querySelector('.pei-row strong')?.textContent).toBe('Introdução à Programação');
+    const search = dom.querySelector<HTMLInputElement>('input[type="search"]')!;
+    search.value = 'introducao programacao';
+    search.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(dom.querySelector('.pei-row strong')?.textContent).toBe('Introdução à Programação');
+  });
+
+  it('mantém selecionado o curso arquivado no cadastro histórico do estudante', () => {
+    api.student.and.returnValue(of({ ...student, status: 'ARCHIVED' }));
+    start();
+    fixture.componentInstance.openStudentEdit();
+    fixture.detectChanges();
+    const dom: HTMLElement = fixture.nativeElement;
+    const course = dom.querySelector<HTMLSelectElement>('select[formControlName="courseId"]');
+    expect(course?.value).toBe('10');
+    expect(course?.selectedOptions[0].textContent).toContain('Curso');
+  });
 
   it('mostra rótulos ativos e envia categoria numérica sem perder notas, extras e versão', () => {
     start({ ...baseDossier, educationalNeeds: { category: 'Texto legado', notes: 'Nota inicial', custom: { keep: true }, specificNeeds: 'Apoio' } });

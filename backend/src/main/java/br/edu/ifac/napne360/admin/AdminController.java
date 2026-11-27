@@ -10,13 +10,19 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 @RestController
@@ -30,19 +36,20 @@ public class AdminController {
     private final UserAccountRepository users;
     private final StudentRepository students;
     private final StudentAssignmentRepository assignments;
+    private final CourseSubjectReferences subjectReferences;
     private final PasswordEncoder passwordEncoder;
     private final br.edu.ifac.napne360.security.CurrentUserService currentUser;
 
     @GetMapping("/courses")
     @Transactional(readOnly = true)
     public List<CourseView> allCourses() {
-        return courses.findAll().stream().map(c -> new CourseView(c.getId(),c.getName(),c.getCode(),c.getCampus().getId(),c.getCampus().getName())).toList();
+        return courses.findAll().stream().map(CourseView::of).toList();
     }
 
     @GetMapping("/subjects")
     @Transactional(readOnly = true)
     public List<SubjectView> allSubjects() {
-        return subjects.findAll().stream().map(s -> new SubjectView(s.getId(),s.getName(),s.getCode(),s.getWorkloadHours(),s.getCourse().getId())).toList();
+        return subjects.findAll().stream().map(SubjectView::of).toList();
     }
 
     @GetMapping("/student-registrations")
@@ -127,29 +134,71 @@ public class AdminController {
 
     @PostMapping("/courses")
     public CourseView createCourse(@Valid @RequestBody CourseRequest request) {
-        Campus campus = campuses.findById(request.campusId()).orElseThrow(() -> new NotFoundException("Campus não encontrado."));
-        Course course = courses.save(Course.builder().campus(campus).name(request.name().trim()).code(request.code().trim().toUpperCase()).build());
-        return new CourseView(course.getId(), course.getName(), course.getCode(), campus.getId(), campus.getName());
+        Course course = Course.builder().campus(requireCampus(request.campusId()))
+                .name(request.name()).code(request.code()).build();
+        return saveCourse(course);
+    }
+
+    @PutMapping("/courses/{id}")
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public CourseView updateCourse(@PathVariable Long id, @Valid @RequestBody CourseRequest request) {
+        Course course = lockCourse(id);
+        Campus campus = requireCampus(request.campusId());
+        if (!course.getCampus().getId().equals(campus.getId())
+                && (students.existsByCourseId(id) || assignments.existsBySubjectCourseId(id)
+                || subjectReferences.hasHistory(subjects.findByCourseIdForUpdate(id)))) {
+            throw new CourseConflictException("O campus deste curso não pode ser alterado porque há estudantes ou registros vinculados.");
+        }
+        course.setCampus(campus);
+        course.setName(request.name());
+        course.setCode(request.code());
+        return saveCourse(course);
+    }
+
+    @PatchMapping("/courses/{id}/archive")
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public CourseView archiveCourse(@PathVariable Long id) {
+        Course course = lockCourse(id);
+        if (students.existsByCourseIdAndStatus(id, StudentStatus.ACTIVE)) {
+            throw new CourseConflictException("O curso possui estudantes ativos vinculados.");
+        }
+        if (assignments.existsByStudentCourseIdAndActiveTrue(id) || assignments.existsBySubjectCourseIdAndActiveTrue(id)) {
+            throw new CourseConflictException("O curso ou seus componentes possuem vínculos ativos.");
+        }
+        var components = subjects.findByCourseIdForUpdate(id);
+        if (subjectReferences.hasOpenWork(components)) {
+            throw new CourseConflictException("Os componentes possuem acompanhamentos em andamento ou PEIs vigentes.");
+        }
+        components.forEach(subject -> subject.setActive(false));
+        course.setActive(false);
+        return CourseView.of(course);
     }
 
     @PostMapping("/subjects")
+    @Transactional
     public SubjectView createSubject(@Valid @RequestBody SubjectRequest request) {
-        Course course = courses.findById(request.courseId()).orElseThrow(() -> new NotFoundException("Curso não encontrado."));
+        Course course = lockActiveCourse(request.courseId());
         Subject subject = subjects.save(Subject.builder().course(course).name(request.name().trim())
                 .code(request.code().trim().toUpperCase()).workloadHours(request.workloadHours()).syllabus(request.syllabus()).build());
-        return new SubjectView(subject.getId(), subject.getName(), subject.getCode(), subject.getWorkloadHours(), course.getId());
+        return SubjectView.of(subject);
     }
 
     @PostMapping("/assignments")
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AssignmentView createAssignment(@Valid @RequestBody AssignmentRequest request) {
-        Student student = students.findById(request.studentId()).orElseThrow(() -> new NotFoundException("Estudante não encontrado."));
+        Student student = students.findByIdForUpdate(request.studentId())
+                .orElseThrow(() -> new NotFoundException("Estudante não encontrado."));
+        Course course = lockActiveCourse(student.getCourse().getId());
         UserAccount user = users.findById(request.userId()).orElseThrow(() -> new NotFoundException("Usuário não encontrado."));
         Subject subject = request.subjectId() == null ? null : subjects.findById(request.subjectId())
                 .orElseThrow(() -> new NotFoundException("Componente não encontrado."));
+        if (subject != null && !subject.isActive()) {
+            throw new CourseConflictException("O componente está arquivado.");
+        }
         if (user.getCampus() == null || !user.getCampus().getId().equals(student.getCampus().getId())) {
             throw new IllegalArgumentException("Usuário e estudante devem pertencer ao mesmo campus.");
         }
-        if (!user.isActive() || subject != null && !subject.getCourse().getId().equals(student.getCourse().getId()))
+        if (!user.isActive() || subject != null && !subject.getCourse().getId().equals(course.getId()))
             throw new IllegalArgumentException("Vínculo acadêmico inválido.");
         boolean roleMatches = switch (request.assignmentType()) {
             case TEACHER -> subject != null && user.getRoles().contains(RoleName.TEACHER);
@@ -162,6 +211,39 @@ public class AdminController {
                 .subject(subject).assignmentType(request.assignmentType()).build());
         return new AssignmentView(assignment.getId(), student.getId(), user.getId(),
                 subject == null ? null : subject.getId(), assignment.getAssignmentType(), assignment.isActive());
+    }
+
+    private Campus requireCampus(Long id) {
+        return campuses.findById(id).orElseThrow(() -> new NotFoundException("Campus não encontrado."));
+    }
+
+    private Course lockCourse(Long id) {
+        return courses.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Curso não encontrado."));
+    }
+
+    private Course lockActiveCourse(Long id) {
+        Course course = lockCourse(id);
+        if (!course.isActive()) throw new CourseConflictException("O curso está arquivado.");
+        return course;
+    }
+
+    private CourseView saveCourse(Course course) {
+        try {
+            return CourseView.of(courses.saveAndFlush(course));
+        } catch (DataIntegrityViolationException exception) {
+            throw new CourseConflictException("Já existe um curso com esse código neste campus.");
+        }
+    }
+
+    @ExceptionHandler(CourseConflictException.class)
+    public ProblemDetail courseConflict(CourseConflictException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        problem.setTitle("Conflito de dados");
+        return problem;
+    }
+
+    private static class CourseConflictException extends ConflictException {
+        CourseConflictException(String message) { super(message); }
     }
 
     private UserView view(UserAccount user) {
@@ -177,13 +259,30 @@ public class AdminController {
     public record ResetPasswordRequest(@NotBlank @jakarta.validation.constraints.Size(min=12,max=72) String password) {}
     public record RegistrationView(Long id, String registration, Long campusId, Long courseId) {}
     public record CampusRequest(@NotBlank String name, @NotBlank String code) {}
-    public record CourseRequest(@NotNull Long campusId, @NotBlank String name, @NotBlank String code) {}
+    public record CourseRequest(@NotNull Long campusId, @NotBlank @Size(max = 180) String name,
+                                @NotBlank @Size(max = 60) String code) {
+        public CourseRequest {
+            name = name == null ? null : name.trim();
+            code = code == null ? null : code.trim().toUpperCase(Locale.ROOT);
+        }
+    }
     public record SubjectRequest(@NotNull Long courseId, @NotBlank String name, @NotBlank String code,
                                  @Min(1) int workloadHours, String syllabus) {}
     public record UserView(Long id, String name, String email, boolean active, Long campusId, Set<RoleName> roles) {}
     public record CampusView(Long id, String name, String code, boolean active) {}
-    public record CourseView(Long id, String name, String code, Long campusId, String campus) {}
-    public record SubjectView(Long id, String name, String code, int workloadHours, Long courseId) {}
+    public record CourseView(Long id, String name, String code, Long campusId, String campus, boolean active) {
+        static CourseView of(Course course) {
+            return new CourseView(course.getId(), course.getName(), course.getCode(),
+                    course.getCampus().getId(), course.getCampus().getName(), course.isActive());
+        }
+    }
+
+    public record SubjectView(Long id, String name, String code, int workloadHours, Long courseId, boolean active) {
+        static SubjectView of(Subject subject) {
+            return new SubjectView(subject.getId(), subject.getName(), subject.getCode(),
+                    subject.getWorkloadHours(), subject.getCourse().getId(), subject.isActive());
+        }
+    }
     public record AssignmentRequest(@NotNull Long studentId, @NotNull Long userId, Long subjectId,
                                     @NotNull AssignmentType assignmentType) {}
     public record AssignmentView(Long id, Long studentId, Long userId, Long subjectId,

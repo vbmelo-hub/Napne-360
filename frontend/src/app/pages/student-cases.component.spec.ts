@@ -45,7 +45,6 @@ describe('Casos no acompanhamento do estudante', () => {
     for (const resource of ['records', 'peis', 'attachments']) {
       http.expectOne(studentUrl + '/' + resource).flush([]);
     }
-    http.expectOne(studentUrl + '/timeline?limit=100').flush([]);
     http.expectOne('/api/v1/catalog/student-subjects?studentId=1').flush([]);
     http.expectOne('/api/v1/catalog/student-teachers?studentId=1').flush([]);
     if (role === 'NAPNE') {
@@ -120,7 +119,6 @@ describe('Casos no acompanhamento do estudante', () => {
     expect(stage.matches(':disabled')).toBeTrue();
     expect(button(card, 'Registrar etapa').matches(':disabled')).toBeTrue();
     patch.flush({ ...currentCase, stage: 'SCREENING', allowedNextStages: ['RECEIVED', 'CLOSED'], version: 1 });
-    http.expectOne(studentUrl + '/timeline?limit=100').flush([]);
     fixture.detectChanges();
     expect(card.textContent).toContain('Versão 1');
   });
@@ -160,12 +158,12 @@ describe('Casos no acompanhamento do estudante', () => {
       fromResponsibleId: null, fromResponsible: null, toResponsibleId: 2, toResponsible: 'Pessoa inicial',
       occurredAt: '2026-11-17T12:00:00Z', reason: null
     };
-    http.expectOne(caseUrl + '/history?page=0&size=20').flush({
+    http.expectOne(caseUrl + '/history?page=0&size=10').flush({
       content: [{
         ...entry, id: 2, version: 1, type: 'STAGE_CHANGED',
         fromStage: 'CUSTOM_1', fromStageLabel: 'Nome anterior da etapa', toStageLabel: undefined
       }, entry],
-      totalElements: 2, totalPages: 1, number: 0, size: 20
+      totalElements: 2, totalPages: 1, number: 0, size: 10
     });
     fixture.detectChanges();
     expect(card.querySelector('.revisions')?.textContent).toContain('Nome anterior da etapa → Recebido');
@@ -200,7 +198,6 @@ describe('Casos no acompanhamento do estudante', () => {
     });
     expect(reason.matches(':disabled')).toBeTrue();
     patch.flush({ ...currentCase, stage: 'SCREENING', allowedNextStages: ['RECEIVED', 'CLOSED'], version: 3 });
-    http.expectOne(studentUrl + '/timeline?limit=100').flush([]);
     fixture.detectChanges();
     expect(card.querySelector('textarea')).toBeNull();
     expect(card.textContent).toContain('Versão 3');
@@ -256,7 +253,6 @@ describe('Casos no acompanhamento do estudante', () => {
     const patch = http.expectOne(caseUrl + '/stage');
     expect(patch.request.body).toEqual({ stage: 'ARCHIVED', summary: closedCase.summary, version: 2 });
     patch.flush({ ...closedCase, stage: 'ARCHIVED', version: 3, allowedNextStages: [] });
-    http.expectOne(studentUrl + '/timeline?limit=100').flush([]);
     fixture.detectChanges();
     expect(card.querySelector('select, textarea')).toBeNull();
   });
@@ -278,7 +274,6 @@ describe('Casos no acompanhamento do estudante', () => {
     click(fixture.nativeElement, 'Acompanhamento');
     const title = field<HTMLInputElement>(fixture.nativeElement, 'input[formControlName="title"]', 'Rascunho independente');
     patch.flush({ ...currentCase, responsible: 'Pessoa elegível', responsibleId: 7, version: 1 });
-    http.expectOne(studentUrl + '/timeline?limit=100').flush([]);
     fixture.detectChanges();
     expect(title.value).toBe('Rascunho independente');
     openCases();
@@ -322,30 +317,30 @@ describe('Casos no acompanhamento do estudante', () => {
     const retry = http.expectOne(caseUrl + '/responsible');
     expect(retry.request.body).toEqual({ responsibleId: 7, version: 2, reason: 'Motivo preservado' });
     retry.flush({ ...currentCase, stage: 'SCREENING', allowedNextStages: ['RECEIVED', 'CLOSED'], version: 3, responsibleId: 7, responsible: 'Pessoa elegível' });
-    http.expectOne(studentUrl + '/timeline?limit=100').flush([]);
   });
 
-  it('mantém o filtro da linha do tempo quando uma atualização de caso chega atrasada', () => {
+  it('reinicia a paginação da linha do tempo e cancela a consulta anterior ao filtrar', () => {
     setup();
-    const [card] = openCases();
-    field<HTMLSelectElement>(card, 'select', 'SCREENING');
-    click(card, 'Registrar etapa');
-    click(fixture.nativeElement.querySelector('[role="alertdialog"]'), 'Registrar etapa');
-    http.expectOne(caseUrl + '/stage').flush({ ...currentCase, stage: 'SCREENING', allowedNextStages: ['RECEIVED', 'CLOSED'], version: 1 });
-    const refresh = http.expectOne(studentUrl + '/timeline?limit=100');
-
-    click(fixture.nativeElement, 'Linha do tempo');
-    const openedTimeline = http.expectOne(studentUrl + '/timeline?limit=100');
-    field<HTMLSelectElement>(fixture.nativeElement, '.section-header select', 'DOSSIER');
+    const root: HTMLElement = fixture.nativeElement;
+    const timeline = studentUrl + '/timeline/page';
+    click(root, 'Linha do tempo');
     const event = { id: '1', actor: 'Pessoa inicial', createdAt: '2026-11-17T12:00:00Z' };
-    http.expectOne(studentUrl + '/timeline?limit=100&type=DOSSIER').flush([
-      { ...event, eventType: 'DOSSIER_UPDATED', title: 'Edição do dossiê' }
-    ]);
-    refresh.flush([{ ...event, eventType: 'CASE_STAGE_CHANGED', title: 'Mudança de caso' }]);
-    openedTimeline.flush([{ ...event, eventType: 'CASE_STAGE_CHANGED', title: 'Mudança de caso' }]);
+    http.expectOne(timeline + '?page=0&size=10').flush({
+      content: [{ ...event, eventType: 'CASE_STAGE_CHANGED', title: 'Mudança de caso' }],
+      totalElements: 12, totalPages: 2, number: 0, size: 10
+    });
     fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('.timeline').textContent).toContain('Edição do dossiê');
-    expect(fixture.nativeElement.querySelector('.timeline').textContent).not.toContain('Mudança de caso');
+    click(root, '2');
+    const laterPage = http.expectOne(timeline + '?page=1&size=10');
+    field<HTMLSelectElement>(root, 'select:has(option[value="DOSSIER"])', 'DOSSIER');
+    expect(laterPage.cancelled).toBeTrue();
+    http.expectOne(timeline + '?page=0&size=10&type=DOSSIER').flush({
+      content: [{ ...event, eventType: 'DOSSIER_UPDATED', title: 'Edição do dossiê' }],
+      totalElements: 1, totalPages: 1, number: 0, size: 10
+    });
+    fixture.detectChanges();
+    expect(root.querySelector('.timeline')?.textContent).toContain('Edição do dossiê');
+    expect(root.querySelector('.timeline')?.textContent).not.toContain('Mudança de caso');
   });
 
   it('permite repetir a consulta de candidatos e impede escolher o próprio responsável', () => {
@@ -381,7 +376,7 @@ describe('Casos no acompanhamento do estudante', () => {
     expect(card.querySelector('select, textarea')).toBeNull();
     const path = '/api/v1/cases/51/history';
     click(card, 'Consultar histórico');
-    const first = http.expectOne(path + '?page=0&size=20');
+    const first = http.expectOne(path + '?page=0&size=10');
     first.flush(null, { status: 500, statusText: 'Server Error' });
     fixture.detectChanges();
     expect(card.querySelector('[role="alert"]')?.textContent).toBeTruthy();
@@ -393,26 +388,34 @@ describe('Casos no acompanhamento do estudante', () => {
       toResponsible: 'Nome novo registrado', actorId: 2, actor: 'Autor registrado',
       occurredAt: '2026-11-17T12:00:00Z', reason: 'Motivo registrado'
     };
-    http.expectOne(path + '?page=0&size=20').flush({
-      content: [row], totalElements: 21, totalPages: 2, number: 0, size: 20
+    http.expectOne(path + '?page=0&size=10').flush({
+      content: [row], totalElements: 11, totalPages: 2, number: 0, size: 10
     });
     fixture.detectChanges();
     expect(card.textContent).toContain('Nome anterior registrado');
     expect(card.textContent).toContain('Nome novo registrado');
     expect(card.textContent).toContain('Autor registrado');
     expect(card.textContent).toContain('Motivo registrado');
-    click(card, 'Próxima');
-    http.expectOne(path + '?page=1&size=20').flush({
+    click(card, '2');
+    http.expectOne(path + '?page=1&size=10').flush({
       content: [{
         ...row, id: 1, version: 0, type: 'OPENED', fromStage: null,
         fromResponsibleId: null, fromResponsible: null, toResponsibleId: 2,
         toResponsible: 'Pessoa que abriu', reason: null
       }],
-      totalElements: 21, totalPages: 2, number: 1, size: 20
+      totalElements: 11, totalPages: 2, number: 1, size: 10
     });
     fixture.detectChanges();
     expect(card.textContent).toContain('Pessoa que abriu');
     expect(button(card, 'Próxima').disabled).toBeTrue();
     expect(button(card, 'Anterior').disabled).toBeFalse();
+
+    field<HTMLSelectElement>(card, 'select', 'RESPONSIBLE_CHANGED');
+    http.expectOne(path + '?page=0&size=10&type=RESPONSIBLE_CHANGED').flush({
+      content: [row], totalElements: 1, totalPages: 1, number: 0, size: 10
+    });
+    fixture.detectChanges();
+    expect(card.querySelector('.revisions')?.textContent).toContain('Nome novo registrado');
+    expect(card.querySelector('.revisions')?.textContent).not.toContain('Pessoa que abriu');
   });
 });

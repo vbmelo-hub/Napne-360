@@ -426,6 +426,19 @@ class CaseControllerIntegrationTest {
         assertThat(history(other.getId(), 0, 20).get("totalElements").asInt()).isZero();
     }
 
+    @Test void historyFiltersByTypeBeforePickingAPage() throws Exception {
+        perform(patch(stagePath()).content(stageBody("SCREENING", "Triagem", 0)), actor).andExpect(status().isOk());
+        perform(patch(responsiblePath()).content(transferBody(candidate.getId(), "1", null)), actor)
+                .andExpect(status().isOk());
+
+        perform(get("/api/v1/cases/" + legacy.getId() + "/history")
+                .param("type", "STAGE_CHANGED").param("size", "1"), actor)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].type").value("STAGE_CHANGED"))
+                .andExpect(jsonPath("$.content[0].version").value(1));
+    }
+
     @ParameterizedTest @ValueSource(strings = {"page=-1", "page=1.1", "page=texto", "page=2147483648", "page=2147483647&size=100", "size=0", "size=-1", "size=101", "size=1.5", "size=texto", "size="})
     void invalidPaginationIs400(String query) throws Exception {
         perform(get("/api/v1/cases/" + legacy.getId() + "/history?" + query), actor).andExpect(status().isBadRequest());

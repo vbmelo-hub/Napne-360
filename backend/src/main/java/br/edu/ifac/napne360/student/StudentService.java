@@ -52,10 +52,11 @@ public class StudentService {
     @Transactional
     public StudentDetails create(StudentRequest request, Authentication auth, HttpServletRequest http) {
         UserAccount user = currentUser.require();
-        Course course = courses.findById(request.courseId()).orElseThrow(() -> new NotFoundException("Curso não encontrado."));
+        Course course = courses.findByIdForUpdate(request.courseId()).orElseThrow(() -> new NotFoundException("Curso não encontrado."));
         if (user.getCampus() == null || !user.getCampus().getId().equals(course.getCampus().getId())) {
             throw new IllegalArgumentException("O curso deve pertencer ao campus do usuário.");
         }
+        if (!course.isActive()) throw new ConflictException("O curso está arquivado.");
         if (students.existsByRegistration(request.registration())) throw new ConflictException("Matrícula já cadastrada.");
         Student student = Student.builder()
                 .campus(user.getCampus()).course(course).registration(request.registration().trim())
@@ -68,9 +69,15 @@ public class StudentService {
     }
 
     @Transactional
-    public StudentDetails update(Student student, StudentRequest request, Authentication auth, HttpServletRequest http) {
-        Course course = courses.findById(request.courseId()).orElseThrow(() -> new NotFoundException("Curso não encontrado."));
+    public StudentDetails update(Student snapshot, StudentRequest request, Authentication auth, HttpServletRequest http) {
+        Student student = students.findByIdForUpdate(snapshot.getId())
+                .orElseThrow(() -> new NotFoundException("Estudante não encontrado."));
+        if (student.getVersion() != snapshot.getVersion()) throw new ConflictException("O cadastro foi alterado.");
+        Course course = courses.findByIdForUpdate(request.courseId()).orElseThrow(() -> new NotFoundException("Curso não encontrado."));
         if (!student.getCampus().getId().equals(course.getCampus().getId())) throw new IllegalArgumentException("Curso inválido para o campus.");
+        if (!course.isActive() && !course.getId().equals(student.getCourse().getId())) {
+            throw new ConflictException("O curso está arquivado.");
+        }
         student.setCourse(course);
         student.setCivilName(request.civilName().trim());
         student.setSocialName(blankToNull(request.socialName()));

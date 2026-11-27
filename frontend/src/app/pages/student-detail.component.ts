@@ -1,18 +1,22 @@
 import { DatePipe } from '@angular/common';
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, inject, signal, viewChildren } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, FormControl, FormRecord, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { forkJoin } from 'rxjs';
+import { Subscription, forkJoin } from 'rxjs';
 import { DOSSIER_FIELDS, RECORD_FIELDS } from '../core/care-forms';
 import { ApiService } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
-import { Attachment, CareRecord, Course, Dossier, NapneCase, Pei, ReferenceOption, StudentDetails, Subject, TimelineEvent } from '../core/models';
+import { createListView } from '../core/list-view';
+import { Attachment, CareRecord, Course, Dossier, NapneCase, Page, Pei, ReferenceOption, StudentDetails, Subject, TimelineEvent } from '../core/models';
 import { errorMessage, labelFor, toneFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ModalShellComponent } from '../shared/modal-shell.component';
+import { PaginationComponent } from '../shared/pagination.component';
 import { CaseCardComponent } from './case-card.component';
+import { CareRecordHistoryComponent } from './care-record-history.component';
 
-@Component({standalone:true,imports:[ReactiveFormsModule,RouterLink,DatePipe,CaseCardComponent,ModalShellComponent],template:`
+@Component({standalone:true,imports:[ReactiveFormsModule,RouterLink,DatePipe,CaseCardComponent,CareRecordHistoryComponent,ModalShellComponent,PaginationComponent],template:`
   <a routerLink="/estudantes" class="back-link">← Voltar aos estudantes</a>
   @if(loading()){<div class="loading-grid" aria-label="Carregando acompanhamento"><span class="skeleton skeleton-card"></span><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-card"></span></div>}
   @if(loadError()){<div class="error" role="alert"><strong>Não foi possível carregar o acompanhamento.</strong><p>{{loadError()}}</p><button class="secondary" (click)="loadAll()">Tentar novamente</button></div>}
@@ -55,7 +59,46 @@ import { CaseCardComponent } from './case-card.component';
         @if(auth.hasRole('NAPNE')&&!dossier()?.redacted){<div class="sticky-actions"><span>{{dossierDirty()?'Existem alterações não salvas.':'Todas as alterações estão salvas.'}}</span><button type="submit" [disabled]="dossierSaving()">@if(dossierSaving()){<span class="spinner"></span>}Salvar alterações</button></div>}
         </div>
       </form>
-      @if(historyVisible()){<section class="history card"><div class="section-header"><div><h2>Histórico do dossiê</h2><p>Versões anteriores preservadas para rastreabilidade.</p></div><button class="secondary compact" (click)="historyVisible.set(false)">Fechar histórico</button></div>@if(historyLoading()){<span class="skeleton skeleton-card"></span>}@if(!historyLoading()&&dossierHistory().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhuma versão anterior</h3><p>O histórico aparecerá após uma nova atualização do dossiê.</p></div>}@for(version of dossierHistory();track version.version){<details><summary>Versão {{version.version}} · {{version.author}} · {{version.occurredAt|date:'dd/MM/yyyy, HH:mm'}}</summary><div class="details-content">@for(change of changes(version.fields);track change.key){<article class="change"><h3>{{sectionLabel(change.key)}}</h3><div class="comparison"><div><span>Versão anterior</span><p>{{displayValue(change.previous)}}</p></div><div><span>Versão atual</span><p>{{displayValue(change.current)}}</p></div></div></article>}</div></details>}</section>}
+      @if (historyVisible()) {
+        <section class="history card">
+          <div class="section-header">
+            <div><h2>Histórico do dossiê</h2><p>Versões anteriores preservadas para rastreabilidade.</p></div>
+            <button type="button" class="secondary compact" (click)="historyVisible.set(false)">Fechar histórico</button>
+          </div>
+          @if (historyLoading()) {
+            <span class="skeleton skeleton-card"></span>
+          } @else {
+            <label class="list-filter">
+              Buscar versões do dossiê por número ou autoria
+              <input type="search" [value]="dossierRevisions.query()" (input)="dossierRevisions.setQuery($any($event.target).value)">
+            </label>
+            @if (dossierHistory().length === 0) {
+              <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhuma versão anterior</h3><p>O histórico aparecerá após uma nova atualização do dossiê.</p></div>
+            }
+            @for (version of dossierRevisions.items(); track version.version) {
+              <details>
+                <summary>Versão {{version.version}} · {{version.author}} · {{version.occurredAt | date:'dd/MM/yyyy, HH:mm'}}</summary>
+                <div class="details-content">
+                  @for (change of changes(version.fields); track change.key) {
+                    <article class="change">
+                      <h3>{{sectionLabel(change.key)}}</h3>
+                      <div class="comparison">
+                        <div><span>Versão anterior</span><p>{{displayValue(change.previous)}}</p></div>
+                        <div><span>Versão atual</span><p>{{displayValue(change.current)}}</p></div>
+                      </div>
+                    </article>
+                  }
+                </div>
+              </details>
+            }
+            @if (dossierHistory().length > 0 && dossierRevisions.totalElements() === 0) {
+              <p role="status">Nenhuma versão do dossiê corresponde à busca.</p>
+            }
+            <app-pagination [page]="dossierRevisions.page()" [totalPages]="dossierRevisions.totalPages()"
+              label="Páginas do histórico do dossiê" (pageChange)="dossierRevisions.setPage($event)" />
+          }
+        </section>
+      }
     }
 
     @if(auth.hasRole('NAPNE')){
@@ -70,12 +113,22 @@ import { CaseCardComponent } from './case-card.component';
         </form>
         <section class="card">
           <h2>Casos registrados</h2>
+          <label class="list-filter">
+            Buscar casos por origem, etapa, responsável ou resumo
+            <input type="search" [value]="caseList.query()" [disabled]="caseListBusy()" (input)="caseList.setQuery($any($event.target).value)">
+          </label>
           @if(cases().length===0){
             <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum caso registrado</h3><p>Os encaminhamentos e suas etapas aparecerão aqui.</p></div>
+          } @else if (caseList.totalElements() === 0) {
+            <p role="status">Nenhum caso corresponde à busca.</p>
           }
-          @for(item of cases();track item.id){
+          @for(item of caseList.items();track item.id){
             <app-case-card [item]="item" (caseUpdated)="updateCaseFromCard($event)" />
           }
+          <fieldset class="catalog-field" [disabled]="caseListBusy()">
+            <app-pagination [page]="caseList.page()" [totalPages]="caseList.totalPages()"
+              label="Páginas de casos" (pageChange)="caseList.setPage($event)" />
+          </fieldset>
         </section>
       </section>
     }
@@ -98,9 +151,51 @@ import { CaseCardComponent } from './case-card.component';
           }
         }
         <div class="grid two" [formGroup]="structuredRecord">@for(field of activeRecordFields();track field.key){<label>{{field.label}}<textarea [formControlName]="field.key"></textarea></label>}</div><label>Comentários adicionais<textarea formControlName="notes" placeholder="Registre somente informações necessárias à finalidade pedagógica."></textarea></label><label>Situação<select formControlName="status"><option value="DRAFT">Rascunho</option><option value="ACTIVE">Finalizado</option></select></label></fieldset><div class="record-actions"><button type="submit" [disabled]="recordForm.invalid||actionBusy()">{{editingRecord()?'Salvar alterações':'Salvar registro'}}</button>@if(editingRecord()){<button type="button" class="secondary" (click)="cancelRecordEdit()" [disabled]="actionBusy()">Cancelar edição</button>}</div></form>}
-      <section class="records-grid">@if(records().length===0){<div class="empty-state card"><span class="empty-state-mark">0</span><h3>Nenhum registro pedagógico</h3><p>Os registros autorizados para este estudante aparecerão aqui.</p></div>}@for(item of records();track item.id){<article class="card record-card" [attr.data-record-id]="item.id"><div class="record-head"><div><span class="eyebrow">{{label(item.type)}}</span><h3>{{item.title}}</h3></div><div class="record-badges"><span [class]="'badge badge--'+tone(item.status)">{{label(item.status)}}</span>@if(canEditRecord(item)){<button type="button" class="secondary compact" (click)="editRecord(item)" [disabled]="actionBusy()">Editar</button>}</div></div>
-        @if(auth.hasRole('NAPNE')&&item.caseId;as caseId){<p>{{recordCaseLabel(caseId)}}</p>}
-        <div class="record-content">@for(field of recordFields[item.type];track field.key){@if(item.content[field.key]){<p><strong>{{field.label}}</strong><span>{{item.content[field.key]}}</span></p>}}@if(item.content['notes']){<p><strong>Comentários adicionais</strong><span>{{item.content['notes']}}</span></p>}</div>@if(item.history&&item.history.length>0){<details class="record-history"><summary>Histórico de versões ({{item.history.length}})</summary><div class="history-revisions">@for(rev of item.history;track rev.occurredAt){<article class="revision-card"><header class="revision-header"><strong>Versão {{rev.version!==null&&rev.version!==undefined?rev.version:'anterior'}}: {{rev.title}}</strong><span [class]="'badge badge--'+tone(rev.status)">{{label(rev.status)}}</span></header><small>{{rev.author}} · {{rev.occurredAt|date:'dd/MM/yyyy, HH:mm'}}</small><div class="revision-content">@for(field of recordFields[item.type];track field.key){@if(rev.content[field.key]){<p><strong>{{field.label}}:</strong> <span>{{rev.content[field.key]}}</span></p>}}@if(rev.content['notes']){<p><strong>Comentários adicionais:</strong> <span>{{rev.content['notes']}}</span></p>}</div></article>}</div></details>}<footer>{{item.createdBy}} · {{item.updatedAt|date:'dd/MM/yyyy, HH:mm'}}@if(item.version!==null&&item.version!==undefined){ · v{{item.version}}}</footer></article>}</section>
+      <section class="records-list" aria-label="Registros de acompanhamento">
+        <label class="list-filter">
+          Buscar registros por título, tipo, situação ou autoria
+          <input type="search" [value]="recordList.query()" (input)="recordList.setQuery($any($event.target).value)">
+        </label>
+        <div class="records-grid">
+          @if (records().length === 0) {
+            <div class="empty-state card"><span class="empty-state-mark">0</span><h3>Nenhum registro pedagógico</h3><p>Os registros autorizados para este estudante aparecerão aqui.</p></div>
+          } @else if (recordList.totalElements() === 0) {
+            <p role="status">Nenhum registro corresponde à busca.</p>
+          }
+          @for (item of recordList.items(); track item.id) {
+            <article class="card record-card" [attr.data-record-id]="item.id">
+              <div class="record-head">
+                <div><span class="eyebrow">{{label(item.type)}}</span><h3>{{item.title}}</h3></div>
+                <div class="record-badges">
+                  <span [class]="'badge badge--' + tone(item.status)">{{label(item.status)}}</span>
+                  @if (canEditRecord(item)) {
+                    <button type="button" class="secondary compact" (click)="editRecord(item)" [disabled]="actionBusy()">Editar</button>
+                  }
+                </div>
+              </div>
+              @if (auth.hasRole('NAPNE') && item.caseId; as caseId) {
+                <p>{{recordCaseLabel(caseId)}}</p>
+              }
+              <div class="record-content">
+                @for (field of recordFields[item.type]; track field.key) {
+                  @if (item.content[field.key]) {
+                    <p><strong>{{field.label}}</strong><span>{{item.content[field.key]}}</span></p>
+                  }
+                }
+                @if (item.content['notes']) {
+                  <p><strong>Comentários adicionais</strong><span>{{item.content['notes']}}</span></p>
+                }
+              </div>
+              @if (item.history?.length) {
+                <app-care-record-history [record]="item" />
+              }
+              <footer>{{item.createdBy}} · {{item.updatedAt | date:'dd/MM/yyyy, HH:mm'}}@if (item.version !== null && item.version !== undefined) { · v{{item.version}} }</footer>
+            </article>
+          }
+        </div>
+        <app-pagination [page]="recordList.page()" [totalPages]="recordList.totalPages()"
+          label="Páginas de acompanhamentos" (pageChange)="recordList.setPage($event)" />
+      </section>
     }
 
     @if(tab()==='pei'){
@@ -120,40 +215,132 @@ import { CaseCardComponent } from './case-card.component';
           <div><button type="submit" [disabled]="peiForm.invalid||actionBusy()||termsLoading()||!!termsError()||academicTerms().length===0">Criar rascunho</button></div>
         </form>
       }}
-      <section class="card"><h2>Planos por componente</h2>@if(peis().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum PEI criado</h3><p>Nenhum PEI criado está disponível para este estudante.</p></div>}@for(item of peis();track item.id){<article class="pei-row"><div><strong>{{subjectName(item.subjectId)}}</strong><span>{{item.academicTermLabel??item.academicTerm}} · revisão {{item.revision}}</span></div><span [class]="'badge badge--'+tone(item.status)">{{peiStatusLabel(item.status)}}</span><a class="button secondary compact" [routerLink]="['/estudantes',value.id,'pei',item.id]">@if(item.allowedActions?.includes('EDIT')){Editar rascunho}@else{Consultar PEI}</a></article>}</section>
+      <section class="card">
+        <h2>Planos por componente</h2>
+        <label class="list-filter">
+          Buscar PEIs por componente, período ou situação
+          <input type="search" [value]="peiList.query()" (input)="peiList.setQuery($any($event.target).value)">
+        </label>
+        @if (peis().length === 0) {
+          <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum PEI criado</h3><p>Nenhum PEI criado está disponível para este estudante.</p></div>
+        } @else if (peiList.totalElements() === 0) {
+          <p role="status">Nenhum PEI corresponde à busca.</p>
+        }
+        @for (item of peiList.items(); track item.id) {
+          <article class="pei-row">
+            <div><strong>{{peiSubjectName(item)}}</strong><span>{{item.academicTermLabel ?? item.academicTerm}} · revisão {{item.revision}}</span></div>
+            <span [class]="'badge badge--' + tone(item.status)">{{peiStatusLabel(item.status)}}</span>
+            <a class="button secondary compact" [routerLink]="['/estudantes',value.id,'pei',item.id]">@if (item.allowedActions?.includes('EDIT')) { Editar rascunho } @else { Consultar PEI }</a>
+          </article>
+        }
+        <app-pagination [page]="peiList.page()" [totalPages]="peiList.totalPages()"
+          label="Páginas de PEIs" (pageChange)="peiList.setPage($event)" />
+      </section>
     }
 
     @if(tab()==='documents'){
       <div class="section-header"><div><span class="eyebrow">Acervo autorizado</span><h2>Documentos</h2><p>Arquivos protegidos com histórico de versões.</p></div></div>
       @if(auth.hasRole('NAPNE')){<form class="upload-card card" (ngSubmit)="upload()"><div><h3>Enviar documento</h3><p>PDF, PNG, JPEG ou DOCX, até 10 MB.</p></div><div class="grid two"><label class="required">Categoria<input [formControl]="attachmentCategory"></label><label class="required upload-field">Arquivo<input type="file" (change)="selectFile($event)" accept=".pdf,.png,.jpg,.jpeg,.docx"><span>{{selectedFile()?.name||'Selecione um arquivo'}}</span></label><label>Relacionar à versão anterior<select [formControl]="previousAttachment"><option value="">Criar novo documento</option>@for(item of attachments();track item.id){<option [value]="item.id">{{item.originalName}} · revisão {{item.revision}}</option>}</select><span class="field-hint">Use esta opção quando o arquivo substituir uma versão já enviada.</span></label></div><button [disabled]="!selectedFile()||actionBusy()">Enviar documento</button></form>}
-      <section class="card"><h2>Arquivos disponíveis</h2>@if(attachments().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum documento</h3><p>Nenhum arquivo autorizado está disponível para este estudante.</p></div>}<div class="document-list">@for(item of attachments();track item.id){<article class="document-row"><span class="file-mark" aria-hidden="true">{{fileType(item)}}</span><div><strong>{{item.originalName}}</strong><p>{{item.category}} · revisão {{item.revision}} · {{formatSize(item.size)}}</p><small>{{item.uploadedBy}} · {{item.uploadedAt|date:'dd/MM/yyyy, HH:mm'}}</small></div><button class="secondary compact" (click)="download(item)">Baixar</button></article>}</div></section>
+      <section class="card">
+        <h2>Arquivos disponíveis</h2>
+        <label class="list-filter">
+          Buscar documentos por nome, categoria ou autoria
+          <input type="search" [value]="attachmentList.query()" (input)="attachmentList.setQuery($any($event.target).value)">
+        </label>
+        @if (attachments().length === 0) {
+          <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum documento</h3><p>Nenhum arquivo autorizado está disponível para este estudante.</p></div>
+        } @else if (attachmentList.totalElements() === 0) {
+          <p role="status">Nenhum documento corresponde à busca.</p>
+        }
+        <div class="document-list">
+          @for (item of attachmentList.items(); track item.id) {
+            <article class="document-row">
+              <span class="file-mark" aria-hidden="true">{{fileType(item)}}</span>
+              <div><strong>{{item.originalName}}</strong><p>{{item.category}} · revisão {{item.revision}} · {{formatSize(item.size)}}</p><small>{{item.uploadedBy}} · {{item.uploadedAt | date:'dd/MM/yyyy, HH:mm'}}</small></div>
+              <button type="button" class="secondary compact" (click)="download(item)">Baixar</button>
+            </article>
+          }
+        </div>
+        <app-pagination [page]="attachmentList.page()" [totalPages]="attachmentList.totalPages()"
+          label="Páginas de documentos" (pageChange)="attachmentList.setPage($event)" />
+      </section>
     }
 
-    @if(tab()==='timeline'){
-      <div class="section-header"><div><span class="eyebrow">Histórico integrado</span><h2>Linha do tempo</h2><p>Acontecimentos do acompanhamento em ordem cronológica.</p></div><label>Filtrar por tipo<select [value]="timelineFilter()" (change)="filterTimeline($any($event.target).value)"><option value="">Todos os eventos</option><option value="CASE">Casos e etapas</option><option value="DOSSIER">Dossiê</option><option value="CARE_RECORD">Acompanhamentos</option><option value="PEI">PEI</option><option value="ATTACHMENT">Documentos</option></select></label></div>
-      <section class="card">@if(timeline().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum evento na linha do tempo</h3><p>Os acontecimentos autorizados aparecerão aqui.</p></div>}<ol class="timeline">@for(item of timeline();track item.id){<li [attr.data-type]="item.eventType"><span class="timeline-dot" aria-hidden="true"></span><div><span class="eyebrow">{{label(item.eventType)}}</span><h3>{{item.title}}</h3><p>{{item.actor}} · {{item.createdAt|date:'dd/MM/yyyy, HH:mm'}}</p></div></li>}</ol></section>
+    @if (tab() === 'timeline') {
+      <div class="section-header"><div><span class="eyebrow">Histórico integrado</span><h2>Linha do tempo</h2><p>Acontecimentos do acompanhamento em ordem cronológica.</p></div></div>
+      <section class="card">
+        <label class="list-filter">Filtrar por tipo
+          <select [value]="timelineFilter()" (change)="filterTimeline($any($event.target).value)">
+            <option value="">Todos os eventos</option><option value="CASE">Casos e etapas</option><option value="DOSSIER">Dossiê</option>
+            <option value="CARE_RECORD">Acompanhamentos</option><option value="PEI">PEI</option><option value="ATTACHMENT">Documentos</option>
+          </select>
+        </label>
+        @if (timelineLoading()) {
+          <p role="status">Carregando linha do tempo…</p>
+        }
+        @if (timelineError()) {
+          <div class="error" role="alert">{{timelineError()}}</div>
+          <button type="button" class="secondary compact" (click)="refreshTimeline(requestedTimelinePage())">Tentar novamente</button>
+        }
+        @if (timeline(); as page) {
+          @if (page.content.length === 0) {
+            <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum evento na linha do tempo</h3><p>{{timelineFilter() ? 'Nenhum acontecimento do tipo selecionado está disponível.' : 'Os acontecimentos autorizados aparecerão aqui.'}}</p></div>
+          }
+          <ol class="timeline">
+            @for (item of page.content; track item.id) {
+              <li [attr.data-type]="item.eventType"><span class="timeline-dot" aria-hidden="true"></span><div><span class="eyebrow">{{label(item.eventType)}}</span><h3>{{item.title}}</h3><p>{{item.actor}} · {{item.createdAt | date:'dd/MM/yyyy, HH:mm'}}</p></div></li>
+            }
+          </ol>
+          <app-pagination [page]="page.number" [totalPages]="page.totalPages"
+            label="Páginas da linha do tempo" (pageChange)="refreshTimeline($event)" />
+        }
+      </section>
     }
   }
   <app-modal-shell [open]="editStudentOpen()" eyebrow="Cadastro acadêmico" title="Editar dados do estudante" description="Atualize somente os dados cadastrais. O histórico pedagógico e o dossiê permanecem preservados." (closed)="closeStudentEdit()">
     <form class="stack" [formGroup]="studentEditForm" (ngSubmit)="saveStudent()">
       <div class="notice"><strong>Matrícula {{student()?.registration}}</strong><br><span>A matrícula identifica o cadastro e não é alterada por esta edição.</span></div>
       <fieldset><legend>Identificação</legend><div class="grid two"><label class="required">Nome civil<input formControlName="civilName" autocomplete="off"></label><label>Nome social<input formControlName="socialName" autocomplete="off"></label><label>Data de nascimento<input type="date" formControlName="birthDate"></label></div></fieldset>
-      <fieldset><legend>Vínculo acadêmico e contato</legend><div class="grid two"><label class="required">Curso<select formControlName="courseId"><option value="">Selecione</option>@for(course of courses();track course.id){<option [value]="course.id">{{course.name}}</option>}</select></label><label>E-mail institucional<input type="email" formControlName="institutionalEmail"></label><label>Telefone<input formControlName="phone"></label></div></fieldset>
+      <fieldset><legend>Vínculo acadêmico e contato</legend><div class="grid two"><label class="required">Curso<select formControlName="courseId"><option value="">Selecione</option>
+        @if (unlistedStudentCourse(); as current) {
+          <option [value]="current.courseId">{{current.course}} · vínculo atual</option>
+        }
+        @for(course of courses();track course.id){<option [value]="course.id">{{course.name}}</option>}</select></label><label>E-mail institucional<input type="email" formControlName="institutionalEmail"></label><label>Telefone<input formControlName="phone"></label></div></fieldset>
       <div class="dialog-actions"><button type="button" class="secondary" (click)="closeStudentEdit()" [disabled]="studentSaving()">Cancelar</button><button type="submit" [disabled]="studentEditForm.invalid||studentSaving()">@if(studentSaving()){<span class="spinner"></span>}Salvar alterações</button></div>
     </form>
   </app-modal-shell>
-`,styles:[`.dossier-fields,.catalog-field{border:0;padding:0;margin:0;min-width:0}.dossier-fields{display:grid}.back-link{display:inline-flex;margin-bottom:1rem;font-weight:700;text-decoration:none}.student-header{display:flex;align-items:center;gap:1.15rem;background:linear-gradient(120deg,#fff 60%,var(--primary-50));border:1px solid var(--border);border-radius:var(--radius-xl);padding:1.5rem}.student-identity{min-width:0;flex:1}.student-head-actions{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;justify-content:flex-end}.student-identity h1{margin:.15rem 0}.student-meta{display:flex;gap:.7rem;flex-wrap:wrap;color:var(--ink-600)}.student-meta span+span::before{content:'·';margin-right:.7rem}.student-tabs{background:var(--background);position:sticky;top:4.75rem;z-index:20;padding-top:1rem}.dossier-layout{display:grid;grid-template-columns:14rem minmax(0,1fr);gap:1rem;align-items:start}.section-index{position:sticky;top:9rem;display:grid;gap:.25rem;padding:1rem}.section-index strong{padding:.4rem}.section-index a{padding:.45rem;border-radius:.4rem;text-decoration:none;font-size:.85rem}.section-index a:hover{background:var(--primary-50)}summary{display:flex;justify-content:space-between;gap:1rem}summary small{color:var(--ink-600);font-weight:500}.sticky-actions{position:sticky;bottom:1rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;background:var(--primary-950);color:#fff;border-radius:var(--radius-md);padding:.8rem 1rem;box-shadow:var(--shadow-md);font-size:.85rem}.history{margin-top:1rem;display:grid;gap:.75rem}.change{padding:.5rem 0}.comparison{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.comparison>div{background:var(--surface-soft);border:1px solid var(--border);border-radius:.5rem;padding:.8rem;min-width:0}.comparison span{font-size:.75rem;color:var(--ink-600);text-transform:uppercase;font-weight:800}.comparison p{white-space:pre-wrap;overflow-wrap:anywhere;margin:.5rem 0 0}.create-panel{margin-bottom:1rem}.records-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.record-card{display:flex;flex-direction:column}.record-head{display:flex;justify-content:space-between;gap:1rem}.record-head h3{margin:.2rem 0}.record-content p{border-top:1px solid var(--border);padding-top:.75rem}.record-content strong,.record-content span{display:block}.record-content strong{font-size:.78rem;color:var(--ink-600);margin-bottom:.15rem}.record-card footer{margin-top:auto;padding-top:1rem;color:var(--ink-600);font-size:.8rem}.record-badges{display:flex;align-items:center;gap:.5rem}.record-actions{display:flex;align-items:center;gap:.75rem}fieldset.record-form-fields{border:0;padding:0;margin:0;min-width:0;display:grid;gap:1rem}.record-history{margin-top:.75rem;padding-top:.75rem;border-top:1px dashed var(--border)}.record-history summary{cursor:pointer;font-size:.85rem;font-weight:600;color:var(--ink-700)}.history-revisions{margin-top:.5rem;display:grid;gap:.5rem}.revision-card{background:var(--surface-soft);border:1px solid var(--border);border-radius:.4rem;padding:.5rem;font-size:.8rem}.revision-header{display:flex;justify-content:space-between;align-items:center;gap:.5rem}.revision-card p{margin:.25rem 0 0;color:var(--ink-700)}.pei-row,.document-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:1rem;padding:1rem 0;border-top:1px solid var(--border)}.pei-row:first-of-type,.document-row:first-of-type{border-top:0}.pei-row strong,.pei-row span,.document-row strong,.document-row p,.document-row small{display:block}.pei-row>div>span,.document-row p,.document-row small{color:var(--ink-600);margin:0}.upload-card{margin-bottom:1rem}.upload-field input{position:absolute;opacity:0;width:1px;height:1px}.upload-field>span{display:flex;align-items:center;min-height:2.8rem;border:1px dashed var(--border-strong);border-radius:.5rem;padding:.7rem;color:var(--ink-600);cursor:pointer}.file-mark{width:3rem;height:3rem;border-radius:.65rem;display:grid;place-items:center;background:var(--primary-100);color:var(--primary-900);font-size:.67rem;font-weight:900}.timeline{list-style:none;padding:0;margin:0}.timeline li{position:relative;display:grid;grid-template-columns:1.2rem 1fr;gap:1rem;padding-bottom:1.5rem}.timeline li:not(:last-child)::before{content:'';position:absolute;left:.38rem;top:1rem;bottom:0;width:2px;background:var(--border)}.timeline-dot{position:relative;z-index:1;width:.82rem;height:.82rem;border:3px solid var(--primary-700);background:#fff;border-radius:50%;margin-top:.2rem}.timeline li[data-type=PEI] .timeline-dot{border-color:var(--info)}.timeline li[data-type=ATTACHMENT] .timeline-dot{border-color:var(--warning)}.timeline h3{margin:.15rem 0}.timeline p{color:var(--ink-600);margin:0}@media(max-width:900px){.student-tabs{top:4.25rem}.dossier-layout{grid-template-columns:1fr}.section-index{display:none}.records-grid{grid-template-columns:1fr}}@media(max-width:700px){.student-header{align-items:flex-start;flex-wrap:wrap}.student-head-actions{width:100%;justify-content:flex-start;margin-left:5.15rem}.student-tabs{margin-inline:-1rem;padding-left:1rem}.comparison{grid-template-columns:1fr}.sticky-actions{align-items:stretch;flex-direction:column}.sticky-actions button{width:100%}.pei-row,.document-row{grid-template-columns:auto 1fr}.pei-row>.badge{grid-column:2}.pei-row>.button,.document-row>button{grid-column:1/-1;width:100%}.section-header>label{width:100%}}` ]})
+`,styles:[`.dossier-fields,.catalog-field{border:0;padding:0;margin:0;min-width:0}.dossier-fields{display:grid}.back-link{display:inline-flex;margin-bottom:1rem;font-weight:700;text-decoration:none}.student-header{display:flex;align-items:center;gap:1.15rem;background:linear-gradient(120deg,#fff 60%,var(--primary-50));border:1px solid var(--border);border-radius:var(--radius-xl);padding:1.5rem}.student-identity{min-width:0;flex:1}.student-head-actions{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;justify-content:flex-end}.student-identity h1{margin:.15rem 0}.student-meta{display:flex;gap:.7rem;flex-wrap:wrap;color:var(--ink-600)}.student-meta span+span::before{content:'·';margin-right:.7rem}.student-tabs{background:var(--background);position:sticky;top:4.75rem;z-index:20;padding-top:1rem}.dossier-layout{display:grid;grid-template-columns:14rem minmax(0,1fr);gap:1rem;align-items:start}.section-index{position:sticky;top:9rem;display:grid;gap:.25rem;padding:1rem}.section-index strong{padding:.4rem}.section-index a{padding:.45rem;border-radius:.4rem;text-decoration:none;font-size:.85rem}.section-index a:hover{background:var(--primary-50)}summary{display:flex;justify-content:space-between;gap:1rem}summary small{color:var(--ink-600);font-weight:500}.sticky-actions{position:sticky;bottom:1rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;background:var(--primary-950);color:#fff;border-radius:var(--radius-md);padding:.8rem 1rem;box-shadow:var(--shadow-md);font-size:.85rem}.history{margin-top:1rem;display:grid;gap:.75rem}.change{padding:.5rem 0}.comparison{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.comparison>div{background:var(--surface-soft);border:1px solid var(--border);border-radius:.5rem;padding:.8rem;min-width:0}.comparison span{font-size:.75rem;color:var(--ink-600);text-transform:uppercase;font-weight:800}.comparison p{white-space:pre-wrap;overflow-wrap:anywhere;margin:.5rem 0 0}.create-panel{margin-bottom:1rem}.records-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.record-card{display:flex;flex-direction:column}.record-head{display:flex;justify-content:space-between;gap:1rem}.record-head h3{margin:.2rem 0}.record-content p{border-top:1px solid var(--border);padding-top:.75rem}.record-content strong,.record-content span{display:block}.record-content strong{font-size:.78rem;color:var(--ink-600);margin-bottom:.15rem}.record-card footer{margin-top:auto;padding-top:1rem;color:var(--ink-600);font-size:.8rem}.record-badges{display:flex;align-items:center;gap:.5rem}.record-actions{display:flex;align-items:center;gap:.75rem}fieldset.record-form-fields{border:0;padding:0;margin:0;min-width:0;display:grid;gap:1rem}.pei-row,.document-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:1rem;padding:1rem 0;border-top:1px solid var(--border)}.pei-row:first-of-type,.document-row:first-of-type{border-top:0}.pei-row strong,.pei-row span,.document-row strong,.document-row p,.document-row small{display:block}.pei-row>div>span,.document-row p,.document-row small{color:var(--ink-600);margin:0}.upload-card{margin-bottom:1rem}.upload-field input{position:absolute;opacity:0;width:1px;height:1px}.upload-field>span{display:flex;align-items:center;min-height:2.8rem;border:1px dashed var(--border-strong);border-radius:.5rem;padding:.7rem;color:var(--ink-600);cursor:pointer}.file-mark{width:3rem;height:3rem;border-radius:.65rem;display:grid;place-items:center;background:var(--primary-100);color:var(--primary-900);font-size:.67rem;font-weight:900}.timeline{list-style:none;padding:0;margin:0}.timeline li{position:relative;display:grid;grid-template-columns:1.2rem 1fr;gap:1rem;padding-bottom:1.5rem}.timeline li:not(:last-child)::before{content:'';position:absolute;left:.38rem;top:1rem;bottom:0;width:2px;background:var(--border)}.timeline-dot{position:relative;z-index:1;width:.82rem;height:.82rem;border:3px solid var(--primary-700);background:#fff;border-radius:50%;margin-top:.2rem}.timeline li[data-type=PEI] .timeline-dot{border-color:var(--info)}.timeline li[data-type=ATTACHMENT] .timeline-dot{border-color:var(--warning)}.timeline h3{margin:.15rem 0}.timeline p{color:var(--ink-600);margin:0}@media(max-width:900px){.student-tabs{top:4.25rem}.dossier-layout{grid-template-columns:1fr}.section-index{display:none}.records-grid{grid-template-columns:1fr}}@media(max-width:700px){.student-header{align-items:flex-start;flex-wrap:wrap}.student-head-actions{width:100%;justify-content:flex-start;margin-left:5.15rem}.student-tabs{margin-inline:-1rem;padding-left:1rem}.comparison{grid-template-columns:1fr}.sticky-actions{align-items:stretch;flex-direction:column}.sticky-actions button{width:100%}.pei-row,.document-row{grid-template-columns:auto 1fr}.pei-row>.badge{grid-column:2}.pei-row>.button,.document-row>button{grid-column:1/-1;width:100%}.section-header>label{width:100%}}` ]})
 export class StudentDetailComponent implements OnInit{
   private attachmentUpload?: { file: File; category: string; previousId: string; key: string };
-  private timelineRequest=0;
+  private timelineRequest?: Subscription;
+  private readonly destroyRef = inject(DestroyRef);
   private readonly route=inject(ActivatedRoute);private readonly api=inject(ApiService);private readonly fb=inject(FormBuilder);private readonly toast=inject(ToastService);readonly auth=inject(AuthService);
   readonly id=Number(this.route.snapshot.paramMap.get('id'));readonly tabs=[{id:'dossier',label:'Dossiê'},{id:'cases',label:'Casos'},{id:'records',label:'Acompanhamento'},{id:'pei',label:'PEI'},{id:'documents',label:'Documentos'},{id:'timeline',label:'Linha do tempo'}];readonly dossierFields=DOSSIER_FIELDS;readonly recordFields=RECORD_FIELDS;readonly dossierSections=[{key:'identification',label:'Identificação e demanda'},{key:'educationalNeeds',label:'Necessidades educacionais'},{key:'healthAndSupport',label:'Saúde e serviços de apoio'},{key:'familyContext',label:'Contexto familiar e autonomia'},{key:'schoolHistory',label:'História escolar'},{key:'strengths',label:'Potencialidades'},{key:'difficulties',label:'Dificuldades'},{key:'initialInterventions',label:'Intervenções e acompanhamento'}];readonly label=labelFor;readonly tone=toneFor;
   readonly structuredDossier=new FormRecord<FormControl<string>>(Object.fromEntries(Object.entries(DOSSIER_FIELDS).flatMap(([section,fields])=>fields.map(field=>[section+'.'+field.key,new FormControl('',{nonNullable:true})]))));readonly structuredRecord=new FormRecord<FormControl<string>>(Object.fromEntries(Object.values(RECORD_FIELDS).flat().map(field=>[field.key,new FormControl('',{nonNullable:true})])));
-  readonly student=signal<StudentDetails|null>(null);readonly dossier=signal<Dossier|null>(null);readonly cases=signal<NapneCase[]>([]);readonly records=signal<CareRecord[]>([]);readonly editingRecord=signal<CareRecord|null>(null);readonly peis=signal<Pei[]>([]);readonly timeline=signal<TimelineEvent[]>([]);readonly subjects=signal<Subject[]>([]);readonly courses=signal<Course[]>([]);readonly attachments=signal<Attachment[]>([]);readonly teachers=signal<{id:number,name:string,subjectId:number}[]>([]);readonly loading=signal(true);readonly loadError=signal('');readonly tab=signal('dossier');readonly timelineFilter=signal('');readonly selectedFile=signal<File|null>(null);readonly editStudentOpen=signal(false);readonly studentSaving=signal(false);readonly actionBusy=signal(false);readonly dossierSaving=signal(false);readonly dossierDirty=signal(false);readonly historyVisible=signal(false);readonly historyLoading=signal(false);readonly dossierHistory=signal<{version:number,fields:Record<string,unknown>,author:string,occurredAt:string}[]>([]);
+  readonly student=signal<StudentDetails|null>(null);readonly dossier=signal<Dossier|null>(null);readonly cases=signal<NapneCase[]>([]);readonly records=signal<CareRecord[]>([]);readonly editingRecord=signal<CareRecord|null>(null);readonly peis=signal<Pei[]>([]);readonly subjects=signal<Subject[]>([]);readonly courses=signal<Course[]>([]);readonly attachments=signal<Attachment[]>([]);readonly teachers=signal<{id:number,name:string,subjectId:number}[]>([]);readonly loading=signal(true);readonly loadError=signal('');readonly tab=signal('dossier');readonly timelineFilter=signal('');readonly selectedFile=signal<File|null>(null);readonly editStudentOpen=signal(false);readonly studentSaving=signal(false);readonly actionBusy=signal(false);readonly dossierSaving=signal(false);readonly dossierDirty=signal(false);readonly historyVisible=signal(false);readonly historyLoading=signal(false);readonly dossierHistory=signal<{version:number,fields:Record<string,unknown>,author:string,occurredAt:string}[]>([]);
   readonly attachmentCategory=this.fb.nonNullable.control('Laudo ou documento');readonly previousAttachment=this.fb.nonNullable.control('');readonly studentEditForm=this.fb.nonNullable.group({courseId:['',Validators.required],civilName:['',Validators.required],socialName:[''],birthDate:[''],institutionalEmail:['',Validators.email],phone:['']});readonly dossierForm=this.fb.nonNullable.group({identification:[''],educationalNeeds:[''],healthAndSupport:[''],familyContext:[''],schoolHistory:[''],strengths:[''],difficulties:[''],initialInterventions:['']});readonly caseForm=this.fb.nonNullable.group({source:['',Validators.required],summary:['']});readonly recordForm=this.fb.nonNullable.group({type:['',Validators.required],title:['',Validators.required],notes:[''],subjectId:[''],caseId:[''],status:['DRAFT']});readonly peiForm=this.fb.nonNullable.group({subjectId:['',Validators.required],academicTermId:['',Validators.required]});
   readonly activeRecordCases = computed(() => this.cases().filter(item =>
     item.studentId === this.id && item.stage !== 'CLOSED' && item.stage !== 'ARCHIVED'
   ));
+  private readonly caseCards = viewChildren(CaseCardComponent);
+  readonly caseListBusy = computed(() => this.caseCards().some(card => card.busy()));
+  readonly dossierRevisions = createListView(this.dossierHistory, version => [`Versão ${version.version}`, version.author]);
+  readonly caseList = createListView(this.cases, item => [this.caseLabel(item), item.responsible, item.summary]);
+  readonly recordList = createListView(this.records, item => [
+    item.title, this.label(item.type), this.label(item.status), item.createdBy,
+  ]);
+  readonly unlistedStudentCourse = computed(() => {
+    const current = this.student();
+    return current && !this.courses().some(course => course.id === current.courseId) ? current : null;
+  });
+  readonly peiList = createListView(this.peis, item => [
+    this.peiSubjectName(item), item.academicTermLabel ?? item.academicTerm, this.peiStatusLabel(item.status),
+  ]);
+  readonly attachmentList = createListView(this.attachments, item => [item.originalName, item.category, item.uploadedBy]);
+  readonly timeline = signal<Page<TimelineEvent> | null>(null);
+  readonly requestedTimelinePage = signal(0);
+  readonly timelineLoading = signal(false);
+  readonly timelineError = signal('');
   readonly peiSubjects = computed(() => {
     const teacherId = this.auth.user()?.id;
     if (!teacherId || !this.auth.hasRole('TEACHER')) return [];
@@ -178,7 +365,7 @@ export class StudentDetailComponent implements OnInit{
   ngOnInit(){if(!this.auth.hasRole('NAPNE'))this.tab.set('records');this.loadAll();if(this.auth.hasRole('NAPNE'))this.loadCategories();if(this.canCreatePei())this.loadAcademicTerms()}
   protected selectTab(id: string) {
     this.tab.set(id);
-    if (id === 'timeline') this.refreshTimeline('carregar a linha do tempo');
+    if (id === 'timeline') this.refreshTimeline();
   }
   canCreatePei(){return this.auth.hasRole('TEACHER')}
   loadCategories(){
@@ -192,7 +379,7 @@ export class StudentDetailComponent implements OnInit{
     this.api.references('ACADEMIC_TERM').subscribe({next:options=>{this.academicTerms.set(options);this.termsLoading.set(false)},error:e=>{this.termsLoading.set(false);this.termsError.set(errorMessage(e.status,'carregar os períodos letivos'))}});
   }
   visibleTabs(){return this.tabs.filter(t=>this.auth.hasRole('NAPNE')||!['dossier','cases','documents'].includes(t.id))} activeRecordFields(){return RECORD_FIELDS[this.recordForm.controls.type.value]??[]} recordTypes(){if(this.auth.hasRole('NAPNE'))return[{value:'INITIAL_SCREENING',label:'Triagem inicial'},{value:'WELCOMING',label:'Acolhimento'},{value:'CASE_STUDY',label:'Estudo de caso'},{value:'PEDAGOGICAL_GUIDANCE',label:'Orientações pedagógicas'},{value:'ACTION_PLAN',label:'Plano de ação'},{value:'SUPPORT_REFUSAL',label:'Recusa de apoio'},{value:'SUPPORT_REQUEST',label:'Nova solicitação de apoio'}];if(this.auth.hasRole('COTEP','COURSE_COORDINATOR'))return[{value:'PEDAGOGICAL_GUIDANCE',label:'Orientações pedagógicas'},{value:'ACTION_PLAN',label:'Plano de ação'}];if(this.auth.hasRole('TEACHER'))return[{value:'TEACHER_FEEDBACK',label:'Devolutiva docente'}];if(this.auth.hasRole('TUTOR'))return[{value:'TUTOR_OBSERVATION',label:'Observação de tutoria'}];return[]} canCreateRecord(){return this.recordTypes().length>0}
-  loadAll(){this.loading.set(true);this.loadError.set('');forkJoin({student:this.api.student(this.id),dossier:this.api.dossier(this.id),cases:this.api.cases(this.id),records:this.api.records(this.id),peis:this.api.peis(this.id),timeline:this.api.timeline(this.id),attachments:this.api.attachments(this.id)}).subscribe({next:v=>{this.student.set(v.student);this.dossier.set(v.dossier);this.cases.set(v.cases);this.records.set(v.records);this.peis.set(v.peis);this.timeline.set(v.timeline);this.attachments.set(v.attachments);this.fillDossier(v.dossier);this.api.studentSubjects(this.id).subscribe(s=>this.subjects.set(s));this.api.studentTeachers(this.id).subscribe(t=>this.teachers.set(t));if(this.auth.hasRole('NAPNE'))this.api.courses().subscribe({next:c=>this.courses.set(c),error:e=>this.toast.show(errorMessage(e.status,'carregar os cursos'),'error')});this.recordForm.controls.type.setValue(this.recordTypes()[0]?.value??'');this.loading.set(false)},error:e=>{this.loading.set(false);this.loadError.set(errorMessage(e.status,'carregar o acompanhamento'))}})}
+  loadAll(){this.loading.set(true);this.loadError.set('');forkJoin({student:this.api.student(this.id),dossier:this.api.dossier(this.id),cases:this.api.cases(this.id),records:this.api.records(this.id),peis:this.api.peis(this.id),attachments:this.api.attachments(this.id)}).subscribe({next:v=>{this.student.set(v.student);this.dossier.set(v.dossier);this.cases.set(v.cases);this.records.set(v.records);this.peis.set(v.peis);this.attachments.set(v.attachments);this.fillDossier(v.dossier);this.api.studentSubjects(this.id).subscribe(s=>this.subjects.set(s));this.api.studentTeachers(this.id).subscribe(t=>this.teachers.set(t));if(this.auth.hasRole('NAPNE'))this.api.courses().subscribe({next:c=>this.courses.set(c),error:e=>this.toast.show(errorMessage(e.status,'carregar os cursos'),'error')});this.recordForm.controls.type.setValue(this.recordTypes()[0]?.value??'');this.loading.set(false);this.refreshTimeline()},error:e=>{this.loading.set(false);this.loadError.set(errorMessage(e.status,'carregar o acompanhamento'))}})}
   openStudentEdit(){const value=this.student();if(!value)return;this.studentEditForm.reset({courseId:String(value.courseId),civilName:value.civilName??'',socialName:value.socialName??'',birthDate:value.birthDate??'',institutionalEmail:value.institutionalEmail??'',phone:value.phone??''});this.editStudentOpen.set(true)}
   closeStudentEdit(){if(!this.studentSaving())this.editStudentOpen.set(false)}
   saveStudent(){const current=this.student();this.studentEditForm.markAllAsTouched();if(!current||this.studentEditForm.invalid)return;const value=this.studentEditForm.getRawValue();this.studentSaving.set(true);this.api.updateStudent(this.id,{registration:current.registration,courseId:Number(value.courseId),civilName:value.civilName,socialName:value.socialName,birthDate:value.birthDate||null,institutionalEmail:value.institutionalEmail||null,phone:value.phone||null}).subscribe({next:updated=>{this.student.set(updated);this.studentSaving.set(false);this.editStudentOpen.set(false);this.toast.show('Dados cadastrais do estudante atualizados.','success');this.api.studentSubjects(this.id).subscribe(s=>this.subjects.set(s));this.api.studentTeachers(this.id).subscribe(t=>this.teachers.set(t))},error:e=>{this.studentSaving.set(false);this.toast.show(errorMessage(e.status,'atualizar o cadastro do estudante'),'error')}})}
@@ -383,16 +570,42 @@ export class StudentDetailComponent implements OnInit{
       error: e => this.failed(e.status, 'enviar o documento')
     });
   }
-  loadHistory(){this.historyVisible.set(true);this.historyLoading.set(true);this.api.dossierHistory(this.id).subscribe({next:v=>{this.dossierHistory.set(v);this.historyLoading.set(false)},error:e=>{this.historyLoading.set(false);this.toast.show(errorMessage(e.status,'carregar o histórico'),'error')}})}filterTimeline(type:string){this.timelineFilter.set(type);this.refreshTimeline('filtrar a linha do tempo')}changes(fields:Record<string,unknown>){return Object.entries(fields).map(([key,previous])=>({key,previous,current:this.dossier()?.[key as keyof Dossier]})).filter(v=>JSON.stringify(v.previous)!==JSON.stringify(v.current))}
-  selectFile(event:Event){this.selectedFile.set((event.target as HTMLInputElement).files?.[0]??null)}download(item:Attachment){this.api.downloadAttachment(this.id,item.id).subscribe({next:blob=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=item.originalName;a.click();URL.revokeObjectURL(url)},error:e=>this.toast.show(errorMessage(e.status,'baixar o documento'),'error')})}subjectName(id:number){return this.subjects().find(s=>s.id===id)?.name??'Componente não disponível'}peiStatusLabel(status:string){if(status==='APPROVED')return'Vigente';if(status==='SUPERSEDED')return'Histórico · substituído';if(status==='ARCHIVED')return'Histórico · arquivado';return labelFor(status)}fileType(item:Attachment){if(item.contentType.includes('pdf'))return'PDF';if(item.contentType.includes('word'))return'DOCX';return'IMG'}formatSize(size:number){return size<1048576?`${Math.ceil(size/1024)} KB`:`${(size/1048576).toFixed(1)} MB`}initials(name:string){return name.split(' ').filter(Boolean).slice(0,2).map(v=>v[0]).join('').toUpperCase()}sectionLabel(key:string){return this.dossierSections.find(s=>s.key===key)?.label??labelFor(key)}displayValue(value:unknown){if(value===null||value===undefined||value==='')return'Não informado';if(typeof value==='object')return Object.entries(value as Record<string,unknown>).filter(([,v])=>v).map(([k,v])=>`${labelFor(k)}: ${String(v)}`).join('\n')||'Não informado';return String(value)}
-  private fillDossier(d:Dossier){for(const key of Object.keys(this.dossierForm.controls)as(keyof typeof this.dossierForm.controls)[]){const value=d[key]as Record<string,unknown>;this.dossierForm.controls[key].setValue(String(value?.['notes']??''));for(const field of DOSSIER_FIELDS[key])this.structuredDossier.controls[key+'.'+field.key].setValue(String(value?.[field.key]??''))}this.categoryControl.reset(d.redacted?'':d.educationalNeeds.categoryId?String(d.educationalNeeds.categoryId):d.educationalNeeds.category?'legacy':'');this.dossierForm.markAsPristine();this.dossierDirty.set(false)}private refreshTimeline(errorAction?:string){
-    const request=++this.timelineRequest;
-    this.api.timeline(this.id,this.timelineFilter()).subscribe({
-      next:events=>{if(request===this.timelineRequest)this.timeline.set(events)},
-      error:error=>{
-        if(errorAction&&request===this.timelineRequest)this.toast.show(errorMessage(error.status,errorAction),'error');
-      }
-    });
+  loadHistory(){this.historyVisible.set(true);this.historyLoading.set(true);this.api.dossierHistory(this.id).subscribe({next:v=>{this.dossierHistory.set(v);this.historyLoading.set(false)},error:e=>{this.historyLoading.set(false);this.toast.show(errorMessage(e.status,'carregar o histórico'),'error')}})}
+
+  filterTimeline(type: string) {
+    this.timelineFilter.set(type);
+    this.timeline.set(null);
+    this.refreshTimeline();
   }
+
+  changes(fields:Record<string,unknown>){return Object.entries(fields).map(([key,previous])=>({key,previous,current:this.dossier()?.[key as keyof Dossier]})).filter(v=>JSON.stringify(v.previous)!==JSON.stringify(v.current))}
+  selectFile(event:Event){this.selectedFile.set((event.target as HTMLInputElement).files?.[0]??null)}download(item:Attachment){this.api.downloadAttachment(this.id,item.id).subscribe({next:blob=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=item.originalName;a.click();URL.revokeObjectURL(url)},error:e=>this.toast.show(errorMessage(e.status,'baixar o documento'),'error')})}
+  peiSubjectName(pei: Pei): string {
+    const subject = this.subjects().find(item => item.id === pei.subjectId);
+    const savedName = pei.content['subject'];
+    return subject?.name ?? (typeof savedName === 'string' && savedName.trim() ? savedName : 'Componente não disponível');
+  }
+  peiStatusLabel(status:string){if(status==='APPROVED')return'Vigente';if(status==='SUPERSEDED')return'Histórico · substituído';if(status==='ARCHIVED')return'Histórico · arquivado';return labelFor(status)}fileType(item:Attachment){if(item.contentType.includes('pdf'))return'PDF';if(item.contentType.includes('word'))return'DOCX';return'IMG'}formatSize(size:number){return size<1048576?`${Math.ceil(size/1024)} KB`:`${(size/1048576).toFixed(1)} MB`}initials(name:string){return name.split(' ').filter(Boolean).slice(0,2).map(v=>v[0]).join('').toUpperCase()}sectionLabel(key:string){return this.dossierSections.find(s=>s.key===key)?.label??labelFor(key)}displayValue(value:unknown){if(value===null||value===undefined||value==='')return'Não informado';if(typeof value==='object')return Object.entries(value as Record<string,unknown>).filter(([,v])=>v).map(([k,v])=>`${labelFor(k)}: ${String(v)}`).join('\n')||'Não informado';return String(value)}
+  private fillDossier(d:Dossier){for(const key of Object.keys(this.dossierForm.controls)as(keyof typeof this.dossierForm.controls)[]){const value=d[key]as Record<string,unknown>;this.dossierForm.controls[key].setValue(String(value?.['notes']??''));for(const field of DOSSIER_FIELDS[key])this.structuredDossier.controls[key+'.'+field.key].setValue(String(value?.[field.key]??''))}this.categoryControl.reset(d.redacted?'':d.educationalNeeds.categoryId?String(d.educationalNeeds.categoryId):d.educationalNeeds.category?'legacy':'');this.dossierForm.markAsPristine();this.dossierDirty.set(false)}
+
+  refreshTimeline(page = 0) {
+    if (this.tab() !== 'timeline') return;
+    this.timelineRequest?.unsubscribe();
+    this.requestedTimelinePage.set(page);
+    this.timelineLoading.set(true);
+    this.timelineError.set('');
+    this.timelineRequest = this.api.timeline(this.id, this.timelineFilter(), page)
+      .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+        next: response => {
+          this.timeline.set(response);
+          this.timelineLoading.set(false);
+        },
+        error: error => {
+          this.timelineError.set(errorMessage(error.status, 'carregar a linha do tempo'));
+          this.timelineLoading.set(false);
+        },
+      });
+  }
+
   private done(message:string){this.actionBusy.set(false);this.toast.show(message,'success');this.refreshTimeline()}private failed(status:number,action:string){this.actionBusy.set(false);this.toast.show(errorMessage(status,action),'error')}
 }

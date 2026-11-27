@@ -29,6 +29,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -83,13 +85,17 @@ public class PeiService {
         return project(series, pei, actor, permissions(actor, studentId, series.subjectId()));
     }
 
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public PeiDocument createDraft(Student student, PeiCreateRequest request, Authentication auth, HttpServletRequest http) {
         UserAccount actor = currentUser.require();
         if (!permissions(actor, student.getId(), request.subjectId()).teacher()) throw denied();
         if (request.teacherId() != null && !request.teacherId().equals(actor.getId())) {
             throw new IllegalArgumentException("O docente responsável deve ser o autor do rascunho.");
         }
-        Subject subject = subjects.findById(request.subjectId()).orElseThrow(() -> new NotFoundException("Componente não encontrado."));
+        Subject subject = subjects.findByIdForUpdate(request.subjectId()).orElseThrow(() -> new NotFoundException("Componente não encontrado."));
+        if (!subject.isActive() || !subject.getCourse().isActive()) {
+            throw new ConflictException("O componente está arquivado.");
+        }
         if (!subject.getCourse().getId().equals(student.getCourse().getId())) {
             throw new IllegalArgumentException("O componente deve pertencer ao curso do estudante.");
         }

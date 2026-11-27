@@ -6,4 +6,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface CaseHistoryRepository extends JpaRepository<CaseHistory, Long> {
     Page<CaseHistory> findByNapneCaseId(Long caseId, Pageable pageable);
+    Page<CaseHistory> findByNapneCaseIdAndType(Long caseId, CaseHistory.Type type, Pageable pageable);
 }

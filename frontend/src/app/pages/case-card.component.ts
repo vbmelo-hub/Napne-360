@@ -8,6 +8,7 @@ import { CaseHistoryView, CaseResponsibleCandidate, NapneCase, Page } from '../c
 import { errorMessage, labelFor, toneFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
+import { PaginationComponent } from '../shared/pagination.component';
 
 function availableStages(item: NapneCase) {
   return item.stageOptions ?? item.allowedNextStages.map(code => ({ code, label: labelFor(code) }));
@@ -15,7 +16,7 @@ function availableStages(item: NapneCase) {
 
 @Component({
   selector: 'app-case-card',
-  imports: [DatePipe, ReactiveFormsModule, ConfirmDialogComponent],
+  imports: [DatePipe, ReactiveFormsModule, ConfirmDialogComponent, PaginationComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <article class="case-card" [attr.aria-labelledby]="'case-' + item().id">
@@ -117,6 +118,17 @@ function availableStages(item: NapneCase) {
 
       <div class="case-panel" [id]="historyId()" [hidden]="!historyOpen()">
         <h4>Histórico do caso</h4>
+        @if (historyOpen()) {
+          <label class="list-filter">
+            Tipo de evento
+            <select [value]="historyType()" [disabled]="busy()" (change)="filterHistory($any($event.target).value)">
+              <option value="">Todos os eventos</option>
+              <option value="OPENED">{{historyLabels.OPENED}}</option>
+              <option value="STAGE_CHANGED">{{historyLabels.STAGE_CHANGED}}</option>
+              <option value="RESPONSIBLE_CHANGED">{{historyLabels.RESPONSIBLE_CHANGED}}</option>
+            </select>
+          </label>
+        }
         @if (pending() === 'history') {
           <p role="status">Carregando histórico…</p>
         }
@@ -128,7 +140,7 @@ function availableStages(item: NapneCase) {
         }
         @if (history(); as page) {
           @if (page.content.length === 0) {
-            <p>Nenhum evento no histórico deste caso.</p>
+            <p>{{historyType() ? 'Nenhum evento do tipo selecionado.' : 'Nenhum evento no histórico deste caso.'}}</p>
           } @else {
             <ol class="revisions">
               @for (entry of page.content; track entry.id) {
@@ -150,15 +162,10 @@ function availableStages(item: NapneCase) {
                 </li>
               }
             </ol>
-            @if (page.totalPages > 1) {
-              <div class="case-buttons" aria-label="Páginas do histórico">
-                <button type="button" class="secondary compact" [disabled]="busy() || page.number === 0"
-                  (click)="loadHistory(page.number - 1)">Anterior</button>
-                <span aria-live="polite">Página {{page.number + 1}} de {{page.totalPages}}</span>
-                <button type="button" class="secondary compact" [disabled]="busy() || page.number + 1 >= page.totalPages"
-                  (click)="loadHistory(page.number + 1)">Próxima</button>
-              </div>
-            }
+            <fieldset [disabled]="busy()">
+              <app-pagination [page]="page.number" [totalPages]="page.totalPages"
+                [label]="'Páginas do histórico do caso ' + item().id" (pageChange)="loadHistory($event)" />
+            </fieldset>
           }
         }
       </div>
@@ -243,6 +250,7 @@ export class CaseCardComponent {
   readonly historyId = computed(() => `case-history-${this.item().id}`);
   readonly historyOpen = signal(false);
   readonly history = signal<Page<CaseHistoryView> | null>(null);
+  readonly historyType = signal('');
   readonly requestedPage = signal(0);
   readonly historyError = signal('');
 
@@ -336,12 +344,19 @@ export class CaseCardComponent {
     if (this.historyOpen()) this.loadHistory(0);
   }
 
+  filterHistory(type: string) {
+    if (this.busy() || this.historyType() === type) return;
+    this.historyType.set(type);
+    this.history.set(null);
+    this.loadHistory(0);
+  }
+
   loadHistory(page: number) {
     if (this.busy()) return;
     this.pending.set('history');
     this.requestedPage.set(page);
     this.historyError.set('');
-    this.api.caseHistory(this.item().id, page).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.api.caseHistory(this.item().id, page, this.historyType()).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: response => {
         this.history.set(response);
         this.pending.set(null);

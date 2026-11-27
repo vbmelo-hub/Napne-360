@@ -109,7 +109,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     apiSpy.cases.and.returnValue(of([]));
     apiSpy.records.and.returnValue(of([mockRecord]));
     apiSpy.peis.and.returnValue(of([]));
-    apiSpy.timeline.and.returnValue(of([]));
+    apiSpy.timeline.and.returnValue(of({ content: [], totalElements: 0, totalPages: 0, number: 0, size: 10 }));
     apiSpy.attachments.and.returnValue(of([]));
     apiSpy.studentSubjects.and.returnValue(of([{ id: 100, name: 'Matemática', code: 'MAT', workloadHours: 60, courseId: 10 }]));
     apiSpy.studentTeachers.and.returnValue(of([]));
@@ -187,18 +187,48 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     return fixture.nativeElement.querySelector('select[formControlName="caseId"]');
   }
 
+  it('busca em todos os acompanhamentos e volta à primeira página ao filtrar', () => {
+    component.records.set(Array.from({ length: 11 }, (_, index) => ({
+      ...mockRecord,
+      id: `registro-${index}`,
+      title: index ? `Registro ${index}` : 'Orientação individual'
+    })));
+    component.tab.set('records');
+    fixture.detectChanges();
+    const root: HTMLElement = fixture.nativeElement;
+
+    expect(root.querySelectorAll('.record-card').length).toBe(10);
+    const second = Array.from(root.querySelectorAll<HTMLButtonElement>('.records-list > app-pagination button'))
+      .find(button => button.textContent?.trim() === '2');
+    expect(second).toBeDefined();
+    second?.click();
+    fixture.detectChanges();
+    expect(Array.from(root.querySelectorAll('.record-card h3'), row => row.textContent)).toEqual(['Registro 10']);
+
+    const filter = root.querySelector<HTMLInputElement>('.records-list > label.list-filter input[type="search"]');
+    expect(filter).not.toBeNull();
+    if (!filter) return;
+    filter.value = 'orientacao individual';
+    filter.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(Array.from(root.querySelectorAll('.record-card h3'), row => row.textContent)).toEqual(['Orientação individual']);
+  });
+
   it('consulta novamente a linha do tempo quando a aba é aberta', () => {
     apiService.timeline.calls.reset();
-    apiService.timeline.and.returnValue(of([{
-      id: 'pei-revisao-evento', eventType: 'PEI_REVISED', title: 'Nova versão do PEI',
-      actor: 'Docente fictício', visibility: 'PEDAGOGICAL', createdAt: '2026-11-25T21:00:00Z'
-    }]));
+    apiService.timeline.and.returnValue(of({
+      content: [{
+        id: 'pei-revisao-evento', eventType: 'PEI_REVISED', title: 'Nova versão do PEI',
+        actor: 'Docente fictício', visibility: 'PEDAGOGICAL', createdAt: '2026-11-25T21:00:00Z'
+      }],
+      totalElements: 1, totalPages: 1, number: 0, size: 10
+    }));
     const tabs = Array.from(fixture.nativeElement.querySelectorAll('.student-tabs button')) as HTMLButtonElement[];
     const timelineTab = tabs.find(button => button.textContent?.trim() === 'Linha do tempo');
     expect(timelineTab).toBeDefined();
     timelineTab?.click();
     fixture.detectChanges();
-    expect(apiService.timeline).toHaveBeenCalledOnceWith(1, '');
+    expect(apiService.timeline).toHaveBeenCalledOnceWith(1, '', 0);
     expect(fixture.nativeElement.querySelector('.timeline')?.textContent).toContain('Nova versão do PEI');
   });
 

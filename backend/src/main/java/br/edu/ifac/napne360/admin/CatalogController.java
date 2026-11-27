@@ -25,7 +25,7 @@ public class CatalogController {
         var student = access.requireView(studentId);
         return subjects.findByCourseIdAndActiveTrueOrderByName(student.getCourse().getId()).stream()
                 .filter(s -> access.canViewSubject(studentId, s.getId()))
-                .map(s -> new AdminController.SubjectView(s.getId(), s.getName(), s.getCode(), s.getWorkloadHours(), s.getCourse().getId())).toList();
+                .map(AdminController.SubjectView::of).toList();
     }
 
     @GetMapping("/student-teachers")
@@ -52,13 +52,13 @@ public class CatalogController {
         UserAccount user = currentUser.require();
         if (user.getCampus() == null) return List.of();
         return courses.findByCampusIdAndActiveTrueOrderByName(user.getCampus().getId()).stream()
-                .map(c -> new AdminController.CourseView(c.getId(), c.getName(), c.getCode(), c.getCampus().getId(), c.getCampus().getName())).toList();
+                .map(AdminController.CourseView::of).toList();
     }
 
     @GetMapping("/subjects")
     @Transactional(readOnly = true)
     public List<AdminController.SubjectView> subjects(@RequestParam Long courseId) {
         return subjects.findByCourseIdAndActiveTrueOrderByName(courseId).stream()
-                .map(s -> new AdminController.SubjectView(s.getId(), s.getName(), s.getCode(), s.getWorkloadHours(), s.getCourse().getId())).toList();
+                .map(AdminController.SubjectView::of).toList();
     }
 }

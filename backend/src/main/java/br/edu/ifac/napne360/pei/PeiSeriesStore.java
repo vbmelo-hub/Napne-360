@@ -18,7 +18,8 @@ import java.util.stream.Stream;
 
 @Repository
 @RequiredArgsConstructor
-class PeiSeriesStore {
+public class PeiSeriesStore {
+    private static final List<PeiStatus> WORKING_STATUSES = List.of(PeiStatus.DRAFT, PeiStatus.IN_REVIEW, PeiStatus.APPROVED);
     private final MongoOperations mongo;
     private final PeiRepository legacy;
 
@@ -49,6 +50,27 @@ class PeiSeriesStore {
             series.put(stored.id(), stored);
         }
         return List.copyOf(series.values());
+    }
+
+    public boolean hasHistory(List<Long> subjectIds) {
+        var query = Query.query(Criteria.where("subjectId").in(subjectIds));
+        return mongo.exists(query, PeiSeries.class) || mongo.exists(query, PeiDocument.class);
+    }
+
+    public boolean hasOpenWork(List<Long> subjectIds) {
+        var query = Query.query(Criteria.where("subjectId").in(subjectIds).and("revisions.status").in(WORKING_STATUSES));
+        if (mongo.exists(query, PeiSeries.class)) return true;
+
+        // Once a series is stored, it owns the current state of every legacy revision in that series.
+        var legacyQuery = Query.query(Criteria.where("subjectId").in(subjectIds).and("status").in(WORKING_STATUSES));
+        legacyQuery.fields().include("studentId", "subjectId", "academicTerm");
+        try (Stream<PeiDocument> legacyPlans = mongo.stream(legacyQuery, PeiDocument.class)) {
+            boolean openLegacy = legacyPlans.map(plan -> PeiSeries.key(plan.getStudentId(), plan.getSubjectId(), plan.getAcademicTerm()))
+                    .anyMatch(id -> !mongo.exists(Query.query(Criteria.where("_id").is(id)), PeiSeries.class));
+            if (openLegacy) return true;
+        }
+        // A legacy edit can materialize its authoritative series during the lookup above.
+        return mongo.exists(query, PeiSeries.class);
     }
 
     void save(PeiSeries before, PeiSeries after, PeiProjection projection) {

@@ -1,10 +1,14 @@
 package br.edu.ifac.napne360.student;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+
+import java.util.Optional;
 
 public interface StudentRepository extends JpaRepository<Student, Long> {
     @Override
@@ -36,4 +40,10 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
             """)
     Page<Student> searchAssigned(@Param("userId") Long userId, @Param("query") String query, Pageable pageable);
     boolean existsByRegistration(String registration);
+    boolean existsByCourseId(Long courseId);
+    boolean existsByCourseIdAndStatus(Long courseId, StudentStatus status);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from Student s where s.id = :id")
+    Optional<Student> findByIdForUpdate(Long id);
 }

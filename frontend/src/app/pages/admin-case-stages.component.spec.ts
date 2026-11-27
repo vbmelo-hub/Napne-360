@@ -41,11 +41,11 @@ describe('Etapas dos casos na administração técnica', () => {
     fixture.detectChanges();
   }
 
-  function openEditor() {
+  function openEditor(configuration = initial) {
     click('Etapas dos casos');
     const request = http.expectOne(url);
     expect(request.request.method).toBe('GET');
-    request.flush(initial);
+    request.flush(configuration);
     fixture.detectChanges();
   }
 
@@ -65,6 +65,32 @@ describe('Etapas dos casos na administração técnica', () => {
   });
 
   afterEach(() => http.verify());
+
+  it('busca em todas as páginas e salva a configuração completa após editar uma etapa filtrada', () => {
+    const stages = [
+      ...Array.from({ length: 11 }, (_, index) => ({ code: `ETAPA_${index + 1}`, label: `Etapa ${index + 1}` })),
+      ...initial.stages.slice(-2),
+    ];
+    openEditor({ version: 3, stages });
+    expect(inputs()).toHaveSize(10);
+    click('Página 2');
+    expect(inputs().map(input => input.value)).toEqual(['Etapa 11', 'Encerrado', 'Arquivado']);
+
+    const filter = root.querySelector<HTMLInputElement>('app-admin-case-stages input[type="search"]')!;
+    filter.value = 'etapa 11';
+    filter.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(inputs()).toHaveSize(1);
+    setName(0, 'Análise revisada');
+    expect(inputs()[0].value).toBe('Análise revisada');
+
+    click('Salvar etapas');
+    const request = http.expectOne(url);
+    const expected = [...stages];
+    expected[10] = { code: 'ETAPA_11', label: 'Análise revisada' };
+    expect(request.request.body).toEqual({ version: 3, stages: expected });
+    request.flush({ version: 4, stages: expected });
+  });
 
   it('envia a ordem completa com versão zero, códigos estáveis e código nulo para a nova etapa', () => {
     openEditor();

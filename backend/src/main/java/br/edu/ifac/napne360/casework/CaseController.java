@@ -52,8 +52,9 @@ public class CaseController {
     @GetMapping("/cases/{caseId}/history")
     @PreAuthorize("hasRole('NAPNE')")
     public CaseService.HistoryPage history(@PathVariable String caseId, @RequestParam(required = false) String page,
-                                           @RequestParam(required = false) String size) {
-        return service.history(caseId(caseId), page == null ? 0 : pageNumber(page), size == null ? 20 : pageNumber(size));
+                                           @RequestParam(required = false) String size,
+                                           @RequestParam(required = false) CaseHistory.Type type) {
+        return service.history(caseId(caseId), page == null ? 0 : pageNumber(page), size == null ? 20 : pageNumber(size), type);
     }
 
     private long caseId(String value) {

@@ -2,12 +2,14 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { forkJoin } from 'rxjs';
 import { ApiService } from '../core/api.service';
+import { createListView } from '../core/list-view';
 import { DocumentTemplateView, ReferenceEntryAdmin } from '../core/models';
 import { errorMessage, labelFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
+import { PaginationComponent } from '../shared/pagination.component';
 
-@Component({selector:'app-admin-references',standalone:true,imports:[ReactiveFormsModule,ConfirmDialogComponent],template:`
+@Component({selector:'app-admin-references',standalone:true,imports:[ReactiveFormsModule,ConfirmDialogComponent,PaginationComponent],template:`
   <header class="module-head"><span class="eyebrow">Cadastros de referência</span><h2>Períodos, categorias e modelos</h2><p>Padronize opções usadas nos registros e nos novos rascunhos sem expor códigos técnicos aos usuários finais.</p></header>
 
   @if(loading()){
@@ -24,8 +26,22 @@ import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 
       <section class="card catalog-card">
         <div class="section-header"><div><h3>Itens cadastrados</h3><p>Ative, inative ou revise os itens utilizados pela plataforma.</p></div><span class="badge">{{entries().length}} item(ns)</span></div>
-        @if(entries().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum item cadastrado</h3><p>Os períodos letivos e categorias aparecerão aqui.</p></div>}@else{
-          <div class="table-wrap"><table class="mobile-cards"><thead><tr><th>Item</th><th>Catálogo</th><th>Código</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>@for(e of entries();track e.id){<tr><td data-label="Item"><strong>{{e.label}}</strong>@if(e.description){<small>{{e.description}}</small>}</td><td data-label="Catálogo">{{kindLabel(e.kind)}}</td><td data-label="Código"><code>{{e.code}}</code></td><td data-label="Situação"><span [class]="e.active?'badge badge--success':'badge'">{{e.active?'Ativo':'Inativo'}}</span></td><td><div class="row"><button type="button" class="secondary compact" (click)="editEntry(e)">Editar</button><button type="button" class="secondary compact" (click)="toggleCandidate.set(e)">{{e.active?'Inativar':'Reativar'}}</button></div></td></tr>}</tbody></table></div>
+        @if (entries().length) {
+          <div class="list-filter-toolbar">
+            <label class="list-filter">Filtrar itens de catálogo
+              <input type="search" [value]="entryList.query()" (input)="entryList.setQuery($any($event.target).value)">
+            </label>
+          </div>
+        }
+        @if(entries().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum item cadastrado</h3><p>Os períodos letivos e categorias aparecerão aqui.</p></div>}
+        @else if (!entryList.totalElements()) {
+          <p class="empty-state">Nenhum item corresponde ao filtro.</p>
+        } @else {
+          <div class="table-wrap"><table class="mobile-cards"><thead><tr><th>Item</th><th>Catálogo</th><th>Código</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>@for(e of entryList.items();track e.id){<tr><td data-label="Item"><strong>{{e.label}}</strong>@if(e.description){<small>{{e.description}}</small>}</td><td data-label="Catálogo">{{kindLabel(e.kind)}}</td><td data-label="Código"><code>{{e.code}}</code></td><td data-label="Situação"><span [class]="e.active?'badge badge--success':'badge'">{{e.active?'Ativo':'Inativo'}}</span></td><td><div class="row"><button type="button" class="secondary compact" (click)="editEntry(e)">Editar</button><button type="button" class="secondary compact" (click)="toggleCandidate.set(e)">{{e.active?'Inativar':'Reativar'}}</button></div></td></tr>}</tbody></table></div>
+          @if (entryList.totalPages() > 1) {
+            <app-pagination class="list-pagination" [page]="entryList.page()" [totalPages]="entryList.totalPages()"
+              label="Paginação de itens de catálogo" (pageChange)="entryList.setPage($event)" />
+          }
         }
       </section>
     </div>
@@ -42,8 +58,22 @@ import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 
     <section class="card templates-card">
       <div class="section-header"><div><h3>Modelos cadastrados</h3><p>Versões disponíveis para criação de novos rascunhos.</p></div><span class="badge badge--info">{{templates().length}} modelo(s)</span></div>
-      @if(templates().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum modelo cadastrado</h3><p>Crie um modelo quando houver valores iniciais institucionais a reutilizar.</p></div>}@else{
-        <div class="table-wrap"><table class="mobile-cards"><thead><tr><th>Modelo</th><th>Documento</th><th>Versão</th><th>Campos iniciais</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>@for(t of templates();track t.id){<tr><td data-label="Modelo"><strong>{{t.name}}</strong></td><td data-label="Documento">{{label(t.documentType)}}</td><td data-label="Versão">{{t.version??'—'}}</td><td data-label="Campos iniciais">{{fieldCount(t.defaults)}}</td><td data-label="Situação"><span [class]="t.active?'badge badge--success':'badge'">{{t.active?'Ativo':'Inativo'}}</span></td><td><button type="button" class="secondary compact" (click)="editTemplate(t)">Editar modelo</button></td></tr>}</tbody></table></div>
+      @if (templates().length) {
+          <div class="list-filter-toolbar">
+            <label class="list-filter">Filtrar modelos
+              <input type="search" [value]="templateList.query()" (input)="templateList.setQuery($any($event.target).value)">
+            </label>
+          </div>
+        }
+        @if(templates().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum modelo cadastrado</h3><p>Crie um modelo quando houver valores iniciais institucionais a reutilizar.</p></div>}
+        @else if (!templateList.totalElements()) {
+          <p class="empty-state">Nenhum modelo corresponde ao filtro.</p>
+        } @else {
+        <div class="table-wrap"><table class="mobile-cards"><thead><tr><th>Modelo</th><th>Documento</th><th>Versão</th><th>Campos iniciais</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>@for(t of templateList.items();track t.id){<tr><td data-label="Modelo"><strong>{{t.name}}</strong></td><td data-label="Documento">{{label(t.documentType)}}</td><td data-label="Versão">{{t.version??'—'}}</td><td data-label="Campos iniciais">{{fieldCount(t.defaults)}}</td><td data-label="Situação"><span [class]="t.active?'badge badge--success':'badge'">{{t.active?'Ativo':'Inativo'}}</span></td><td><button type="button" class="secondary compact" (click)="editTemplate(t)">Editar modelo</button></td></tr>}</tbody></table></div>
+          @if (templateList.totalPages() > 1) {
+            <app-pagination class="list-pagination" [page]="templateList.page()" [totalPages]="templateList.totalPages()"
+              label="Paginação de modelos" (pageChange)="templateList.setPage($event)" />
+          }
       }
     </section>
   }
@@ -58,6 +88,12 @@ export class AdminReferencesComponent implements OnInit {
 
   readonly entries=signal<ReferenceEntryAdmin[]>([]);
   readonly templates=signal<DocumentTemplateView[]>([]);
+  readonly entryList = createListView(this.entries, entry => [
+    entry.label, this.kindLabel(entry.kind), entry.code, entry.description, entry.active ? 'Ativo' : 'Inativo',
+  ]);
+  readonly templateList = createListView(this.templates, template => [
+    template.name, labelFor(template.documentType), template.version, template.active ? 'Ativo' : 'Inativo',
+  ]);
   readonly loading=signal(true);
   readonly busy=signal(false);
   readonly jsonError=signal('');

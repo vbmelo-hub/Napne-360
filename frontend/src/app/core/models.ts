@@ -211,7 +211,9 @@ export interface Attachment {
 }
 
 export interface Course { id: number; name: string; code: string; campusId: number; campus: string; }
+export interface AdminCourse extends Course { active: boolean; }
 export interface Subject { id: number; name: string; code: string; workloadHours: number; courseId: number; }
+export interface AdminSubject extends Subject { active: boolean; }
 export interface Campus { id: number; name: string; code: string; active: boolean; }
 export interface UserView { id: number; name: string; email: string; active: boolean; campusId: number | null; roles: string[]; }
 
