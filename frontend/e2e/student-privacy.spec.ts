@@ -2,14 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { expect, test, type Locator } from '@playwright/test';
 import type { Course, Page, Pei, StudentDetails, StudentSummary } from '../src/app/core/models';
-import { apiJson } from './case-fixtures';
+import { apiJson, fictitiousCpf } from './case-fixtures';
 import { academicFixture, loginApi, loginUi } from './catalog-fixtures';
 
 const restrictedFields = ['civilName', 'birthDate', 'institutionalEmail', 'phone'] as const;
 type RegistrationData = Record<(typeof restrictedFields)[number], string> & { socialName: string };
 
 async function fillRegistration(dialog: Locator, data: RegistrationData) {
-  await dialog.getByLabel('Nome civil', { exact: true }).fill(data.civilName);
+  await dialog.getByRole('textbox', { name: 'Nome civil', exact: true }).fill(data.civilName);
   await dialog.getByLabel('Nome social', { exact: true }).fill(data.socialName);
   await dialog.getByLabel('Data de nascimento', { exact: true }).fill(data.birthDate);
   await dialog.getByLabel('E-mail institucional', { exact: true }).fill(data.institutionalEmail);
@@ -55,7 +55,7 @@ test('CA05 protege os dados cadastrais e usa o nome de exibição no novo PEI', 
     await page.getByRole('button', { name: 'Novo estudante', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Cadastrar estudante', exact: true });
     await fillRegistration(dialog, initial);
-    await dialog.getByLabel('Matrícula', { exact: true }).fill(registration);
+    await dialog.getByRole('textbox', { name: 'Matrícula', exact: true }).fill(registration);
     await dialog.getByRole('button', { name: /^Curso/ }).click();
     await dialog.getByRole('option').filter({ hasText: course.name }).filter({ hasText: course.code }).click();
     const creation = waitForWrite('POST', studentList);
@@ -85,7 +85,7 @@ test('CA05 protege os dados cadastrais e usa o nome de exibição no novo PEI', 
     const otherLogin = `test-ca05-${key}-napne`;
     await adminPost('/users', {
       name: `NAPNE fictício CA05 ${key}`, email: `${otherLogin}@napne.local`,
-      campusId: otherCampus.id, roles: ['NAPNE'], password: 'Napne360!Demo'
+      campusId: otherCampus.id, cpf: fictitiousCpf(), roles: ['NAPNE'], password: 'Napne360!Demo'
     });
     const otherNapne = await signIn(otherLogin);
     for (const { headers } of [teacher, otherNapne]) {
@@ -129,7 +129,7 @@ test('CA05 protege os dados cadastrais e usa o nome de exibição no novo PEI', 
 
     await loginUi(page, 'professor');
     await page.goto('/estudantes');
-    await page.getByRole('textbox', { name: 'Buscar estudante', exact: true }).fill(registration);
+    await page.getByRole('searchbox', { name: 'Buscar estudante', exact: true }).fill(registration);
     await page.getByRole('button', { name: 'Buscar', exact: true }).click();
     const row = page.getByRole('row').filter({ hasText: registration });
     await expect(row.getByText(displayName, { exact: true })).toBeVisible();
@@ -195,7 +195,7 @@ test('CA05 protege os dados cadastrais e usa o nome de exibição no novo PEI', 
     const edit = page.getByRole('button', { name: 'Editar cadastro', exact: true });
     await edit.click();
     const dialog = page.getByRole('dialog', { name: 'Editar dados do estudante', exact: true });
-    await expect(dialog.getByLabel('Nome civil', { exact: true })).toHaveValue(initial.civilName);
+    await expect(dialog.getByRole('textbox', { name: 'Nome civil', exact: true })).toHaveValue(initial.civilName);
     await expect(dialog.getByLabel('Nome social', { exact: true })).toHaveValue('');
     await fillRegistration(dialog, updated);
     const saving = waitForWrite('PUT', `/api/v1${path}`);
@@ -208,11 +208,11 @@ test('CA05 protege os dados cadastrais e usa o nome de exibição no novo PEI', 
     await expect(page.getByRole('heading', { name: updated.socialName, exact: true })).toBeVisible();
     await edit.click();
     await expect(dialog.getByLabel('Nome social', { exact: true })).toHaveValue(updated.socialName);
-    await expect(dialog.getByLabel('Nome civil', { exact: true })).toHaveValue(updated.civilName);
+    await expect(dialog.getByRole('textbox', { name: 'Nome civil', exact: true })).toHaveValue(updated.civilName);
     await expect(dialog.getByLabel('Data de nascimento', { exact: true })).toHaveValue(updated.birthDate);
     await expect(dialog.getByLabel('E-mail institucional', { exact: true })).toHaveValue(updated.institutionalEmail);
     await expect(dialog.getByLabel('Telefone', { exact: true })).toHaveValue(updated.phone);
-    await expect(dialog.getByRole('combobox', { name: /^Curso/ })).toHaveValue(String(course.id));
+    await expect(dialog.getByRole('button', { name: /^Curso/ })).toContainText(course.name);
     await expect(dialog.getByText(`Matrícula ${registration}`, { exact: true })).toBeVisible();
   });
 

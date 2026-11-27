@@ -13,6 +13,7 @@ import org.springframework.stereotype.Repository;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -52,6 +53,15 @@ public class PeiSeriesStore {
         }
         return List.copyOf(series.values());
     }
+
+    public Set<DraftScope> occupiedDraftScopes(Long studentId) {
+        return list(studentId).stream()
+                .filter(series -> series.hasOpenWork() || series.current().isPresent())
+                .map(series -> new DraftScope(series.subjectId(), series.academicTerm()))
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    public record DraftScope(Long subjectId, String termCode) {}
 
     public boolean hasHistory(List<Long> subjectIds) {
         var query = Query.query(Criteria.where("subjectId").in(subjectIds));

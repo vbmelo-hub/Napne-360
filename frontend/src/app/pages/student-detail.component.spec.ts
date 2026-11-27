@@ -362,6 +362,8 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     expect(component.recordForm.controls.type.value).toBe('PEDAGOGICAL_GUIDANCE');
     expect(component.recordForm.controls.status.value).toBe('DRAFT');
     expect(component.recordForm.controls.subjectId.value).toBe('100');
+    const subject = fixture.nativeElement.querySelector('app-searchable-select[formControlName="subjectId"] button');
+    expect(subject?.getAttribute('aria-disabled')).toBe('true');
     expect(component.recordForm.controls.notes.value).toBe('Rascunho inicial do professor/napne');
     expect(component.structuredRecord.controls['teachingNeeds'].value).toBe('Material adaptado');
     expect(component.structuredRecord.controls['adaptations'].value).toBe('Tempo estendido');

@@ -1,3 +1,4 @@
+import { AppliedFiltersComponent, appliedFilterItems, type AppliedFilter } from '../shared/applied-filters.component';
 import { Component, DestroyRef, OnInit, computed, inject, input, output, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
@@ -20,7 +21,7 @@ type StatusAction =
 
 @Component({
   selector: 'app-admin-academic-offerings',
-  imports: [ReactiveFormsModule, ConfirmDialogComponent, ModalShellComponent, PaginationComponent, SearchableSelectComponent],
+  imports: [AppliedFiltersComponent, ReactiveFormsModule, ConfirmDialogComponent, ModalShellComponent, PaginationComponent, SearchableSelectComponent],
   template: `
     <div class="stack academic-panel">
       <div class="row" aria-label="Seções acadêmicas">
@@ -40,19 +41,17 @@ type StatusAction =
       </div>
       <form class="server-list-toolbar" (submit)="$event.preventDefault(); applyFilters()">
         <label class="toolbar-search">Buscar {{title().toLocaleLowerCase('pt-BR')}}
-          <input type="search" [formControl]="search">
+          <input #filterSearch type="search" [formControl]="search">
         </label>
         @if (section() !== 'periods') {
           <details>
             <summary>Filtros{{filteredCount() ? ' (' + filteredCount() + ')' : ''}}</summary>
             <div class="server-list-toolbar" [formGroup]="filters">
-              <label>Curso<select formControlName="courseId"><option value="">Todos</option>
-                @for (course of availableCourses(); track course.id) {<option [value]="course.id">{{course.name}} · {{course.code}}</option>}
-              </select></label>
-              <label>Componente<select formControlName="subjectId"><option value="">Todos</option>
-                @for (subject of subjects(); track subject.id) {<option [value]="subject.id">{{subject.name}} · {{subject.code}}</option>}
-              </select></label>
-              <app-searchable-select label="Professor" formControlName="teacherId" [remote]="filterTeacherLookup"
+              <app-searchable-select label="Curso" formControlName="courseId" [options]="courseFilterOptions()"
+                selectionPlaceholder="Todos" placeholder="Nome, código ou campus" />
+              <app-searchable-select label="Componente" formControlName="subjectId" [options]="subjectFilterOptions()"
+                selectionPlaceholder="Todos" placeholder="Nome ou código" />
+              <app-searchable-select #teacherFilter label="Professor" formControlName="teacherId" [remote]="filterTeacherLookup"
                 selectionPlaceholder="Todos" placeholder="Nome, matrícula ou CPF" />
               <label>Turma <input formControlName="groupCode" placeholder="Código da turma"></label>
               <label>Período letivo <input formControlName="periodCode" placeholder="Ex.: 2026.2"></label>
@@ -70,6 +69,7 @@ type StatusAction =
           <span class="meta" role="status">{{result()?.totalElements}} resultado(s)</span>
         }
       </form>
+      <app-applied-filters [fallbackFocus]="filterSearch" [filters]="appliedItems()" (removed)="removeFilter($event)" />
       @if (loadError()) {<p class="error" role="alert">{{loadError()}}</p>}
       @if (loading()) {<p role="status">Carregando…</p>}
       @else if (!result()?.content?.length && !loadError()) {<p class="meta">Nenhum registro encontrado.</p>}
@@ -193,7 +193,8 @@ export class AdminAcademicOfferingsComponent implements OnInit {
   readonly changed = output<void>();
   private readonly createCandidates = createProfessionalCandidates();
   private readonly teacherPicker = viewChild<SearchableSelectComponent>('teacherPicker');
-  readonly filterTeacherLookup = this.createCandidates({ roles: ['TEACHER'] });
+  private readonly teacherFilter = viewChild<SearchableSelectComponent>('teacherFilter');
+  readonly filterTeacherLookup = this.createCandidates({ roles: ['TEACHER'], includeInactive: true });
   readonly sections: readonly {key: Section; label: string}[] = [
     { key: 'periods', label: 'Períodos letivos' },
     { key: 'offerings', label: 'Ofertas curriculares' },
@@ -211,8 +212,12 @@ export class AdminAcademicOfferingsComponent implements OnInit {
   });
   readonly search = this.fb.nonNullable.control('');
   readonly filters = this.fb.nonNullable.group({courseId: '', subjectId: '', teacherId: '', groupCode: '', periodCode: '', active: ''});
-  readonly filteredCount = signal(0);
-  readonly availableCourses = computed(() => this.allCourses() ?? this.courses());
+  protected readonly appliedItems = signal<AppliedFilter[]>([]);
+  readonly filteredCount = computed(() => this.appliedItems().length);
+  protected readonly courseFilterOptions = computed(() => (this.allCourses() ?? this.courses())
+    .map(course => ({ id: String(course.id), label: course.name, detail: `${course.code} · ${course.campus}` })));
+  protected readonly subjectFilterOptions = computed(() => this.subjects()
+    .map(subject => ({ id: String(subject.id), label: subject.name, detail: subject.code })));
   readonly allCourses = input<readonly AdminCourse[]>();
   protected appliedQuery = '';
   private appliedFilters: AcademicListFilters = {};
@@ -283,7 +288,24 @@ export class AdminAcademicOfferingsComponent implements OnInit {
   applyFilters(): void {
     this.appliedQuery = this.search.value.trim();
     this.appliedFilters = this.section() !== 'periods' ? this.filters.getRawValue() : {};
-    this.filteredCount.set(Object.values(this.appliedFilters).filter(value => value.trim()).length);
+    this.appliedItems.set(appliedFilterItems({ ...this.appliedFilters }, {
+      courseId: 'Curso', subjectId: 'Componente', teacherId: 'Professor', groupCode: 'Turma',
+      periodCode: 'Período letivo', active: 'Situação',
+    }, {
+      courseId: id => this.courseFilterOptions().find(course => course.id === id)?.label ?? id,
+      subjectId: id => this.subjects().find(subject => String(subject.id) === id)?.name ?? id,
+      teacherId: id => this.teacherFilter()?.selected()?.label ?? 'Professor #' + id,
+      active: value => value === 'true' ? 'Ativa' : this.section() === 'teaching' ? 'Encerrada' : 'Arquivada',
+    }));
+    this.load(0);
+  }
+
+  protected removeFilter(key: string): void {
+    const control = this.filters.get(key);
+    if (!control) return;
+    control.reset();
+    this.appliedFilters = { ...this.appliedFilters, [key]: '' };
+    this.appliedItems.update(items => items.filter(item => item.key !== key));
     this.load(0);
   }
 
@@ -364,7 +386,8 @@ export class AdminAcademicOfferingsComponent implements OnInit {
     const offer = this.selectedOffer();
     if (!offer || this.teacherForm.invalid || this.busy()) return;
     const { value } = this.teacherForm.controls.teacherId;
-    if (!this.teacherPicker()?.selectionValidated()) return;
+    const picker = this.teacherPicker();
+    if (!picker || picker.validatedOption()?.id !== value || picker.remote() !== this.teacherLookup()) return;
     const teacherId = Number(value);
     const previous = this.replacement();
     const action = previous ? this.api.replaceTeacher(previous.id, teacherId, previous.version) : this.api.createTeaching(offer.id, teacherId);

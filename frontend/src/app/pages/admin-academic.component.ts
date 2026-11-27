@@ -1,11 +1,12 @@
+import { AppliedFiltersComponent, appliedFilterItems } from '../shared/applied-filters.component';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, DestroyRef, ElementRef, Injector, OnInit, afterNextRender, computed, inject, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, Injector, OnInit, afterNextRender, computed, inject, linkedSignal, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { forkJoin, map } from 'rxjs';
 import { ApiService } from '../core/api.service';
 import { createListView } from '../core/list-view';
-import { AdminCourse, AdminSubject, AssignmentView, Campus, Page } from '../core/models';
+import { AdminCourse, AdminSubject, AssignmentView, Campus, Page, StudentRegistrationCandidate } from '../core/models';
 import { createProfessionalCandidates } from '../core/professional-search';
 import { AdminAcademicOfferingsComponent } from './admin-academic-offerings.component';
 import { errorMessage, labelFor } from '../core/presentation';
@@ -13,13 +14,23 @@ import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 import { ModalShellComponent } from '../shared/modal-shell.component';
 import { PaginationComponent } from '../shared/pagination.component';
-import { SearchableSelectComponent } from '../shared/searchable-select.component';
+import { SearchableLookup, SearchableOption, SearchableSelectComponent } from '../shared/searchable-select.component';
 
 import { ListFiltersComponent } from '../shared/list-filters.component';
 import { sameFormValue } from '../core/form-changes';
 import { reconcileRequiredSelection } from '../core/required-selection';
 
-@Component({selector:'app-admin-academic',standalone:true,imports:[ReactiveFormsModule,ConfirmDialogComponent,ModalShellComponent,PaginationComponent,ListFiltersComponent,AdminAcademicOfferingsComponent,SearchableSelectComponent],template:`
+function coursePickerOption(course: AdminCourse): SearchableOption {
+  return { id: String(course.id), label: course.name, detail: `${course.code} · ${course.campus}` };
+}
+
+type RegistrationOption = SearchableOption & { student: StudentRegistrationCandidate };
+
+function registrationOption(student: StudentRegistrationCandidate): RegistrationOption {
+  return { id: String(student.id), label: student.registration, student };
+}
+
+@Component({selector:'app-admin-academic',standalone:true,imports:[AppliedFiltersComponent, ReactiveFormsModule,ConfirmDialogComponent,ModalShellComponent,PaginationComponent,ListFiltersComponent,AdminAcademicOfferingsComponent,SearchableSelectComponent],template:`
   <header class="module-head"><span class="eyebrow">Organização acadêmica</span><h2>Estrutura acadêmica e vínculos</h2><p>Cadastre cursos e componentes e defina quem acompanha cada estudante.</p></header>
 
   @if(loading()){
@@ -36,7 +47,8 @@ import { reconcileRequiredSelection } from '../core/required-selection';
 
       <form class="card stack" [formGroup]="subjectForm" (ngSubmit)="createSubject()">
         <div class="section-header"><div><h3>Novo componente curricular</h3><p>Cadastre a disciplina dentro de um curso existente.</p></div></div>
-        <label><span>Curso&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="courseId">@if (activeCourses().length !== 1) {<option value="">Selecione</option>}@for(c of activeCourses();track c.id){<option [value]="c.id">{{c.name}} · {{c.campus}}</option>}</select></label>
+        <app-searchable-select label="Curso" formControlName="courseId" [options]="subjectCourseOptions()" [required]="true"
+          placeholder="Nome, código ou campus" [readonly]="busy()" />
         <div class="grid two"><label><span>Nome do componente&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="name"></label><label><span>Código&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="code"></label></div>
         <label><span>Carga horária&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input type="number" min="1" formControlName="workloadHours"></label>
         <label>Ementa<textarea formControlName="syllabus"></textarea></label>
@@ -92,24 +104,25 @@ import { reconcileRequiredSelection } from '../core/required-selection';
     <form class="card stack assignment-form" [formGroup]="assignmentForm" (ngSubmit)="createAssignment()">
       <div class="section-header"><div><h3>Conceder vínculo de acompanhamento</h3><p>Conceda designações de tutoria, coordenação ou NAPNE. Os vínculos docentes são gerados pelas ofertas curriculares.</p></div></div>
       <div class="grid two">
-        <app-searchable-select label="Estudante (matrícula)" formControlName="studentId" [required]="true"
-          [options]="studentOptions()" placeholder="Pesquisar matrícula" />
+        <app-searchable-select #studentPicker label="Estudante (matrícula)" formControlName="studentId" [required]="true"
+          [remote]="studentLookup" [readonly]="busy()" placeholder="Pesquisar matrícula"
+          emptyMessage="Nenhuma matrícula elegível para vínculo." />
         <label><span>Tipo de vínculo&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="assignmentType"><option value="TUTOR">Monitor/tutor</option><option value="COORDINATOR">Coordenação/supervisão</option><option value="NAPNE">NAPNE</option></select></label>
         <app-searchable-select #professionalPicker label="Profissional" formControlName="userId" [required]="true"
-          [remote]="professionalLookup()" [readonly]="busy()" placeholder="Nome, matrícula ou CPF"
+          [remote]="professionalLookup()" [readonly]="busy() || (!!studentPicker.value() && !studentPicker.selectionValidated())" placeholder="Nome, matrícula ou CPF"
           [emptyMessage]="selectedStudent() ? 'Nenhum profissional elegível para este vínculo.' : 'Selecione um estudante primeiro.'" />
         <app-searchable-select label="Componente do vínculo (opcional)" formControlName="subjectId"
-          [options]="assignmentSubjectOptions()" placeholder="Nome ou código do componente"
+          [options]="assignmentSubjectOptions()" [readonly]="busy() || (!!studentPicker.value() && !studentPicker.selectionValidated())" selectionPlaceholder="Sem componente específico" placeholder="Nome ou código do componente"
           [emptyMessage]="selectedStudent() ? 'Nenhum componente ativo no curso do estudante.' : 'Selecione um estudante primeiro.'" />
       </div>
-      <div><button [disabled]="assignmentForm.invalid||busy()||!professionalPicker.selectionValidated()">@if(busy()){<span class="spinner"></span>}Conceder vínculo</button></div>
+      <div><button [disabled]="assignmentForm.invalid || busy() || (!!studentPicker.value() && !studentPicker.selectionValidated()) || !professionalPicker.selectionValidated()">@if(busy()){<span class="spinner"></span>}Conceder vínculo</button></div>
     </form>
 
     <section class="card assignments">
       <div class="section-header"><div><h3>Vínculos registrados</h3><p>O histórico permanece disponível mesmo após a revogação.</p></div></div>
       <form class="server-list-toolbar" [formGroup]="assignmentFilters" (ngSubmit)="applyAssignmentFilters()">
         <label class="toolbar-search">Buscar vínculos
-          <input type="search" formControlName="query" placeholder="Estudante, matrícula ou profissional">
+          <input #filterSearch type="search" formControlName="query" placeholder="Matrícula, profissional ou componente">
         </label>
         <details>
           <summary>Filtros{{assignmentFilterCount() ? ' (' + assignmentFilterCount() + ')' : ''}}</summary>
@@ -119,16 +132,15 @@ import { reconcileRequiredSelection } from '../core/required-selection';
             <label>Tipo de vínculo<select formControlName="type"><option value="">Todos</option>
               @for (type of assignmentTypes; track type) {<option [value]="type">{{label(type)}}</option>}
             </select></label>
-            <label>Componente<select formControlName="subject"><option value="">Todos</option>
-              <option value="general">Sem componente específico</option>
-              @for (subject of subjects(); track subject.id) {<option [value]="subject.id">{{subject.name}} · {{subject.code}}</option>}
-            </select></label>
+            <app-searchable-select label="Componente" formControlName="subject" [options]="assignmentSubjectFilterOptions()"
+              selectionPlaceholder="Todos" placeholder="Nome ou código" />
             <label>Campus<select formControlName="campus"><option value="">Todos</option>
-              @for (campus of campuses(); track campus.id) {<option [value]="campus.id">{{campus.name}}</option>}
+              @for (campus of allCampuses(); track campus.id) {
+                <option [value]="campus.id">{{campus.name}}{{campus.active ? '' : ' (arquivado)'}}</option>
+              }
             </select></label>
-            <label>Curso<select formControlName="course"><option value="">Todos</option>
-              @for (course of courses(); track course.id) {<option [value]="course.id">{{course.name}} · {{course.code}}</option>}
-            </select></label>
+            <app-searchable-select label="Curso" formControlName="course" [options]="assignmentCourseFilterOptions()"
+              selectionPlaceholder="Todos" placeholder="Nome, código ou campus" />
             <label>Origem<select formControlName="origin"><option value="">Todas</option>
               <option value="AUTOMATIC">Automática</option><option value="MANUAL">Manual</option>
             </select></label>
@@ -146,6 +158,7 @@ import { reconcileRequiredSelection } from '../core/required-selection';
           <span class="meta" role="status">{{assignmentPage()?.totalElements}} resultado(s)</span>
         }
       </form>
+      <app-applied-filters [fallbackFocus]="filterSearch" [filters]="appliedAssignmentItems()" (removed)="removeAssignmentFilter($event)" />
       @if (assignmentLoading()) {<p class="meta" role="status">Carregando vínculos…</p>}
       @else if (assignmentError()) {
         <p role="alert">{{assignmentError()}}</p>
@@ -155,12 +168,11 @@ import { reconcileRequiredSelection } from '../core/required-selection';
       } @else {
         <div class="table-wrap">
           <table class="mobile-cards">
-            <thead><tr><th>Estudante</th><th>Matrícula</th><th>Usuário</th><th>Tipo</th><th>Componente</th><th>Origem</th><th>Período</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead>
+            <thead><tr><th>Matrícula</th><th>Usuário</th><th>Tipo</th><th>Componente</th><th>Origem</th><th>Período</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead>
             <tbody>
               @for (a of assignments(); track a.id) {
                 <tr>
-                  <td data-label="Estudante">{{a.studentName ?? '—'}}</td>
-                  <td data-label="Matrícula">{{a.registration ?? registrationLabel(a.studentId)}}</td>
+                  <td data-label="Matrícula">{{a.registration ?? 'Matrícula indisponível'}}</td>
                   <td data-label="Usuário">{{a.userName ?? 'Usuário indisponível'}}</td>
                   <td data-label="Tipo">{{label(a.assignmentType)}}</td>
                   <td data-label="Componente">{{a.subjectName ?? subjectLabel(a.subjectId)}}</td>
@@ -326,10 +338,10 @@ export class AdminAcademicComponent implements OnInit {
   readonly showAcademicOffers = signal(false);
   private readonly createCandidates = createProfessionalCandidates();
   private readonly professionalPicker = viewChild<SearchableSelectComponent>('professionalPicker');
-  readonly campuses=signal<Campus[]>([]);
+  protected readonly allCampuses = signal<Campus[]>([]);
+  readonly campuses = computed(() => this.allCampuses().filter(campus => campus.active));
   readonly courses=signal<AdminCourse[]>([]);
   readonly subjects=signal<AdminSubject[]>([]);
-  readonly registrations=signal<{id:number,registration:string,campusId:number,courseId:number,status?:string}[]>([]);
   readonly assignmentPage = signal<Page<AssignmentView> | null>(null);
   readonly assignments = computed(() => this.assignmentPage()?.content ?? []);
   readonly assignmentError = signal('');
@@ -348,10 +360,12 @@ export class AdminAcademicComponent implements OnInit {
   readonly editCourseError = signal('');
   readonly archiveCourseError = signal('');
   readonly activeCourses = computed(() => this.courses().filter(course => course.active));
-  readonly assignableRegistrations = computed(() => {
-    const activeCourseIds = new Set(this.activeCourses().map(course => course.id));
-    return this.registrations().filter(registration => activeCourseIds.has(registration.courseId) && registration.status !== 'ARCHIVED');
-  });
+  protected readonly subjectCourseOptions = computed(() => this.activeCourses().map(coursePickerOption));
+  protected readonly assignmentCourseFilterOptions = computed(() => this.courses().map(coursePickerOption));
+  protected readonly assignmentSubjectFilterOptions = computed(() => [
+    { id: 'general', label: 'Sem componente específico' },
+    ...this.subjects().map(subject => ({ id: String(subject.id), label: subject.name, detail: subject.code })),
+  ]);
   readonly missingEditCampus = computed(() => {
     const course = this.editingCourse();
     return course && !this.campuses().some(campus => campus.id === course.campusId) ? course : null;
@@ -380,8 +394,18 @@ export class AdminAcademicComponent implements OnInit {
     query: '', registration: '', actor: '', type: '', subject: '', campus: '', course: '', origin: '', period: '', active: '',
   });
   readonly appliedAssignmentFilters = signal<Readonly<Record<string, string>>>({});
-  readonly assignmentFilterCount = computed(() => Object.entries(this.appliedAssignmentFilters())
-    .filter(([key, value]) => key !== 'query' && value.trim()).length);
+  protected readonly appliedAssignmentItems = computed(() => appliedFilterItems(this.appliedAssignmentFilters(), {
+    registration: 'Matrícula', actor: 'Profissional', type: 'Tipo de vínculo', subject: 'Componente',
+    campus: 'Campus', course: 'Curso', origin: 'Origem', period: 'Período letivo', active: 'Situação',
+  }, {
+    type: labelFor,
+    subject: id => id === 'general' ? 'Sem componente específico' : this.subjectLabel(Number(id)),
+    campus: id => this.allCampuses().find(campus => String(campus.id) === id)?.name ?? id,
+    course: id => this.courses().find(course => String(course.id) === id)?.name ?? id,
+    origin: value => value === 'AUTOMATIC' ? 'Automática' : 'Manual',
+    active: value => value === 'true' ? 'Ativo' : 'Revogado',
+  }));
+  readonly assignmentFilterCount = computed(() => this.appliedAssignmentItems().length);
   readonly archiveDescription = computed(() => {
     const course = this.pendingCourseArchive();
     if (!course) return '';
@@ -389,9 +413,8 @@ export class AdminAcademicComponent implements OnInit {
     const linkedSubjects = count === 1 ? '1 disciplina vinculada' : `${count} disciplinas vinculadas`;
     return `O curso “${course.name}” (${course.code}) será arquivado. Todas as disciplinas vinculadas também serão arquivadas (${linkedSubjects}). O histórico será preservado. Deseja prosseguir?`;
   });
-  readonly revocationDescription=computed(()=>{const item=this.pendingRevocation();return item?`O vínculo de ${item.userName ?? 'Usuário indisponível'} com a matrícula ${this.registrationLabel(item.studentId)} será revogado. O histórico continuará preservado.`:'';});
+  readonly revocationDescription=computed(()=>{const item=this.pendingRevocation();return item?`O vínculo de ${item.userName ?? 'Usuário indisponível'} com a matrícula ${item.registration ?? 'indisponível'} será revogado. O histórico continuará preservado.`:'';});
   readonly label=labelFor;
-  private readonly registrationsById = computed(() => new Map(this.registrations().map(registration => [registration.id, registration])));
   private readonly subjectsById = computed(() => new Map(this.subjects().map(subject => [subject.id, subject])));
 
   readonly courseForm=this.fb.nonNullable.group({name:['',Validators.required],code:['',Validators.required],campusId:['',Validators.required]});
@@ -421,11 +444,26 @@ export class AdminAcademicComponent implements OnInit {
 
   private readonly assignmentStudentId = toSignal(this.assignmentForm.controls.studentId.valueChanges, { initialValue: '' });
   private readonly assignmentType = toSignal(this.assignmentForm.controls.assignmentType.valueChanges, { initialValue: 'TUTOR' });
-  readonly selectedStudent = computed(() => this.assignableRegistrations().find(item => item.id === Number(this.assignmentStudentId())));
-  readonly studentOptions = computed(() => this.assignableRegistrations().map(item => ({
-    id: String(item.id), label: item.registration,
-  })));
-  private readonly assignmentCampus = computed(() => this.selectedStudent()?.campusId);
+  private readonly studentPicker = viewChild<SearchableSelectComponent<RegistrationOption>>('studentPicker');
+  readonly studentLookup: SearchableLookup<RegistrationOption> = (query, selectedId, page) =>
+    this.api.studentRegistrationCandidates({
+      query: query || undefined, selectedId: selectedId ? Number(selectedId) : undefined, page: page || undefined,
+    }).pipe(map(result => ({
+      content: result.content.map(registrationOption),
+      totalElements: result.totalElements,
+      selected: result.selected ? registrationOption(result.selected) : null,
+    })));
+  readonly selectedStudent = computed(() => {
+    const option = this.studentPicker()?.validatedOption();
+    return option && option.id === this.assignmentStudentId() ? option.student : null;
+  });
+  // Keep dependent choices while the new matrícula is being validated.
+  private readonly studentScope = linkedSignal({
+    source: () => ({ id: this.assignmentStudentId(), student: this.selectedStudent() }),
+    computation: ({ id, student }, previous): StudentRegistrationCandidate | null =>
+      student ?? (id ? previous?.value ?? null : null),
+  });
+  private readonly assignmentCampus = computed(() => this.studentScope()?.campusId);
   readonly professionalLookup = computed(() => {
     const campusId = this.assignmentCampus();
     const type = this.assignmentType();
@@ -434,14 +472,14 @@ export class AdminAcademicComponent implements OnInit {
     return this.createCandidates({ campusId, roles });
   });
   readonly assignmentSubjectOptions = computed(() => this.subjects()
-    .filter(subject => subject.courseId === this.selectedStudent()?.courseId && subject.active)
+    .filter(subject => subject.courseId === this.studentScope()?.courseId && subject.active)
     .map(subject => ({ id: String(subject.id), label: subject.name, detail: subject.code })));
 
   ngOnInit():void{this.load();this.loadAssignmentPage(0);}
   load():void{
     this.loading.set(true);
-    forkJoin({campuses:this.api.campuses(),courses:this.api.adminCourses(),subjects:this.api.adminSubjects(),registrations:this.api.registrations()}).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next:v=>{this.campuses.set(v.campuses);this.courses.set(v.courses);this.subjects.set(v.subjects);this.registrations.set(v.registrations);this.selectRequiredCatalogValues();this.loading.set(false);},
+    forkJoin({campuses:this.api.adminCampuses(),courses:this.api.adminCourses(),subjects:this.api.adminSubjects()}).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next:v=>{this.allCampuses.set(v.campuses);this.courses.set(v.courses);this.subjects.set(v.subjects);this.selectRequiredCatalogValues();this.loading.set(false);},
       error:e=>{this.loading.set(false);this.toast.show(errorMessage(e.status,'carregar a estrutura acadêmica'),'error');}
     });
   }
@@ -480,7 +518,8 @@ export class AdminAcademicComponent implements OnInit {
     if (this.assignmentForm.invalid || this.busy()) return;
     const { userId, studentId, subjectId, assignmentType } = this.assignmentForm.getRawValue();
     const picker = this.professionalPicker();
-    if (!picker?.selectionValidated() || picker.remote() !== this.professionalLookup()
+    if (this.selectedStudent()?.id !== Number(studentId)
+      || !picker || picker.validatedOption()?.id !== userId || picker.remote() !== this.professionalLookup()
       || (subjectId && !this.assignmentSubjectOptions().some(option => option.id === subjectId))) return;
     this.busy.set(true);
     this.api.createAssignment({
@@ -641,6 +680,7 @@ export class AdminAcademicComponent implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
         next: updated => {
           this.courses.update(courses => courses.map(item => item.id === updated.id ? updated : item));
+          if (course.campusId !== updated.campusId) this.studentPicker()?.refresh();
           this.busy.set(false);
           this.editingCourse.set(null);
           if (!this.courseList.items().some(item => item.id === updated.id)) this.focusCourseSearch();
@@ -669,6 +709,7 @@ export class AdminAcademicComponent implements OnInit {
         this.courses.update(courses => courses.map(item => item.id === archived.id ? archived : item));
         this.subjects.update(subjects => subjects.map(subject => subject.courseId === archived.id ? { ...subject, active: false } : subject));
         this.clearUnavailableSelections();
+        this.studentPicker()?.refresh();
         this.pendingCourseArchive.set(null);
         this.focusCourseSearch();
         this.toast.show('Curso e componentes vinculados arquivados.', 'success');
@@ -687,6 +728,14 @@ export class AdminAcademicComponent implements OnInit {
 
   applyAssignmentFilters(): void {
     this.appliedAssignmentFilters.set(this.assignmentFilters.getRawValue());
+    this.loadAssignmentPage(0);
+  }
+
+  protected removeAssignmentFilter(key: string): void {
+    const control = this.assignmentFilters.get(key);
+    if (!control) return;
+    control.reset();
+    this.appliedAssignmentFilters.update(filters => ({ ...filters, [key]: '' }));
     this.loadAssignmentPage(0);
   }
 
@@ -725,7 +774,6 @@ export class AdminAcademicComponent implements OnInit {
     this.toast.show(errorMessage(response, action), 'error');
   }
 
-  registrationLabel(id: number) { return this.registrationsById().get(id)?.registration ?? 'Matrícula indisponível'; }
   subjectLabel(id: number | null) { return id === null ? 'Geral' : this.subjectsById().get(id)?.name ?? 'Componente indisponível'; }
 
   private courseError(response: HttpErrorResponse, action: string): string {

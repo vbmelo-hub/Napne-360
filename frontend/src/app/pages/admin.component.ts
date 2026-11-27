@@ -6,6 +6,7 @@ import { ApiService } from '../core/api.service';
 import { LIST_PAGE_SIZE, ListFilters, createListView } from '../core/list-view';
 import { Campus, Page, UserView } from '../core/models';
 import { cpfDigits, formatCpf, validateCpf } from '../core/cpf';
+import { reconcileRequiredSelection } from '../core/required-selection';
 import { trackFormChanges } from '../core/form-changes';
 import { errorMessage, labelFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
@@ -88,7 +89,7 @@ const EMPTY_USERS: Page<UserView> = { content: [], totalElements: 0, totalPages:
         </label>
         <label [class.required]="campusRequired()">Campus
           <select formControlName="campusId" [attr.aria-required]="campusRequired() ? 'true' : null">
-            <option value="">Sem campus (admin técnico)</option>
+            <option value="">{{campusRequired() ? 'Selecione' : 'Sem campus (admin técnico)'}}</option>
             @for (campus of campusOptions(); track campus.id) {
               <option [value]="campus.id">{{campus.name}}{{campus.active ? '' : ' (arquivado)'}}</option>
             }
@@ -297,6 +298,8 @@ export class AdminComponent implements OnInit {
   });
 
   ngOnInit() {
+    this.userForm.controls.role.valueChanges.pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.selectRequiredCampus());
     this.userRequests.pipe(
       switchMap(debounce => {
         const page = this.userPage();
@@ -356,8 +359,9 @@ export class AdminComponent implements OnInit {
   openCreateUser() {
     this.editUser.set(null);
     this.userForm.reset({ role: 'NAPNE' });
-    this.userChanges.capture();
     this.showUserForm.set(true);
+    this.selectRequiredCampus();
+    this.userChanges.capture();
   }
 
   openEditUser(user: UserView) {
@@ -562,9 +566,17 @@ export class AdminComponent implements OnInit {
 
   private loadCampuses() {
     this.api.adminCampuses().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: campuses => this.campuses.set(campuses),
+      next: campuses => {
+        this.campuses.set(campuses);
+        this.selectRequiredCampus();
+      },
       error: failure => this.fail(failure, 'carregar os campi'),
     });
+  }
+
+  private selectRequiredCampus(): void {
+    if (!this.showUserForm() || this.editUser() || this.userForm.controls.role.value === 'ADMIN') return;
+    reconcileRequiredSelection(this.userForm.controls.campusId, this.campusOptions().map(campus => String(campus.id)));
   }
 
   private nonBlank(control: { value: string }) {

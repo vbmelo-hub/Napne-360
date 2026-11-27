@@ -179,6 +179,14 @@ class AdminIdentityIntegrationTest {
                     .andExpect(jsonPath("$.content[0].id").value(matching.getLast().getId()))
                     .andExpect(jsonPath("$.selected").value(org.hamcrest.Matchers.nullValue()));
         }
+        filters.put("includeInactive", true);
+        filters.put("selectedId", inactive.getId());
+        mvc.perform(admin(candidateRequest(filters))).andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.totalElements").value(32))
+                .andExpect(jsonPath("$.content.length()").value(2))
+                .andExpect(jsonPath("$.selected.id").value(inactive.getId()));
+        filters.remove("includeInactive");
         filters.remove("campusId");
         filters.put("selectedId", outside.getId());
         mvc.perform(admin(candidateRequest(filters))).andExpect(status().isOk())

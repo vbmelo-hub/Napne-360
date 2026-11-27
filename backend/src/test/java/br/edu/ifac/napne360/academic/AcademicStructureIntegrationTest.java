@@ -20,6 +20,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -76,6 +77,26 @@ class AcademicStructureIntegrationTest {
                 .extracting(ReferenceEntry::getCode)
                 .filteredOn(code -> code.startsWith(CURRENT_YEAR + "."))
                 .containsExactly(CURRENT_YEAR + ".1", CURRENT_YEAR + ".2");
+    }
+
+    @Test
+    void peiOffersExcludeOccupiedSubjectAndPeriodOnly() throws Exception {
+        long occupied = offering("TURMA-OCUPADA");
+        var nextPeriod = periods.findByKindAndCode(ReferenceEntry.Kind.ACADEMIC_TERM, CURRENT_YEAR + ".2")
+                .orElseThrow();
+        long available = offering("TURMA-DISPONÍVEL", nextPeriod);
+        for (long offer : new long[]{occupied, available}) {
+            teaching(offer, teacher);
+            enrollment(offer);
+        }
+        when(peis.occupiedDraftScopes(student.getId()))
+                .thenReturn(Set.of(new PeiSeriesStore.DraftScope(subject.getId(), period.getCode())));
+
+        mvc.perform(get(studentPath() + "/academic/pei-offers").with(user(teacher.getEmail()).roles("TEACHER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(available));
+        verify(peis).occupiedDraftScopes(student.getId());
     }
 
     @Test
@@ -253,10 +274,14 @@ class AcademicStructureIntegrationTest {
     }
 
     private long offering(String groupCode) throws Exception {
+        return offering(groupCode, period);
+    }
+
+    private long offering(String groupCode, ReferenceEntry offeringPeriod) throws Exception {
         mvc.perform(post(ADMIN_URL + "/offerings").contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"subjectId":%d,"periodId":%d,"groupCode":"%s"}
-                                """.formatted(subject.getId(), period.getId(), groupCode))
+                                """.formatted(subject.getId(), offeringPeriod.getId(), groupCode))
                         .with(user(admin.getEmail()).roles("ADMIN"))).andExpect(status().isOk());
         return jdbc.queryForObject("select id from academic_offering where subject_id=? and group_code=?", Long.class, subject.getId(), groupCode);
     }

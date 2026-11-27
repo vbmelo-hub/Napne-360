@@ -1,5 +1,6 @@
 package br.edu.ifac.napne360.admin;
 
+import br.edu.ifac.napne360.academic.TeachingAssignment;
 import br.edu.ifac.napne360.audit.AdminAuditConfiguration;
 import br.edu.ifac.napne360.common.ApiOperationException;
 import br.edu.ifac.napne360.common.NotFoundException;
@@ -80,10 +81,7 @@ public class AdminUserController {
         if (request.page() < 0 || (long) request.page() * CANDIDATE_PAGE_SIZE > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Paginação inválida.");
         }
-        Specification<UserAccount> scope = accountScope(request.campusId(), false, request.roles(), UserStatus.ACTIVE);
-        if (request.excludedId() != null) {
-            scope = scope.and((user, criteria, cb) -> cb.notEqual(user.get("id"), request.excludedId()));
-        }
+        var scope = candidateScope(request);
         var result = users.findAll(scope.and(accountSearch(request.query())),
                 PageRequest.of(request.page(), CANDIDATE_PAGE_SIZE, Sort.by("name", "id")));
         UserView selected = request.selectedId() == null ? null
@@ -93,9 +91,26 @@ public class AdminUserController {
                 result.getContent().stream().map(UserView::of).toList(), result.getTotalElements(), selected));
     }
 
+    private Specification<UserAccount> candidateScope(CandidateRequest request) {
+        boolean teachingHistory = request.includeInactive() && request.roles().equals(Set.of(RoleName.TEACHER));
+        var scope = accountScope(request.campusId(), false, teachingHistory ? Set.of() : request.roles(),
+                request.includeInactive() ? null : UserStatus.ACTIVE);
+        if (teachingHistory) {
+            scope = scope.and((user, criteria, cb) -> {
+                var history = criteria.subquery(Long.class);
+                var assignment = history.from(TeachingAssignment.class);
+                history.select(assignment.get("id"))
+                        .where(cb.equal(assignment.get("teacher").get("id"), user.get("id")));
+                return cb.or(cb.isMember(RoleName.TEACHER, user.<Set<RoleName>>get("roles")), cb.exists(history));
+            });
+        }
+        return request.excludedId() == null ? scope
+                : scope.and((user, criteria, cb) -> cb.notEqual(user.get("id"), request.excludedId()));
+    }
+
     public record CandidateRequest(@Positive Long campusId, @NotEmpty Set<@NotNull RoleName> roles,
                                    @Size(max = 200) String query, @Positive Long selectedId, @Positive Long excludedId,
-                                   int page) {}
+                                   int page, boolean includeInactive) {}
 
     public record UserCandidates(List<UserView> content, long totalElements, UserView selected) {}
 

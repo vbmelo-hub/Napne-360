@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 for (const role of ['napne','professor','tutor','cotep','coordenacao','gestao']) {
-  test(`${role}: login, acompanhamento autorizado e logout`, async ({ page }) => {
+  test(`${role}: login, acompanhamento autorizado e logout`, async ({ page }, info) => {
     await page.goto('/login');
     await page.getByLabel('E-mail institucional').fill(`${role}@napne.local`);
     await page.getByLabel(/^Senha/).fill('Napne360!Demo');
@@ -22,6 +22,19 @@ for (const role of ['napne','professor','tutor','cotep','coordenacao','gestao'])
       await expect(page.getByRole('button',{name:'Documentos',exact:true})).toHaveCount(0);
     }
     if(role==='gestao') await expect(page.getByRole('heading',{name:'Novo registro',exact:true})).toHaveCount(0);
+    await page.getByRole('button', { name: 'PEI', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Planos de Ensino Individualizados' })).toBeVisible();
+    const draft = page.getByRole('heading', { name: 'Criar rascunho de PEI' });
+    if (role === 'professor') {
+      await expect(draft).toBeVisible();
+      await expect(page.getByText('Elabore e acompanhe os PEIs por componente curricular.')).toBeVisible();
+    } else {
+      await expect(draft).toHaveCount(0);
+      await expect(page.getByText(/Elabore.*PEIs/)).toHaveCount(0);
+    }
+    const screenshot = info.outputPath('pei-' + role + '.png');
+    await page.screenshot({ path: screenshot });
+    await info.attach('PEI por perfil', { path: screenshot, contentType: 'image/png' });
     await page.getByRole('button',{name:'Sair',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Acessar o sistema'})).toBeVisible();
   });

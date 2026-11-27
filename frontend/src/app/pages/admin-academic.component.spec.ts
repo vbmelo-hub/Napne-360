@@ -5,6 +5,7 @@ import { AdminCourse } from '../core/models';
 import { AdminAcademicComponent } from './admin-academic.component';
 
 describe('Cursos na administração acadêmica', () => {
+  const studentUrl = '/api/v1/admin/student-registrations/candidates';
   const courseUrl = '/api/v1/admin/courses';
   const courses: AdminCourse[] = Array.from({ length: 11 }, (_, index) => ({
     id: index + 1,
@@ -24,6 +25,7 @@ describe('Cursos na administração acadêmica', () => {
   const assignments = Array.from({ length: 11 }, (_, index) => ({
     id: index + 1,
     studentId: index + 1,
+    registration: `M${index + 1}`,
     userId: 5,
     userName: 'Coordenação do campus',
     subjectId: index === 10 ? 13 : null,
@@ -36,19 +38,47 @@ describe('Cursos na administração acadêmica', () => {
 
   function load(rows = courses, components = subjects) {
     http.expectNone('/api/v1/admin/users');
-    http.expectOne('/api/v1/catalog/campuses').flush([
+    http.expectOne('/api/v1/admin/campuses').flush([
       { id: 1, name: 'Rio Branco', code: 'RB', active: true },
-      { id: 2, name: 'Xapuri', code: 'XAP', active: true }
+      { id: 2, name: 'Xapuri', code: 'XAP', active: true },
+      { id: 3, name: 'Campus anterior', code: 'ANT', active: false }
     ]);
     http.expectOne(courseUrl).flush(rows);
     http.expectOne('/api/v1/admin/subjects').flush(components);
-    http.expectOne('/api/v1/admin/student-registrations').flush(assignments.map(a => ({
-      id: a.studentId, registration: `M${a.studentId}`, campusId: a.active ? 1 : 2, courseId: a.active ? 1 : 11
-    })));
+    fixture.detectChanges();
+    http.expectNone('/api/v1/admin/student-registrations');
+    const content = Array.from({ length: 30 }, (_, index) => ({
+      id: index + 1, registration: `M${index + 1}`, campusId: 1, courseId: 1, status: 'ACTIVE',
+    }));
+    http.expectOne(studentUrl).flush({ content, totalElements: 41, selected: null });
     http.match('/api/v1/admin/assignments/page?page=0&size=10').forEach(request =>
       request.flush({ content: assignments.slice(0, 10), number: 0, size: 10, totalPages: 2, totalElements: 11 }));
     fixture.detectChanges();
   }
+
+  function validateStudent(id: number) {
+    const student = { id, registration: `M${id}`, campusId: id === 11 ? 2 : 1,
+      courseId: id === 11 ? 11 : 1, status: 'ACTIVE' };
+    const request = http.expectOne(studentUrl);
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body.selectedId).toBe(id);
+    request.flush({ content: [], totalElements: 11, selected: student });
+    fixture.detectChanges();
+  }
+
+  it('consulta a próxima página sem consultar a lista integral de matrículas', () => {
+    const picker = requiredScope('app-searchable-select[formControlName="studentId"]');
+    picker.querySelector('button')!.click();
+    fixture.detectChanges();
+    expect(picker.querySelector('input')?.placeholder).toBe('Pesquisar matrícula');
+    click(picker, 'Próxima');
+    const page = http.expectOne(studentUrl);
+    expect(page.request.body.page).toBe(1);
+    page.flush({ content: [{ id: 31, registration: 'M31', campusId: 1, courseId: 1, status: 'ACTIVE', displayName: 'Nome protegido' }],
+      totalElements: 41, selected: null });
+    fixture.detectChanges();
+    expect(picker.querySelector('[role="option"]')?.textContent?.trim()).toBe('M31');
+  });
 
   function click(scope: ParentNode, label: string) {
     const button = Array.from(scope.querySelectorAll('button')).find(element => element.textContent?.trim() === label);
@@ -96,6 +126,7 @@ describe('Cursos na administração acadêmica', () => {
     const url = '/api/v1/admin/users/candidates';
     form.patchValue({ studentId: '1', assignmentType: 'COORDINATOR' });
     fixture.detectChanges();
+    validateStudent(1);
     const initial = http.expectOne(url);
     expect(initial.request.method).toBe('POST');
     expect(initial.request.serializeBody()).toBe(JSON.stringify({
@@ -111,10 +142,15 @@ describe('Cursos na administração acadêmica', () => {
 
     form.controls.studentId.setValue('2');
     fixture.detectChanges();
+    validateStudent(2);
     http.expectNone(url);
     expect(form.controls.userId.value).toBe('5');
     form.controls.studentId.setValue('11');
     fixture.detectChanges();
+    expect(form.controls.userId.value).toBe('5');
+    fixture.componentInstance.createAssignment();
+    http.expectNone(request => request.method === 'POST' && request.url === '/api/v1/admin/assignments');
+    validateStudent(11);
     const changed = http.expectOne(url);
     expect(changed.request.body).toEqual(jasmine.objectContaining({ campusId: 2, selectedId: 5 }));
     fixture.componentInstance.createAssignment();
@@ -221,6 +257,7 @@ describe('Cursos na administração acadêmica', () => {
     fixture.detectChanges();
     expect(root.querySelector('[role="dialog"]')).toBeNull();
     expect(coursesSection().textContent).toContain('Curso atualizado');
+    http.expectOne(studentUrl).flush({ content: [], totalElements: 0, selected: null });
   });
 
   it('mantém o curso visível e informa o detalhe do servidor quando o arquivamento é bloqueado', () => {
@@ -240,16 +277,19 @@ describe('Cursos na administração acadêmica', () => {
   });
 
   it('mantém o histórico visível e retira das novas seleções o curso arquivado, seu componente e sua matrícula', async () => {
-    const courseOption = root.querySelector<HTMLSelectElement>('select[formControlName="courseId"]')!;
-    const assignment = fixture.componentInstance.assignmentForm;
-    courseOption.value = '11';
-    courseOption.dispatchEvent(new Event('change'));
+    const picker = requiredScope('app-searchable-select[formControlName="courseId"]');
+    const { assignmentForm: assignment, subjectForm } = fixture.componentInstance;
+    picker.querySelector('button')!.click();
+    fixture.detectChanges();
+    search(picker, 'computacao c11');
+    picker.querySelector<HTMLElement>('[role="option"]')!.click();
     assignment.controls.studentId.setValue('11');
     fixture.detectChanges();
+    validateStudent(11);
     http.expectOne('/api/v1/admin/users/candidates').flush({ content: [], totalElements: 0, selected: null });
     assignment.controls.subjectId.setValue('13');
     fixture.detectChanges();
-    expect(courseOption.value).toBe('11');
+    expect(subjectForm.controls.courseId.value).toBe('11');
     expect(requiredScope('app-searchable-select[formControlName="subjectId"]').textContent).toContain('Projeto aplicado');
 
     click(coursesSection(), 'Próxima');
@@ -262,14 +302,25 @@ describe('Cursos na administração acadêmica', () => {
     http.expectOne(courseUrl).flush([...courses.slice(0, 10), archivedCourse]);
     http.expectOne('/api/v1/admin/subjects').flush([...subjects.slice(0, 12), { ...subjects[12], active: false }]);
     fixture.detectChanges();
+    http.expectOne(studentUrl).flush({ content: [], totalElements: 10, selected: null });
+    fixture.detectChanges();
     await fixture.whenStable();
     expect(root.querySelector('[role="alertdialog"]')).toBeNull();
     expect(coursesSection().querySelectorAll('article')).toHaveSize(1);
     expect(coursesSection().textContent).toContain('Computação Aplicada');
     expect(coursesSection().textContent).toContain('Arquivado');
-    expect(Array.from(courseOption.options).some(option => option.value === '11')).toBeFalse();
-    expect(courseOption.value).toBe('');
+    expect(subjectForm.controls.courseId.value).toBe('');
+    picker.querySelector('button')!.click();
+    fixture.detectChanges();
+    search(picker, 'C11');
+    expect(picker.querySelector('[role="option"]')).toBeNull();
+    picker.querySelector('button')!.click();
+    fixture.detectChanges();
     expect(assignment.controls.studentId.value).toBe('');
+    fixture.detectChanges();
+    http.expectOne(studentUrl).flush({ content: [], totalElements: 10, selected: null });
+    fixture.detectChanges();
+    await fixture.whenStable();
     expect(assignment.controls.subjectId.value).toBe('');
     const studentPicker = requiredScope('app-searchable-select[formControlName="studentId"]');
     studentPicker.querySelector('button')!.click();
@@ -291,6 +342,51 @@ describe('Cursos na administração acadêmica', () => {
       .flush({ content: [assignments[10]], number: 0, size: 10, totalPages: 1, totalElements: 1 });
     fixture.detectChanges();
     expect(links.querySelector('tbody tr')?.textContent).toContain('M11');
+  });
+
+  it('identifica o vínculo e a revogação pela matrícula, mesmo se a resposta exceder o contrato', () => {
+    fixture.componentInstance.refreshAssignments();
+    const link = { ...assignments[0], studentName: 'Nome protegido' };
+    http.expectOne('/api/v1/admin/assignments/page?page=0&size=10')
+      .flush({ content: [link], number: 0, size: 10, totalPages: 1, totalElements: 1 });
+    fixture.detectChanges();
+
+    const section = requiredScope('.assignments');
+    expect(section.querySelector('th')?.textContent).toBe('Matrícula');
+    expect(section.querySelector('td[data-label="Matrícula"]')?.textContent).toBe('M1');
+    expect(section.textContent).not.toContain('Nome protegido');
+    click(section, 'Revogar');
+    expect(requiredScope('[role="alertdialog"]').textContent).toContain('matrícula M1');
+  });
+
+  it('mostra campus arquivado somente no filtro histórico de vínculos', () => {
+    const scope = requiredScope('.assignments');
+    const history = scope.querySelector<HTMLSelectElement>('select[formControlName="campus"]')!;
+    expect(history.querySelector('option[value="3"]')?.textContent).toContain('Campus anterior (arquivado)');
+    expect(root.querySelector('.admin-academic-grid select[formControlName="campusId"] option[value="3"]')).toBeNull();
+    click(coursesSection(), 'Editar');
+    expect(requiredScope('[role="dialog"]').querySelector('option[value="3"]')).toBeNull();
+    fixture.componentInstance.assignmentFilters.controls.campus.setValue('3');
+    fixture.componentInstance.applyAssignmentFilters();
+    const request = http.expectOne(req => req.url.endsWith('/assignments/page') && req.params.get('campus') === '3');
+    request.flush({ content: [], number: 0, size: 10, totalPages: 0, totalElements: 0 });
+  });
+
+  it('seleciona o único curso ativo no cadastro e mantém Todos no filtro com uma opção', () => {
+    fixture.componentInstance.load();
+    fixture.detectChanges();
+    load([courses[0]]);
+    const { subjectForm, assignmentFilters } = fixture.componentInstance;
+    expect(subjectForm.controls.courseId.value).toBe('1');
+    expect(assignmentFilters.controls.course.value).toBe('');
+    const course = requiredScope('.assignments app-searchable-select[formControlName="course"]');
+    expect(course.querySelector('button')?.textContent).toContain('Todos');
+    const subject = requiredScope('.assignments app-searchable-select[formControlName="subject"]');
+    subject.querySelector('button')!.click();
+    fixture.detectChanges();
+    search(subject, 'sem componente');
+    subject.querySelector<HTMLElement>('[role="option"]')!.click();
+    expect(assignmentFilters.controls.subject.value).toBe('general');
   });
 
   it('pagina os vínculos e combina situação e matrícula no servidor a partir da primeira página', () => {

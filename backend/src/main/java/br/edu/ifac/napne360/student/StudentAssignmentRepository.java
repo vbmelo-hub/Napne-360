@@ -49,8 +49,6 @@ public interface StudentAssignmentRepository extends JpaRepository<StudentAssign
               and (:actor is null or lower(professional.name) like :actor escape '!')
               and (:registration is null or lower(student.registration) like :registration escape '!')
               and (:query is null
-                   or lower(student.civilName) like :query escape '!'
-                   or lower(coalesce(student.socialName, '')) like :query escape '!'
                    or lower(student.registration) like :query escape '!'
                    or lower(professional.name) like :query escape '!'
                    or lower(subject.name) like :query escape '!'

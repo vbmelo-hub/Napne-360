@@ -42,7 +42,9 @@ import { reconcileRequiredSelection } from '../core/required-selection';
     }
 
     @if(tab()==='dossier'){
-      <section class="section-header"><div><span class="eyebrow">Informações consolidadas</span><h2>Dossiê do estudante</h2><p>Organize o contexto educacional e os apoios necessários em seções temáticas.</p></div>@if(auth.hasRole('NAPNE')){<button class="secondary" (click)="loadHistory()">Consultar histórico</button>}</section>
+      <section class="section-header"><div><span class="eyebrow">Informações consolidadas</span><h2>Dossiê do estudante</h2><p>{{auth.hasRole('NAPNE') && !dossier()?.redacted
+        ? 'Organize o contexto educacional e os apoios necessários em seções temáticas.'
+        : 'Consulte o contexto educacional e os apoios disponíveis neste dossiê.'}}</p></div>@if(auth.hasRole('NAPNE')){<button class="secondary" (click)="loadHistory()">Consultar histórico</button>}</section>
       @if(dossier()?.redacted){<div class="notice">Algumas informações estão ocultas porque seu perfil possui acesso limitado. O conteúdo protegido não é exibido.</div>}
       <form [formGroup]="dossierForm" class="dossier-layout" (ngSubmit)="saveDossier()">
         <aside class="section-index card"><strong>Neste dossiê</strong>@for(section of dossierSections;track section.key){<a [appPageFragment]="'dossier-'+section.key">{{section.label}}</a>}</aside>
@@ -147,7 +149,10 @@ import { reconcileRequiredSelection } from '../core/required-selection';
 
     @if(tab()==='records'){
       <div class="section-header"><div><span class="eyebrow">Prática pedagógica</span><h2>Acompanhamento</h2><p>Registros organizados por tipo, autoria e situação.</p></div></div>
-      @if(canCreateRecord()||editingRecord()){<form class="card stack create-panel" [formGroup]="recordForm" (ngSubmit)="saveRecord()"><div class="section-header"><div><h2 id="record-form-heading" tabindex="-1">{{editingRecord()?'Editar registro':'Novo registro'}}</h2><p>{{editingRecord()?'Atualize as informações pedagógicas. Os vínculos do registro são preservados.':'O formulário exibe somente os campos pertinentes ao tipo escolhido.'}}</p></div></div><fieldset [disabled]="actionBusy()" class="record-form-fields"><div class="grid two"><label><span>Tipo&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="type" [attr.disabled]="editingRecord()?'':null">@if (!editingRecord() && recordTypes().length > 1) {<option value="">Selecione</option>}@if(editingRecord()&&!hasRecordType(editingRecord()!.type)){<option [value]="editingRecord()!.type">{{label(editingRecord()!.type)}}</option>}@for(option of recordTypes();track option.value){<option [value]="option.value">{{option.label}}</option>}</select></label><label><span>Título&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="title"></label></div><label><span>Componente curricular @if(recordSubjectRequired()){<span class="field-required" aria-hidden="true">*</span>}</span><select formControlName="subjectId" [attr.disabled]="editingRecord()||!subjects().length?'':null" [attr.aria-required]="recordSubjectRequired()||null">@if(!recordSubjectRequired()){<option value="">Sem componente específico</option>}@else if(subjects().length!==1){<option value="">{{subjects().length?'Selecione':'Nenhum componente disponível'}}</option>}@for(subject of subjects();track subject.id){<option [value]="subject.id">{{subject.name}}</option>}</select></label>
+      @if(canCreateRecord()||editingRecord()){<form class="card stack create-panel" [formGroup]="recordForm" (ngSubmit)="saveRecord()"><div class="section-header"><div><h2 id="record-form-heading" tabindex="-1">{{editingRecord()?'Editar registro':'Novo registro'}}</h2><p>{{editingRecord()?'Atualize as informações pedagógicas. Os vínculos do registro são preservados.':'O formulário exibe somente os campos pertinentes ao tipo escolhido.'}}</p></div></div><fieldset [disabled]="actionBusy()" class="record-form-fields"><div class="grid two"><label><span>Tipo&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="type" [attr.disabled]="editingRecord()?'':null">@if (!editingRecord() && recordTypes().length > 1) {<option value="">Selecione</option>}@if(editingRecord()&&!hasRecordType(editingRecord()!.type)){<option [value]="editingRecord()!.type">{{label(editingRecord()!.type)}}</option>}@for(option of recordTypes();track option.value){<option [value]="option.value">{{option.label}}</option>}</select></label><label><span>Título&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="title"></label></div><app-searchable-select label="Componente curricular" formControlName="subjectId"
+          [required]="recordSubjectRequired()" [options]="recordSubjectOptions()" [readonly]="!!editingRecord() || actionBusy()"
+          [selectionPlaceholder]="recordSubjectRequired() ? 'Selecione' : 'Sem componente específico'"
+          emptyMessage="Nenhum componente disponível." placeholder="Nome ou código" />
         @if(auth.hasRole('NAPNE')){
           @if(editingRecord();as record){
             @if(record.caseId;as caseId){<p><strong>Caso vinculado</strong><br>{{recordCaseLabel(caseId)}}</p>}
@@ -533,6 +538,14 @@ export class StudentDetailComponent implements OnInit{
     return !this.editingRecord() && this.recordForm.controls.type.value === 'TEACHER_FEEDBACK';
   }
 
+  protected readonly recordSubjectOptions = computed(() => {
+    const options = this.subjects().map(subject => ({ id: String(subject.id), label: subject.name, detail: subject.code }));
+    const selectedId = this.editingRecord()?.subjectId;
+    return selectedId && !options.some(option => option.id === String(selectedId))
+      ? [...options, { id: String(selectedId), label: this.subjectName(selectedId), detail: 'Vínculo original' }]
+      : options;
+  });
+
   private reconcileRecordSubject(): void {
     const control = this.recordForm.controls.subjectId;
     control.setValidators(this.recordSubjectRequired() ? Validators.required : null);
@@ -610,8 +623,7 @@ export class StudentDetailComponent implements OnInit{
     this.offersError.set('');
     this.academic.peiOffers(this.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: offers => {
-        this.peiOffers.set(offers);
-        reconcileRequiredSelection(this.peiForm.controls.offeringId, offers.map(offer => String(offer.id)));
+        this.updatePeiOffers(offers);
         this.offersLoading.set(false);
       },
       error: error => {
@@ -850,11 +862,14 @@ export class StudentDetailComponent implements OnInit{
   createPei(): void {
     if (!this.canCreatePei() || this.peiForm.invalid || this.actionBusy() || this.offersLoading() || this.offersError()) return;
     const offeringId = Number(this.peiForm.controls.offeringId.value);
-    if (!this.peiOffers().some(offer => offer.id === offeringId)) return;
+    const offer = this.peiOffers().find(candidate => candidate.id === offeringId);
+    if (!offer) return;
     this.actionBusy.set(true);
     this.api.createPei(this.id, { offeringId }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: pei => {
         this.peis.update(items => [pei, ...items.filter(item => item.id !== pei.id)]);
+        this.updatePeiOffers(this.peiOffers().filter(candidate =>
+          candidate.subjectId !== offer.subjectId || candidate.periodCode !== offer.periodCode));
         if (this.hasUnsavedChanges()) {
           this.done('Rascunho criado. Conclua as outras alterações e abra o rascunho na listagem.');
           return;
@@ -871,6 +886,11 @@ export class StudentDetailComponent implements OnInit{
       },
     });
   }
+  private updatePeiOffers(offers: AcademicOffering[]): void {
+    this.peiOffers.set(offers);
+    reconcileRequiredSelection(this.peiForm.controls.offeringId, offers.map(offer => String(offer.id)));
+  }
+
   private peiNavigationFailed(): void {
     this.actionBusy.set(false);
     this.toast.show('Rascunho criado. Abra o editor pela listagem de PEIs.', 'error');

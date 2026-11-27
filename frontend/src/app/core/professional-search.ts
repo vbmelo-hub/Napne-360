@@ -23,8 +23,10 @@ export function createCpfLookup(query: Signal<string>) {
 
 export function createProfessionalCandidates() {
   const api = inject(ApiService);
-  return (criteria: { roles: readonly string[]; campusId?: number; excludedId?: number }): SearchableLookup =>
-    (query, selectedId) => api.userCandidates({ ...criteria, query, selectedId: selectedId ? Number(selectedId) : undefined }).pipe(
+  return (criteria: { roles: readonly string[]; campusId?: number; excludedId?: number; includeInactive?: true }): SearchableLookup =>
+    (query, selectedId, page) => api.userCandidates({
+      ...criteria, query, selectedId: selectedId ? Number(selectedId) : undefined, page: page || undefined,
+    }).pipe(
       map(({ content, totalElements, selected }) => ({
         content: content.map(professionalOption),
         totalElements,

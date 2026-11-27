@@ -17,7 +17,9 @@ test('NAPNE abre o caso, mantém rascunhos no conflito e consulta as revisões p
   );
 
   await loginUi(page, 'napne');
+  const detail = responseFor('GET', path);
   await page.goto('/estudantes/' + student.id);
+  expect((await detail).status()).toBe(200);
   await expect(page.getByRole('heading', { name: student.socialName, exact: true })).toBeVisible();
   const casesTab = page.getByRole('button', { name: 'Casos', exact: true });
   await casesTab.click();
@@ -31,8 +33,8 @@ test('NAPNE abre o caso, mantém rascunhos no conflito e consulta as revisões p
   const opened: CaseView = await createdResponse.json();
   expect(opened).toMatchObject({ source, summary, responsibleId: napne.id, version: 0 });
 
-  const card = page.getByRole('article', { name: source, exact: true });
-  const otherCard = page.getByRole('article', { name: other.source, exact: true });
+  const card = page.getByRole('article', { name: 'Caso nº ' + opened.id + ' · ' + source, exact: true });
+  const otherCard = page.getByRole('article', { name: 'Caso nº ' + other.id + ' · ' + other.source, exact: true });
   const expectResponsible = async (name: string, version: number) => {
     await expect(card.getByText('Responsável: ' + name + ' · Versão ' + version, { exact: false })).toBeVisible();
   };
@@ -42,10 +44,13 @@ test('NAPNE abre o caso, mantém rascunhos no conflito e consulta as revisões p
 
   const transferred = await test.step('manter a transferência preenchida até sincronização explícita do caso', async () => {
     await card.getByRole('button', { name: 'Transferir responsabilidade', exact: true }).click();
-    const candidate = card.getByRole('combobox', { name: 'Novo responsável', exact: true });
-    const reasonField = card.getByLabel('Motivo (opcional)', { exact: true });
-    const confirm = card.getByRole('button', { name: 'Confirmar transferência', exact: true });
-    await candidate.selectOption({ label: recipient.name });
+    const transferDialog = card.getByRole('dialog', { name: 'Transferir responsabilidade' });
+    const candidate = transferDialog.getByRole('button', { name: /^Novo responsável/ });
+    const reasonField = transferDialog.getByLabel('Motivo (opcional)', { exact: true });
+    const confirm = transferDialog.getByRole('button', { name: 'Confirmar transferência', exact: true });
+    await candidate.click();
+    await transferDialog.getByRole('combobox', { name: 'Novo responsável' }).fill(recipient.name);
+    await transferDialog.getByRole('option', { name: recipient.name, exact: true }).click();
     await reasonField.fill(reason);
 
     const updated = await apiJson<CaseView>(request, casePath + '/stage', {
@@ -55,17 +60,17 @@ test('NAPNE abre o caso, mantém rascunhos no conflito e consulta as revisões p
     const conflict = responseFor('PATCH', casePath + '/responsible');
     await confirm.click();
     expect((await conflict).status()).toBe(409);
-    await expect(card.getByRole('alert')).toContainText('Sincronize este caso');
+    await expect(transferDialog.getByRole('alert')).toContainText('Sincronize este caso');
     await expect(confirm).toBeDisabled();
-    await expect(candidate).toHaveValue(String(recipient.id));
+    await expect(candidate).toContainText(recipient.name);
     await expect(reasonField).toHaveValue(reason);
     await expect(sourceField).toHaveValue(draft);
 
     const reading = responseFor('GET', casePath);
-    await card.getByRole('button', { name: 'Sincronizar caso', exact: true }).click();
+    await transferDialog.getByRole('button', { name: 'Sincronizar caso', exact: true }).click();
     expect((await reading).status()).toBe(200);
     await expectResponsible(napne.name, updated.version);
-    await expect(candidate).toHaveValue(String(recipient.id));
+    await expect(candidate).toContainText(recipient.name);
     await expect(reasonField).toHaveValue(reason);
     await expect(sourceField).toHaveValue(draft);
 
@@ -108,17 +113,19 @@ test('NAPNE abre o caso, mantém rascunhos no conflito e consulta as revisões p
     await expect(card.getByText('Motivo: ' + reason, { exact: true })).toBeVisible();
     await expect(revisions.filter({ hasText: 'Mudança de etapa · Versão ' + staged.version })).toContainText('Triagem → Acolhimento');
 
+    await card.getByRole('button', { name: 'Fechar janela' }).click();
     await otherCard.getByRole('button', { name: 'Consultar histórico', exact: true }).click();
     await expect(otherCard.getByRole('listitem')).toHaveCount(1);
     await expect(otherCard.getByRole('listitem')).toContainText('Abertura · Versão ' + other.version);
     await expect(otherCard.getByText('Motivo: ' + reason, { exact: true })).toHaveCount(0);
+    await otherCard.getByRole('button', { name: 'Fechar janela' }).click();
   });
 
   await test.step('reabrir com motivo e manter o caso arquivado disponível para consulta', async () => {
     const nextStage = card.getByRole('combobox', { name: 'Próxima etapa', exact: true });
     const register = card.getByRole('button', { name: 'Registrar etapa', exact: true });
-    const dialog = page.getByRole('alertdialog', { name: 'Registrar mudança de etapa?', exact: true });
-    const saveStage = async () => {
+    const saveStage = async (title = 'Registrar mudança de etapa?') => {
+      const dialog = page.getByRole('alertdialog', { name: title, exact: true });
       await register.click();
       const saved = responseFor('PATCH', casePath + '/stage');
       await dialog.getByRole('button', { name: 'Registrar etapa', exact: true }).click();
@@ -142,17 +149,20 @@ test('NAPNE abre o caso, mantém rascunhos no conflito e consulta as revisões p
     const reopened = await saveStage();
     expect(reopened.body).toEqual({ stage: 'SCREENING', summary, version: firstClosure.version, reason: reopenReason });
     expect(reopened.value).toMatchObject({ closedAt: null, responsibleId: recipient.id });
+    await card.getByRole('button', { name: 'Consultar histórico', exact: true }).click();
     await expect(card.getByText('Motivo: ' + reopenReason, { exact: true })).toBeVisible();
+    await card.getByRole('button', { name: 'Fechar janela' }).click();
 
     await nextStage.selectOption('CLOSED');
     const { value: closed } = await saveStage();
     await nextStage.selectOption('ARCHIVED');
-    const archived = await saveStage();
+    const archived = await saveStage('Arquivar caso?');
     expect(archived.body).toEqual({ stage: 'ARCHIVED', summary, version: closed.version });
     expect(archived.value.closedAt).toBe(closed.closedAt);
     await expect(nextStage).toHaveCount(0);
     await expect(register).toHaveCount(0);
     await expect(card.getByRole('button', { name: 'Transferir responsabilidade', exact: true })).toHaveCount(0);
+    await card.getByRole('button', { name: 'Consultar histórico', exact: true }).click();
     await expect(card.getByRole('heading', { name: 'Histórico do caso', exact: true })).toBeVisible();
     await expect(card.getByRole('listitem').first()).toContainText('Encerrado → Arquivado');
   });

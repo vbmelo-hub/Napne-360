@@ -289,6 +289,8 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     expect(navigate).toHaveBeenCalledOnceWith(['/estudantes', 1, 'pei', 'rascunho-recuperavel']);
     expect(fixture.componentInstance.actionBusy()).toBeFalse();
     expect(fixture.componentInstance.peis()[0].id).toBe('rascunho-recuperavel');
+    expect(fixture.componentInstance.peiOffers()).toEqual([]);
+    expect(fixture.componentInstance.peiForm.controls.offeringId.value).toBe('');
   });
 
   it('preserva o acompanhamento em elaboração quando cria o rascunho do PEI', () => {

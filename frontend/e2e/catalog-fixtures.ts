@@ -11,8 +11,15 @@ export async function loginApi(request: APIRequestContext, role: string) {
 
 export async function loginUi(page: Page, role: string) {
   // Logout revokes every session for the account, including API fixture tokens.
-  // Reset only this browser page's storage, then reload to create a fresh AuthService.
-  if (/^https?:/.test(page.url())) await page.evaluate(() => sessionStorage.removeItem('napne360.session'));
+  // Leave the old app before clearing storage so an in-flight refresh cannot restore the session.
+  if (/^https?:/.test(page.url())) {
+    await page.route('**/__e2e_session_reset', route => route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><title>Troca de sessão de teste</title>',
+    }), { times: 1 });
+    await page.goto('/__e2e_session_reset');
+    await page.evaluate(() => sessionStorage.removeItem('napne360.session'));
+  }
   await page.goto('/login');
   await page.getByRole('textbox', { name: 'E-mail institucional', exact: true }).fill(`${role}@napne.local`);
   await page.getByLabel(/^Senha/).fill('Napne360!Demo');

@@ -229,12 +229,19 @@ export interface Attachment {
 export interface Course { id: number; name: string; code: string; campusId: number; campus: string; }
 export interface AdminCourse extends Course { active: boolean; }
 export interface Subject { id: number; name: string; code: string; workloadHours: number; courseId: number; }
+export interface StudentRegistrationCandidate {
+  id: number;
+  registration: string;
+  campusId: number;
+  courseId: number;
+  status: string;
+}
+
 export interface AssignmentView {
   id: number;
   studentId: number;
   userId: number;
   subjectId: number | null;
-  studentName?: string;
   registration?: string;
   userName?: string;
   subjectName?: string | null;

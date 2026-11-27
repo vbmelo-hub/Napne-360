@@ -1,3 +1,4 @@
+import { AppliedFiltersComponent, appliedFilterItems, type AppliedFilter } from '../shared/applied-filters.component';
 import { Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, FormControl, ReactiveFormsModule } from '@angular/forms';
@@ -11,7 +12,7 @@ import { PaginationComponent } from '../shared/pagination.component';
 
 @Component({
   selector: 'app-academic-enrollments',
-  imports: [ReactiveFormsModule, ConfirmDialogComponent, ModalShellComponent, PaginationComponent],
+  imports: [AppliedFiltersComponent, ReactiveFormsModule, ConfirmDialogComponent, ModalShellComponent, PaginationComponent],
   template: `
     <section class="card stack" aria-labelledby="enrollments-title">
       <div class="section-header">
@@ -22,7 +23,7 @@ import { PaginationComponent } from '../shared/pagination.component';
         <button type="button" (click)="openOptions()" [disabled]="busy()">Registrar matrícula</button>
       </div>
       <form class="server-list-toolbar" (submit)="$event.preventDefault(); applyFilters()">
-        <label class="toolbar-search">Buscar matrículas <input type="search" [formControl]="search" placeholder="Componente, turma ou período"></label>
+        <label class="toolbar-search">Buscar matrículas <input #filterSearch type="search" [formControl]="search" placeholder="Componente, turma ou período"></label>
         <details>
           <summary>Filtros{{filteredCount() ? ' (' + filteredCount() + ')' : ''}}</summary>
           <div class="server-list-toolbar" [formGroup]="filters">
@@ -42,6 +43,7 @@ import { PaginationComponent } from '../shared/pagination.component';
           <span class="meta" role="status">{{enrollments()?.totalElements}} resultado(s)</span>
         }
       </form>
+      <app-applied-filters [fallbackFocus]="filterSearch" [filters]="appliedItems()" (removed)="removeFilter($event)" />
       @if (error()) {<p class="error" role="alert">{{error()}}</p>}
       @if (loading()) {<p class="meta" role="status">Carregando matrículas…</p>}
       @else if (enrollments()?.content?.length) {
@@ -102,7 +104,8 @@ export class AcademicEnrollmentsComponent {
   readonly studentId = input.required<number>();
   readonly search = new FormControl('', { nonNullable: true });
   readonly filters = inject(FormBuilder).nonNullable.group({subject: '', groupCode: '', periodCode: '', active: ''});
-  readonly filteredCount = signal(0);
+  protected readonly appliedItems = signal<AppliedFilter[]>([]);
+  readonly filteredCount = computed(() => this.appliedItems().length);
   protected appliedQuery = '';
   private appliedFilters: AcademicListFilters = {};
   readonly optionSearch = new FormControl('', { nonNullable: true });
@@ -128,7 +131,18 @@ export class AcademicEnrollmentsComponent {
   applyFilters(): void {
     this.appliedQuery = this.search.value.trim();
     this.appliedFilters = this.filters.getRawValue();
-    this.filteredCount.set(Object.values(this.appliedFilters).filter(value => value.trim()).length);
+    this.appliedItems.set(appliedFilterItems({ ...this.appliedFilters }, {
+      subject: 'Componente', groupCode: 'Turma', periodCode: 'Período letivo', active: 'Situação',
+    }, { active: value => value === 'true' ? 'Ativa' : 'Encerrada' }));
+    this.load(0);
+  }
+
+  protected removeFilter(key: string): void {
+    const control = this.filters.get(key);
+    if (!control) return;
+    control.reset();
+    this.appliedFilters = { ...this.appliedFilters, [key]: '' };
+    this.appliedItems.update(items => items.filter(item => item.key !== key));
     this.load(0);
   }
 

@@ -75,6 +75,18 @@ describe('AdminComponent', () => {
     fixture.detectChanges();
   }
 
+  it('preenche o único campus ativo ao abrir o cadastro institucional', () => {
+    button('Nova conta').click();
+    fixture.detectChanges();
+    const { campusId, role } = fixture.componentInstance.userForm.controls;
+    expect(campusId.value).toBe('7');
+    role.setValue('ADMIN');
+    campusId.setValue('');
+    expect(campusId.value).toBe('');
+    role.setValue('TEACHER');
+    expect(campusId.value).toBe('7');
+  });
+
   it('edits cadastro in the existing account and detects a restored value', () => {
     expect(root.textContent).toContain('***.***.***-25');
     expect(root.textContent).not.toContain('52998224725');

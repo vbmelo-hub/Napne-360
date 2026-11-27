@@ -25,6 +25,7 @@ test('administra catálogos pela interface e preserva snapshots após renomear e
     await form.getByRole('button', { name: 'Criar item', exact: true }).click();
     const result = await response;
     expect(result.status()).toBe(200);
+    await page.getByRole('searchbox', { name: 'Buscar itens de catálogo' }).fill(label);
     await expect(page.getByRole('row').filter({ hasText: label })).toBeVisible();
     return result.json();
   };
@@ -62,6 +63,7 @@ test('administra catálogos pela interface e preserva snapshots após renomear e
   await loginUi(page, 'admin');
   await openReferences(page);
   for (const [item, label] of [[category, categoryLabel]] as const) {
+    await page.getByRole('searchbox', { name: 'Buscar itens de catálogo' }).fill(label);
     await page.getByRole('row').filter({ hasText: label }).getByRole('button', { name: 'Editar', exact: true }).click();
     await expect(form.getByRole('textbox', { name: /^Código/ })).toBeDisabled();
     await expect(form.getByRole('combobox', { name: /^Catálogo/ })).toBeDisabled();
@@ -82,6 +84,7 @@ test('administra catálogos pela interface e preserva snapshots após renomear e
   await loginUi(page, 'admin');
   await openReferences(page);
   for (const [item, label] of [[category, categoryLabel]] as const) {
+    await page.getByRole('searchbox', { name: 'Buscar itens de catálogo' }).fill(label);
     await page.getByRole('row').filter({ hasText: `${label} renomeado` }).getByRole('button', { name: 'Inativar', exact: true }).click();
     const inactivated = page.waitForResponse(r => r.url().endsWith(`/admin/references/${item.id}/active`) && r.request().method() === 'PATCH');
     await page.getByRole('alertdialog').getByRole('button', { name: 'Inativar item', exact: true }).click();
@@ -108,10 +111,10 @@ test('administra catálogos pela interface e preserva snapshots após renomear e
   await loginUi(page, 'professor');
   await page.goto(`/estudantes/${f.student.id}`);
   await page.getByRole('button', { name: 'PEI', exact: true }).click();
-  await peiForm.getByRole('button', { name: /^Oferta curricular/ }).click();
-  await expect(peiForm.getByRole('option').filter({ hasText: termLabel })).toHaveCount(1);
+  await expect(peiForm).toHaveCount(0);
+  await expect(page.locator('article.pei-row')).toContainText(termLabel);
   const revision = await request.put(`${f.path}/peis/${pei.id}`, {
-    headers: f.teacherHeaders, data: { version: pei.storageVersion, content: pei.content }
+    headers: f.teacherHeaders, data: { version: pei.storageVersion, content: { ...pei.content, generalObjectives: 'Objetivo revisto no cenário fictício' } }
   });
   expect(revision.status()).toBe(200);
   expect(await revision.json()).toMatchObject({ academicTermId: term.id, academicTerm: term.code, academicTermLabel: termLabel, revision: 2 });
@@ -236,7 +239,7 @@ test('reabre legado sem inventar associação e permite revisão e remoção exp
   expect(previousResponse.status()).toBe(200);
   const previous = await previousResponse.json();
   const response = await request.put(`${f.path}/peis/${peiId}`, {
-    headers: f.teacherHeaders, data: { version: previous.storageVersion, content: previous.content }
+    headers: f.teacherHeaders, data: { version: previous.storageVersion, content: { ...previous.content, generalObjectives: 'Objetivo histórico revisado' } }
   });
   expect(response.status()).toBe(200);
   const revision = await response.json();
@@ -245,7 +248,7 @@ test('reabre legado sem inventar associação e permite revisão e remoção exp
   expect(revision.academicTermLabel).toBeFalsy();
   expect(revision.formVersion ?? null).toBeNull();
   expect(revision.content).toMatchObject({
-    generalObjectives: 'Objetivo histórico fictício',
+    generalObjectives: 'Objetivo histórico revisado',
     skillsInventory: { oralCommunication: 'REALIZA_COM_AJUDA' }
   });
   await page.reload();
@@ -255,7 +258,7 @@ test('reabre legado sem inventar associação e permite revisão e remoção exp
 
   await loginUi(page, 'professor');
   await page.goto(`/estudantes/${f.student.id}/pei/${revision.id}`);
-  await expect(page.getByLabel(/^Objetivo geral/)).toHaveValue('Objetivo histórico fictício');
+  await expect(page.getByLabel(/^Objetivo geral/)).toHaveValue('Objetivo histórico revisado');
   await expect(page.getByRole('combobox', { name: 'Comunicação oral', exact: true })).toHaveValue('REALIZA_COM_AJUDA');
   await expect(page.locator('app-pei-annex-i')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Baixar PDF', exact: true })).toHaveCount(0);

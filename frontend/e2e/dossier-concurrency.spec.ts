@@ -116,7 +116,7 @@ test('duas sessões preservam a primeira revisão do dossiê e recusam PUT incom
     await expect(firstPage.getByRole('heading', { name: fixture.student.socialName, exact: true })).toBeVisible();
     await expect(firstPage.getByLabel(demandLabel, { exact: true })).toHaveValue(winningDemand);
     await firstPage.getByRole('button', { name: 'Consultar histórico', exact: true }).click();
-    const revisionRow = firstPage.locator('.history details').filter({ hasText: secondSession.email });
+    const revisionRow = firstPage.getByRole('dialog', { name: 'Histórico do dossiê' }).locator('details').filter({ hasText: secondSession.email });
     await expect(revisionRow.locator('summary')).toContainText(secondSession.email);
     await expect(revisionRow.locator('summary')).toContainText(/\d{2}\/\d{2}\/\d{4}, \d{2}:\d{2}/);
     await revisionRow.locator('summary').click();

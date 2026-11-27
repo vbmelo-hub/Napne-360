@@ -53,7 +53,11 @@ for (const scenario of [
     const title = `Registro fictício ${scenario.role}`;
     const createForm = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Novo registro', exact: true }) });
     await createForm.getByRole('combobox', { name: /^Tipo/ }).selectOption(scenario.type);
-    if (scenario.role === 'professor') await createForm.getByRole('combobox', { name: /^Componente curricular/ }).selectOption(String(subjects[0].id));
+    if (scenario.role === 'professor') {
+      const picker = createForm.locator('app-searchable-select[formControlName="subjectId"]');
+      await picker.getByRole('button', { name: /^Componente curricular/ }).click();
+      await picker.getByRole('option').filter({ hasText: subjects[0].name }).click();
+    }
     await createForm.getByRole('textbox', { name: 'Título', exact: true }).fill(title);
     await createForm.getByLabel(scenario.field, { exact: true }).fill('Campo pedagógico inicial');
     await createForm.getByLabel('Comentários adicionais', { exact: true }).fill('Nota inicial fictícia');

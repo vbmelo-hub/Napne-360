@@ -12,22 +12,25 @@ export interface SearchableOption {
   detail?: string;
 }
 
-export interface SearchablePage {
-  content: readonly SearchableOption[];
+export interface SearchablePage<T extends SearchableOption> {
+  content: readonly T[];
   totalElements: number;
-  selected: SearchableOption | null;
+  selected: T | null;
 }
 
-export type SearchableLookup = (query: string, selectedId: string) => Observable<SearchablePage>;
+export type SearchableLookup<T extends SearchableOption = SearchableOption> =
+  (query: string, selectedId: string, page: number) => Observable<SearchablePage<T>>;
 
-interface LookupRequest {
+interface LookupRequest<T extends SearchableOption> {
   query: string;
-  result: Observable<SearchablePage>;
+  result: Observable<SearchablePage<T>>;
 }
 
-type LookupState =
-  | { request: LookupRequest; status: 'loading' | 'error' }
-  | { request: LookupRequest; status: 'ready'; page: SearchablePage };
+type LookupState<T extends SearchableOption> =
+  | { request: LookupRequest<T>; status: 'loading' | 'error' }
+  | { request: LookupRequest<T>; status: 'ready'; page: SearchablePage<T> };
+
+const REMOTE_PAGE_SIZE = 30;
 
 const normalize = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('pt-BR');
 let nextId = 0;
@@ -79,9 +82,17 @@ let nextId = 0;
           @else if (error()) { {{error()}} }
           @else if (lookupFailed()) {Não foi possível concluir a consulta.}
           @else if (!results().length) { {{query().trim() ? 'Nenhum resultado encontrado.' : emptyMessage()}} }
-          @else if (totalResults() > results().length) {Exibindo {{results().length}} de {{totalResults()}} opções. Refine a pesquisa.}
+          @else if (totalPages() > 1) {Exibindo {{pageStart() + 1}}–{{pageStart() + results().length}} de {{totalResults()}} opções.}
           @else { {{results().length}} opção(ões) disponível(is). }
         </p>
+        @if (remotePage() && (pageIndex() > 0 || totalPages() > 1)) {
+          <nav class="option-pages" [attr.aria-label]="'Páginas de ' + label()">
+            <button type="button" class="secondary compact" [disabled]="pageIndex() === 0"
+              (click)="changePage(-1)" (keydown.escape)="closeOnEscape($event)">Anterior</button>
+            <button type="button" class="secondary compact" [disabled]="pageIndex() + 1 >= totalPages()"
+              (click)="changePage(1)" (keydown.escape)="closeOnEscape($event)">Próxima</button>
+          </nav>
+        }
       </div>
     } @else if (loading() || lookupPending()) {
       <p role="status">Carregando opções…</p>
@@ -102,12 +113,13 @@ let nextId = 0;
     [role="option"] { padding: .5rem; cursor: pointer; overflow-wrap: anywhere; }
     [role="option"].highlighted { background: var(--surface-muted, #e9f0f5); outline: 1px solid currentColor; outline-offset: -1px; }
     small { display: block; font-weight: normal; }
+    .option-pages { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .35rem; }
     p { margin: .35rem 0 0; font-size: .875rem; }
   `,
 })
-export class SearchableSelectComponent implements ControlValueAccessor {
+export class SearchableSelectComponent<T extends SearchableOption = SearchableOption> implements ControlValueAccessor {
   readonly label = input.required<string>();
-  readonly options = input<readonly SearchableOption[]>([]);
+  readonly options = input<readonly T[]>([]);
   readonly required = input(false);
   readonly readonly = input(false);
   readonly loading = input(false);
@@ -116,7 +128,7 @@ export class SearchableSelectComponent implements ControlValueAccessor {
   readonly emptyMessage = input('Nenhuma opção disponível.');
   readonly selectionPlaceholder = input('Selecione');
   // null disables the remote source until its dependencies are available.
-  readonly remote = input<SearchableLookup | null>();
+  readonly remote = input<SearchableLookup<T> | null>();
 
   private readonly element = inject(ElementRef<HTMLElement>);
   private readonly injector = inject(Injector);
@@ -137,22 +149,30 @@ export class SearchableSelectComponent implements ControlValueAccessor {
   readonly open = signal(false);
   readonly query = signal('');
   readonly activeIndex = signal(-1);
-  private readonly lastSelection = signal<SearchableOption | null>(null);
-  private readonly request = computed<LookupRequest | null>(() => {
+  private readonly lastSelection = signal<T | null>(null);
+  private readonly page = signal<{ lookup: SearchableLookup<T>; index: number } | null>(null);
+  private readonly refreshVersion = signal(0);
+  protected readonly pageIndex = computed(() => {
+    const page = this.page();
+    return page && page.lookup === this.remote() ? page.index : 0;
+  });
+  protected readonly pageStart = computed(() => this.pageIndex() * REMOTE_PAGE_SIZE);
+  private readonly request = computed<LookupRequest<T> | null>(() => {
     const lookup = this.remote();
     const id = this.value();
     if (!lookup || (!this.required() && !id && !this.open())) return null;
     const query = this.query().trim();
-    return { query, result: lookup(query, id) };
+    this.refreshVersion();
+    return { query, result: lookup(query, id, this.pageIndex()) };
   });
   private readonly lookupState = toSignal(toObservable(this.request).pipe(
     switchMap(request => {
       if (!request) return of(null);
       return (request.query ? timer(250) : of(0)).pipe(
         switchMap(() => request.result),
-        map((page): LookupState => ({ request, status: 'ready', page })),
-        catchError(() => of<LookupState>({ request, status: 'error' })),
-        startWith<LookupState>({ request, status: 'loading' }),
+        map((page): LookupState<T> => ({ request, status: 'ready', page })),
+        catchError(() => of<LookupState<T>>({ request, status: 'error' })),
+        startWith<LookupState<T>>({ request, status: 'loading' }),
       );
     }),
   ));
@@ -160,7 +180,7 @@ export class SearchableSelectComponent implements ControlValueAccessor {
     const state = this.lookupState();
     return state?.request === this.request() ? state : null;
   });
-  private readonly remotePage = computed(() => {
+  protected readonly remotePage = computed(() => {
     const state = this.currentLookup();
     return state?.status === 'ready' ? state.page : null;
   });
@@ -174,10 +194,11 @@ export class SearchableSelectComponent implements ControlValueAccessor {
     const previous = this.lastSelection();
     return this.remote() && previous?.id === value ? previous : null;
   });
-  readonly selectionValidated = computed(() => {
-    const page = this.remotePage();
-    return !!this.value() && page?.selected?.id === this.value();
+  readonly validatedOption = computed(() => {
+    const option = this.remotePage()?.selected;
+    return option && option.id === this.value() ? option : null;
   });
+  readonly selectionValidated = computed(() => this.validatedOption() !== null);
   readonly results = computed(() => {
     if (this.loading() || this.error()) return [];
     if (this.remote() !== undefined) return this.remotePage()?.content ?? [];
@@ -188,6 +209,7 @@ export class SearchableSelectComponent implements ControlValueAccessor {
     });
   });
   readonly totalResults = computed(() => this.remotePage()?.totalElements ?? this.results().length);
+  protected readonly totalPages = computed(() => Math.ceil((this.remotePage()?.totalElements ?? 0) / REMOTE_PAGE_SIZE));
   readonly showEmptyStatus = computed(() => this.remote() === undefined ? !this.options().length
     : this.remote() === null || this.remotePage()?.totalElements === 0);
   readonly activeOptionId = computed(() => this.results()[this.activeIndex()] ? this.optionId(this.activeIndex()) : null);
@@ -225,6 +247,7 @@ export class SearchableSelectComponent implements ControlValueAccessor {
   show(): void {
     if (this.disabled() || this.readonly()) return;
     this.open.set(true);
+    if (this.lookupFailed()) this.refresh();
     afterNextRender(() => this.search()?.nativeElement.focus(), { injector: this.injector });
   }
 
@@ -235,7 +258,21 @@ export class SearchableSelectComponent implements ControlValueAccessor {
     this.searchFor('');
   }
 
+  refresh(): void {
+    this.refreshVersion.update(version => version + 1);
+  }
+
+  protected changePage(step: number): void {
+    const lookup = this.remote();
+    const index = this.pageIndex() + step;
+    if (!lookup || !this.remotePage() || index < 0 || (step > 0 && index >= this.totalPages())) return;
+    this.search()?.nativeElement.focus();
+    this.page.set({ lookup, index });
+    this.activeIndex.set(-1);
+  }
+
   searchFor(query: string): void {
+    this.page.set(null);
     this.query.set(query);
     this.activeIndex.set(-1);
   }
@@ -265,14 +302,19 @@ export class SearchableSelectComponent implements ControlValueAccessor {
     if (this.open()) this.activeIndex.set(0);
   }
 
-  onSearchKey(event: KeyboardEvent): void {
-    if (!['Escape', 'Enter', 'ArrowDown', 'ArrowUp'].includes(event.key)) return;
+  protected closeOnEscape(event: Event): void {
     event.preventDefault();
+    event.stopPropagation();
+    this.close(true);
+  }
+
+  onSearchKey(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
-      event.stopPropagation();
-      this.close(true);
+      this.closeOnEscape(event);
       return;
     }
+    if (!['Enter', 'ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault();
     const options = this.results();
     if (event.key === 'Enter') {
       const option = options[this.activeIndex()];
@@ -294,7 +336,8 @@ export class SearchableSelectComponent implements ControlValueAccessor {
       const page = this.remotePage();
       if (!page) return value;
       if (value && page.selected?.id === value) return value;
-      return this.required() && !this.query().trim() && page.totalElements === 1 ? page.content[0]?.id ?? '' : '';
+      return this.required() && !this.query().trim() && this.pageIndex() === 0 && page.totalElements === 1
+        ? page.content[0]?.id ?? '' : '';
     }
     const options = this.options();
     if (value && options.some(option => option.id === value)) return value;

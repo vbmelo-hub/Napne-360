@@ -104,11 +104,9 @@ test('NAPNE transfere rascunho devolvido e novo docente continua o PEI com histÃ
     const confirm = dialog.getByRole('button', { name: 'Confirmar transferÃªncia', exact: true });
     await expect(candidate.getByRole('option', { name: recipient.name, exact: true })).toHaveCount(1);
     await expect(candidate.getByRole('option', { name: author.name, exact: true })).toHaveCount(0);
-    await expect(candidate.locator('option:checked')).toHaveText('Selecione um docente');
+    await expect(candidate).toHaveValue(String(recipient.id));
     await expect(confirm).toBeDisabled();
-    await candidate.selectOption({ label: recipient.name });
-    await expect(confirm).toBeDisabled();
-    await dialog.getByLabel('Motivo', { exact: true }).fill(reason);
+    await dialog.getByRole('textbox', { name: 'Motivo', exact: true }).fill(reason);
     const pending = responseFor('POST', transferPath);
     await confirm.click();
     const response = await pending;

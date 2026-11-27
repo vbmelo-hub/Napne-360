@@ -264,7 +264,7 @@ describe('Casos no acompanhamento do estudante', () => {
     setup();
     const [card, sibling] = openCases();
     openTransfer(card);
-    const candidate = field<HTMLSelectElement>(card, 'select[name="responsibleId"]', '7');
+    const candidate = card.querySelector<HTMLButtonElement>('app-searchable-select button')!;
     const reason = field<HTMLTextAreaElement>(card, 'textarea', 'Redistribuição de trabalho');
     click(card, 'Confirmar transferência');
     const patch = http.expectOne(caseUrl + '/responsible');
@@ -289,12 +289,12 @@ describe('Casos no acompanhamento do estudante', () => {
     setup();
     const [card] = openCases();
     openTransfer(card);
-    const candidate = field<HTMLSelectElement>(card, 'select[name="responsibleId"]', '7');
+    const candidate = card.querySelector<HTMLButtonElement>('app-searchable-select button')!;
     const reason = field<HTMLTextAreaElement>(card, 'textarea', 'Motivo preservado');
     click(card, 'Confirmar transferência');
     http.expectOne(caseUrl + '/responsible').flush(null, { status: 400, statusText: 'Bad Request' });
     fixture.detectChanges();
-    expect(candidate.value).toBe('7');
+    expect(candidate.textContent).toContain('Pessoa elegível');
     expect(reason.value).toBe('Motivo preservado');
     expect(candidate.matches(':disabled')).toBeFalse();
 
@@ -302,7 +302,7 @@ describe('Casos no acompanhamento do estudante', () => {
     http.expectOne(caseUrl + '/responsible').flush(null, { status: 409, statusText: 'Conflict' });
     fixture.detectChanges();
     expect(card.querySelector('[role="alert"]')?.textContent).toBeTruthy();
-    expect(candidate.value).toBe('7');
+    expect(candidate.textContent).toContain('Pessoa elegível');
     expect(reason.value).toBe('Motivo preservado');
     expect(button(card, 'Confirmar transferência').matches(':disabled')).toBeTrue();
     http.expectNone(caseUrl);
@@ -311,7 +311,7 @@ describe('Casos no acompanhamento do estudante', () => {
     expect(sync.request.method).toBe('GET');
     sync.flush({ ...currentCase, stage: 'SCREENING', allowedNextStages: ['RECEIVED', 'CLOSED'], version: 2 });
     fixture.detectChanges();
-    expect(candidate.value).toBe('7');
+    expect(candidate.textContent).toContain('Pessoa elegível');
     expect(reason.value).toBe('Motivo preservado');
     expect(card.textContent).toContain('Versão 2');
     http.expectNone(caseUrl + '/responsible');
@@ -375,7 +375,7 @@ describe('Casos no acompanhamento do estudante', () => {
     http.expectOne(caseUrl + '/responsible-candidates').flush([{ id: 2, name: 'Pessoa inicial' }]);
     fixture.detectChanges();
     expect(card.textContent).toContain('não existem outros profissionais ativos da equipe NAPNE neste campus');
-    expect(card.querySelector('select[name="responsibleId"]')).toBeNull();
+    expect(card.querySelector('app-searchable-select')).toBeNull();
     expect(Array.from(card.querySelectorAll('button')).some(item => item.textContent?.trim() === 'Confirmar transferência')).toBeFalse();
   });
 

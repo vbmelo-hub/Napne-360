@@ -11,10 +11,15 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -32,6 +37,7 @@ import java.util.Set;
 @PreAuthorize("hasRole('ADMIN')")
 @RequiredArgsConstructor
 public class AdminController {
+    private static final int REGISTRATION_CANDIDATE_PAGE_SIZE = 30;
     private final CampusRepository campuses;
     private final CourseRepository courses;
     private final SubjectRepository subjects;
@@ -56,8 +62,26 @@ public class AdminController {
     @GetMapping("/student-registrations")
     @Transactional(readOnly = true)
     public List<RegistrationView> registrations() {
-        return students.findAll().stream().map(s -> new RegistrationView(s.getId(),s.getRegistration(),s.getCampus().getId(),s.getCourse().getId(),s.getStatus())).toList();
+        return students.findAll().stream().map(RegistrationView::of).toList();
     }
+
+    @PostMapping("/student-registrations/candidates")
+    @Transactional(readOnly = true)
+    public ResponseEntity<RegistrationCandidates> registrationCandidates(@Valid @RequestBody RegistrationCandidateRequest request) {
+        if ((long) request.page() * REGISTRATION_CANDIDATE_PAGE_SIZE > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Paginação inválida.");
+        }
+        var result = students.registrationCandidates(searchPattern(request.query()),
+                PageRequest.of(request.page(), REGISTRATION_CANDIDATE_PAGE_SIZE, Sort.by("registration", "id")));
+        RegistrationView selected = request.selectedId() == null ? null
+                : students.registrationCandidate(request.selectedId()).map(RegistrationView::of).orElse(null);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new RegistrationCandidates(
+                result.getContent().stream().map(RegistrationView::of).toList(), result.getTotalElements(), selected));
+    }
+
+    public record RegistrationCandidateRequest(@Size(max = 200) String query, @Positive Long selectedId, @Min(0) int page) {}
+
+    public record RegistrationCandidates(List<RegistrationView> content, long totalElements, RegistrationView selected) {}
 
     @GetMapping("/assignments")
     @Transactional(readOnly = true)
@@ -345,7 +369,12 @@ public class AdminController {
     }
 
     public record ActiveRequest(boolean active) {}
-    public record RegistrationView(Long id, String registration, Long campusId, Long courseId, StudentStatus status) {}
+    public record RegistrationView(Long id, String registration, Long campusId, Long courseId, StudentStatus status) {
+        static RegistrationView of(Student student) {
+            return new RegistrationView(student.getId(), student.getRegistration(), student.getCampus().getId(),
+                    student.getCourse().getId(), student.getStatus());
+        }
+    }
     public record CourseRequest(@NotNull Long campusId, @NotBlank @Size(max = 180) String name,
                                 @NotBlank @Size(max = 60) String code) {
         public CourseRequest {
@@ -385,11 +414,11 @@ public class AdminController {
     }
     public record AssignmentRequest(@NotNull Long studentId, @NotNull Long userId, Long subjectId,
                                     @NotNull AssignmentType assignmentType) {}
-    public record AssignmentView(Long id, Long studentId, String studentName, String registration,
+    public record AssignmentView(Long id, Long studentId, String registration,
                                  Long userId, String userName, Long subjectId, String subjectName,
                                  AssignmentType assignmentType, AssignmentOrigin origin, String periodCode, boolean active) {
         static AssignmentView of(StudentAssignment link, boolean active) {
-            return new AssignmentView(link.getId(), link.getStudent().getId(), link.getStudent().getDisplayName(),
+            return new AssignmentView(link.getId(), link.getStudent().getId(),
                     link.getStudent().getRegistration(), link.getUser().getId(), link.getUser().getName(),
                     link.getSubject() == null ? null : link.getSubject().getId(),
                     link.getSubject() == null ? null : link.getSubject().getName(), link.getAssignmentType(),

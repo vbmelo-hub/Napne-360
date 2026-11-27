@@ -2,8 +2,8 @@ import { test, expect } from '@playwright/test';
 
 test('login screen is keyboard accessible and identifies the product', async ({ page }) => {
   await page.goto('/login');
-  const email = page.getByLabel('E-mail institucional', { exact: true });
-  const password = page.getByLabel('Senha', { exact: true });
+  const email = page.getByRole('textbox', { name: 'E-mail institucional', exact: true });
+  const password = page.getByLabel(/^Senha/);
   const submit = page.getByRole('button', { name: 'Entrar', exact: true });
 
   await expect(page.getByRole('heading', { name: 'NAPNE 360' })).toBeVisible();

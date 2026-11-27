@@ -56,9 +56,59 @@ describe('Seleção de professor para uma oferta curricular', () => {
   function startTeaching() {
     fixture.componentInstance.openTeaching(offer);
     fixture.detectChanges();
-    http.expectOne(candidates).flush({ content: [teacher], totalElements: 35, selected: null });
+    const request = http.expectOne(candidates);
+    expect(request.request.body.includeInactive).toBeUndefined();
+    request.flush({ content: [teacher], totalElements: 35, selected: null });
     fixture.detectChanges();
   }
+
+  it('busca curso e componente pelos rótulos e combina os IDs nos filtros', () => {
+    const course = { id: 7, name: 'Sistemas', code: 'SIS', campusId: 1, campus: 'Rio Branco', active: false };
+    const subject = { id: 3, name: 'Algoritmos', code: 'ALG', courseId: 7, active: false, workloadHours: 60 };
+    fixture.componentRef.setInput('allCourses', [course]);
+    fixture.componentRef.setInput('subjects', [subject]);
+    const component = fixture.componentInstance;
+    component.selectSection('offerings');
+    const matches = (request: {url: string}) => request.url.endsWith('/academic/offerings');
+    const emptyPage = { content: [], totalElements: 0, totalPages: 0 };
+    http.expectOne(matches).flush(emptyPage);
+    fixture.detectChanges();
+    for (const [control, query, label] of [['courseId', 'sis rio branco', 'Sistemas'], ['subjectId', 'alg', 'Algoritmos']]) {
+      const picker = root.querySelector<HTMLElement>(`app-searchable-select[formControlName="${control}"]`)!;
+      expect(picker.querySelector('button')?.textContent).toContain('Todos');
+      picker.querySelector('button')!.click();
+      fixture.detectChanges();
+      type(picker.querySelector('input')!, query);
+      const option = picker.querySelector<HTMLElement>('[role="option"]')!;
+      expect(option.textContent).toContain(label);
+      option.click();
+      fixture.detectChanges();
+    }
+    component.applyFilters();
+    const request = http.expectOne(matches);
+    expect(request.request.params.get('courseId')).toBe('7');
+    expect(request.request.params.get('subjectId')).toBe('3');
+    request.flush(emptyPage);
+    component.clearFilters();
+    const cleared = http.expectOne(matches);
+    expect(cleared.request.params.has('courseId')).toBeFalse();
+    expect(cleared.request.params.has('subjectId')).toBeFalse();
+    cleared.flush(emptyPage);
+  });
+
+  it('inclui professores inativos somente na consulta do filtro histórico', () => {
+    fixture.componentInstance.selectSection('offerings');
+    http.expectOne(request => request.url.endsWith('/academic/offerings')).flush({ content: [], totalElements: 0, totalPages: 0 });
+    fixture.detectChanges();
+    const filter = root.querySelector<HTMLButtonElement>('app-searchable-select[formControlName="teacherId"] button')!;
+    filter.click();
+    fixture.detectChanges();
+    const request = http.expectOne(candidates);
+    expect(request.request.body).toEqual(jasmine.objectContaining({ roles: ['TEACHER'], includeInactive: true }));
+    request.flush({ content: [{ ...teacher, active: false }], totalElements: 1, selected: null });
+    fixture.detectChanges();
+    expect(root.querySelector('[role="option"]')?.textContent).toContain(teacher.name);
+  });
 
   it('usa o total da consulta inicial e envia o ID escolhido pelo teclado', fakeAsync(() => {
     startTeaching();
@@ -86,6 +136,19 @@ describe('Seleção de professor para uma oferta curricular', () => {
     request.flush({});
     http.expectOne(request => request.url.endsWith('/academic/teaching')).flush({ content: [], totalElements: 0, totalPages: 0 });
   }));
+
+  it('bloqueia o envio quando a atribuição troca de escopo antes de revalidar', () => {
+    startTeaching();
+    const component = fixture.componentInstance;
+    component.teacherForm.controls.teacherId.setValue(String(teacher.id));
+    fixture.detectChanges();
+    http.expectOne(candidates).flush({ content: [teacher], totalElements: 35, selected: teacher });
+    fixture.detectChanges();
+
+    component.selectedOffer.set({ ...offer, campusId: 2 });
+    component.saveTeaching();
+    http.expectNone(request => request.method === 'POST' && request.url.endsWith('/academic/teaching'));
+  });
 
   it('envia CPF pelo POST escopado com debounce e cancela pesquisas obsoletas', fakeAsync(() => {
     startTeaching();

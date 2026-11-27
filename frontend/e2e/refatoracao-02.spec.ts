@@ -35,6 +35,7 @@ test('modal com 50 componentes edita a ementa e preserva página e filtros', asy
   await capture(page, info, 'usuários');
   await page.getByRole('button', { name: 'Cursos, componentes e vínculos' }).click();
   await page.getByRole('searchbox', { name: 'Buscar cursos' }).fill(course.name);
+  await page.getByRole('searchbox', { name: 'Buscar cursos' }).scrollIntoViewIfNeeded();
   await capture(page, info, 'cursos');
   await page.getByRole('button', { name: 'Ver componentes de ' + course.name, exact: false }).click();
   const dialog = page.getByRole('dialog');
@@ -125,26 +126,21 @@ test('seletores de vínculo e atribuição distinguem homônimos com mais de 100
     email: 'profissional-' + index + '@example.test', roles: ['TEACHER', 'TUTOR'], active: true,
     campusId: index === 119 ? campusId + 900 : campusId,
   }));
-  await page.route('**/api/v1/admin/users/candidates', async route => {
+  await page.route('**/api/v1/admin/users/candidates', route => {
     const scope = route.request().postDataJSON() as {
-      roles: string[]; campusId?: number; page?: number; selectedId?: number; query?: string;
+      roles: string[]; campusId?: number; page?: number; selectedId?: number; excludedId?: number; query?: string;
     };
     const eligible = professionals.filter(user => (!scope.campusId || user.campusId === scope.campusId)
-      && user.roles.some(role => scope.roles.includes(role)));
+      && user.id !== scope.excludedId && user.roles.some(role => scope.roles.includes(role)));
     const term = scope.query?.toLowerCase() ?? '';
     const matches = eligible.filter(user =>
       (user.name + ' ' + user.institutionalRegistration).toLowerCase().includes(term));
-    const response = await route.fetch();
-    const real = await response.json();
     const start = (scope.page ?? 0) * 30;
-    return route.fulfill({
-      response,
-      json: {
-        content: [...matches.slice(start, start + 30), ...real.content].slice(0, 30),
-        totalElements: matches.length + real.totalElements,
-        selected: eligible.find(user => user.id === scope.selectedId) ?? real.selected,
-      },
-    });
+    return route.fulfill({ json: {
+      content: matches.slice(start, start + 30),
+      totalElements: matches.length,
+      selected: eligible.find(user => user.id === scope.selectedId) ?? null,
+    } });
   });
   await loginUi(page, 'admin');
   await page.goto('/administracao');
@@ -162,6 +158,7 @@ test('seletores de vínculo e atribuição distinguem homônimos com mais de 100
   await expect(professional.getByRole('status')).toContainText('119');
   const list = professional.getByRole('listbox');
   expect(await list.evaluate(node => node.scrollHeight > node.clientHeight)).toBeTruthy();
+  await list.scrollIntoViewIfNeeded();
   await capture(page, info, 'vinculo-profissional');
   await input.fill('INST-1119');
   await expect(professional.getByRole('status')).toContainText('Nenhum resultado');
@@ -170,6 +167,7 @@ test('seletores de vínculo e atribuição distinguem homônimos com mais de 100
   await input.press('ArrowDown');
   await input.press('Enter');
   await expect(professional.getByRole('button')).toContainText('INST-1118');
+  await expect(form.getByRole('button', { name: 'Conceder vínculo' })).toBeEnabled();
 
   await page.getByRole('button', { name: 'Gerenciar', exact: true }).click();
   await page.getByRole('button', { name: 'Ofertas curriculares', exact: true }).click();
@@ -185,4 +183,88 @@ test('seletores de vínculo e atribuição distinguem homônimos com mais de 100
   await capture(page, info, 'atribuição-docente');
   await dialog.getByRole('combobox').press('Escape');
   await expect(dialog.getByRole('button', { name: /^Professor/ })).toBeFocused();
+  await dialog.getByRole('button', { name: /^Professor/ }).click();
+  await dialog.getByRole('combobox').fill('INST-1118');
+  await dialog.getByRole('option', { name: /INST-1118/ }).click();
+  await expect(dialog.getByRole('button', { name: 'Registrar atribuição' })).toBeEnabled();
+});
+
+test('busca matrícula fora da primeira página e confirma a seleção pelo ID', async ({ page, request }) => {
+  const fixture = await catalogFixture(request);
+  const prefix = 'TEST-R02-' + randomUUID().slice(0, 8);
+  for (let start = 1; start <= 36; start += 6) {
+    await Promise.all(Array.from({ length: 6 }, (_, index) => fixture.post('/students', {
+      courseId: fixture.course.id,
+      civilName: 'Estudante Fictício ' + (start + index),
+      registration: prefix + '-' + String(start + index).padStart(2, '0'),
+    })));
+  }
+  await loginUi(page, 'admin');
+  await page.goto('/administracao');
+  await page.getByRole('button', { name: 'Cursos, componentes e vínculos' }).click();
+  const student = page.locator('form.assignment-form app-searchable-select[formControlName="studentId"]');
+  await student.getByRole('button').click();
+  const input = student.getByRole('combobox');
+  await input.fill(prefix);
+  await expect(student.getByRole('option')).toHaveCount(30);
+  await expect(student.getByRole('status')).toContainText('36');
+  const registration = prefix + '-36';
+  await expect(student.getByRole('option').filter({ hasText: registration })).toHaveCount(0);
+  await student.getByRole('button', { name: 'Próxima', exact: true }).click();
+  await expect(student.getByRole('option')).toHaveCount(6);
+  await expect(student.getByRole('option').filter({ hasText: registration })).toBeVisible();
+  await input.fill(registration);
+  await expect(student.getByRole('option')).toHaveText(new RegExp(registration));
+  await input.press('ArrowDown');
+  await input.press('Enter');
+  await expect(student.getByRole('button')).toContainText(registration);
+});
+
+test('filtra atribuições encerradas por professor inativo', async ({ page, request }) => {
+  const catalog = await catalogFixture(request);
+  const fixture = await caseFixture(request);
+  const teacher = await fixture.account('docente-historico', 'TEACHER', catalog.course.campusId);
+  const headers = fixture.admin.headers;
+  const teaching = await apiJson<{ id: number }>(request, '/admin/academic/teaching', {
+    method: 'POST', headers, data: { offeringId: catalog.academic.offering.id, teacherId: teacher.id },
+  });
+  await apiJson(request, '/admin/academic/teaching/' + teaching.id + '/active', {
+    method: 'PATCH', headers, data: { active: false },
+  });
+  await apiJson(request, '/admin/users/' + teacher.id + '/active', {
+    method: 'PATCH', headers, data: { active: false },
+  });
+  await apiJson(request, '/admin/users/' + teacher.id + '/roles', {
+    method: 'PUT', headers, data: { roles: ['TUTOR'] },
+  });
+
+  await loginUi(page, 'admin');
+  await page.goto('/administracao');
+  await page.getByRole('button', { name: 'Cursos, componentes e vínculos' }).click();
+  await page.getByRole('button', { name: 'Gerenciar', exact: true }).click();
+  await page.getByRole('button', { name: 'Atribuições docentes', exact: true }).click();
+  const section = page.locator('app-admin-academic-offerings');
+  await section.getByText('Filtros', { exact: true }).click();
+  const picker = section.locator('app-searchable-select[formControlName="teacherId"]');
+  await picker.getByRole('button').click();
+  await picker.getByRole('combobox').fill(teacher.name);
+  await picker.getByRole('option', { name: new RegExp(teacher.name) }).click();
+  await expect(picker.getByRole('button', { name: /^Professor / })).toContainText(teacher.name);
+  await section.getByRole('combobox', { name: 'Situação', exact: true }).selectOption('false');
+  await section.getByRole('button', { name: 'Buscar', exact: true }).click();
+  const records = section.locator('tbody tr');
+  await expect(records).toHaveCount(1);
+  await expect(records.first()).toContainText(teacher.name);
+  await expect(records.first()).toContainText('Encerrada');
+  await section.getByText(/^Filtros/).click();
+  const removeStatus = section.getByRole('button', { name: 'Remover filtro Situação: Encerrada' });
+  await expect(removeStatus).toBeVisible();
+  const updated = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === '/api/v1/admin/academic/teaching' && !url.searchParams.has('active');
+  });
+  await removeStatus.press('Enter');
+  expect((await updated).status()).toBe(200);
+  await expect(section.getByRole('button', { name: 'Remover filtro Professor: ' + teacher.name })).toBeFocused();
+  await expect(records.first()).toContainText(teacher.name);
 });

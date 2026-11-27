@@ -94,7 +94,7 @@ export async function caseFixture(request: APIRequestContext) {
     renameResponsible, login: (user: Account) => signIn(request, user.email) };
 }
 
-function fictitiousCpf(): string {
+export function fictitiousCpf(): string {
   const digits = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
   if (digits.every(digit => digit === digits[0])) digits[0] = (digits[0] + 1) % 10;
   for (const length of [9, 10]) {

@@ -99,6 +99,50 @@ class AdminCourseIntegrationTest {
     private Campus destination;
     private Course course;
 
+    @Test
+    void registrationCandidatesPageEligibleStudentsAndRevalidateSelection() throws Exception {
+        String prefix = UUID.randomUUID().toString().substring(0, 8);
+        for (int index = 0; index < 31; index++) {
+            students.save(Student.builder().campus(original).course(course)
+                    .registration(prefix + "-%02d".formatted(index)).civilName("Nome reservado").status(StudentStatus.ACTIVE).build());
+        }
+        var archived = student(course, StudentStatus.ARCHIVED);
+        var disabled = courses.saveAndFlush(Course.builder().campus(original).name("Curso arquivado")
+                .code("ARQ").active(false).build());
+        var unavailable = student(disabled, StudentStatus.ACTIVE);
+        var selected = student(course, StudentStatus.ACTIVE);
+        String path = "/api/v1/admin/student-registrations/candidates";
+        mvc.perform(post(path).with(user(ADMIN_EMAIL).roles("ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"query":"%s","selectedId":%d}
+                                """.formatted(prefix.toUpperCase(java.util.Locale.ROOT), selected.getId())))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.totalElements").value(31))
+                .andExpect(jsonPath("$.content.length()").value(30))
+                .andExpect(jsonPath("$.content[0].registration").value(prefix + "-00"))
+                .andExpect(jsonPath("$.content[0].displayName").doesNotExist())
+                .andExpect(jsonPath("$.selected.id").value(selected.getId()));
+        for (var ineligible : List.of(archived, unavailable)) {
+            mvc.perform(post(path).with(user(ADMIN_EMAIL).roles("ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"query":"%s","selectedId":%d}
+                                    """.formatted(ineligible.getRegistration(), ineligible.getId())))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0))
+                    .andExpect(jsonPath("$.selected").value(org.hamcrest.Matchers.nullValue()));
+        }
+        mvc.perform(post(path).with(user(ADMIN_EMAIL).roles("ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"query":"%s","page":1}
+                                """.formatted(prefix)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].registration").value(prefix + "-30"));
+        mvc.perform(post(path).with(user("napne@example.test").roles("NAPNE"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
     @BeforeEach
     void setUp() {
         original = campus("Campus de origem");
@@ -572,6 +616,70 @@ class AdminCourseIntegrationTest {
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].id").value(revoked.getId()))
                 .andExpect(jsonPath("$.content[0].active").value(false));
+    }
+
+    @Test
+    void technicalAssignmentSearchDoesNotExposeOrMatchProtectedStudentNames() throws Exception {
+        var student = students.saveAndFlush(Student.builder().campus(original).course(course)
+                .registration(UUID.randomUUID().toString()).civilName("Civil Protegido Exclusivo")
+                .socialName("Social Protegido Exclusivo").status(StudentStatus.ACTIVE).build());
+        var link = assignment(student, subject(course, "PRIV", true), true);
+        var admin = user(ADMIN_EMAIL).roles("ADMIN");
+        String path = "/api/v1/admin/assignments";
+        mvc.perform(get(path).with(admin))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].studentName").doesNotHaveJsonPath());
+        mvc.perform(get(path + "/page").param("query", student.getRegistration()).with(admin))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(link.getId()))
+                .andExpect(jsonPath("$.content[0].registration").value(student.getRegistration()))
+                .andExpect(jsonPath("$.content[0].studentName").doesNotHaveJsonPath());
+        for (var name : List.of(student.getCivilName(), student.getSocialName())) {
+            mvc.perform(get(path + "/page").param("query", name).with(admin))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
+        }
+    }
+
+    @Test
+    void historicalTeacherSelectionAcceptsPersistedTeachingWithoutCurrentRole() throws Exception {
+        var formerTeacher = napneAccount();
+        var unrelated = napneAccount();
+        var component = subject(course, "HIST", true);
+        var period = references.saveAndFlush(ReferenceEntry.builder().kind(ReferenceEntry.Kind.ACADEMIC_TERM)
+                .code(UUID.randomUUID().toString()).label("Período de teste").build());
+        sql.update("insert into academic_offering (subject_id, period_id, group_code, active) values (?, ?, 'A', true)",
+                component.getId(), period.getId());
+        Long offering = sql.queryForObject("select id from academic_offering where subject_id = ?", Long.class, component.getId());
+        sql.update("insert into teaching_assignment (teacher_id, offering_id, active, version) values (?, ?, false, 0)",
+                formerTeacher.getId(), offering);
+
+        String path = "/api/v1/admin/users/candidates";
+        var admin = user(ADMIN_EMAIL).roles("ADMIN");
+        mvc.perform(post(path).with(admin).contentType(MediaType.APPLICATION_JSON).content("""
+                {"roles":["TEACHER"],"includeInactive":true,"query":"%d"}
+                """.formatted(formerTeacher.getId())))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(formerTeacher.getId()));
+        mvc.perform(post(path).with(admin).contentType(MediaType.APPLICATION_JSON).content("""
+                {"roles":["TEACHER"],"includeInactive":true,"query":"sem correspondência","selectedId":%d}
+                """.formatted(formerTeacher.getId())))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0))
+                .andExpect(jsonPath("$.selected.id").value(formerTeacher.getId()));
+        for (var body : List.of(
+                """
+                {"roles":["TEACHER"],"selectedId":%d}
+                """.formatted(formerTeacher.getId()),
+                """
+                {"roles":["TEACHER"],"includeInactive":true,"selectedId":%d}
+                """.formatted(unrelated.getId()),
+                """
+                {"roles":["TEACHER"],"includeInactive":true,"selectedId":%d,"excludedId":%d}
+                """.formatted(formerTeacher.getId(), formerTeacher.getId()),
+                """
+                {"roles":["TEACHER"],"includeInactive":true,"selectedId":%d,"campusId":%d}
+                """.formatted(formerTeacher.getId(), destination.getId()))) {
+            mvc.perform(post(path).with(admin).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.selected").value(org.hamcrest.Matchers.nullValue()));
+        }
     }
 
     private String subjectBody(Long courseId, String code, String syllabus) {

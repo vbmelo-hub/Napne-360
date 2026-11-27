@@ -86,6 +86,18 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
             """)
     List<Course> assignedFilterCourses(Long userId);
 
+    String REGISTRATION_CANDIDATE_SCOPE = """
+            from Student s where s.course.active = true
+              and s.status <> br.edu.ifac.napne360.student.StudentStatus.ARCHIVED
+            """;
+
+    @Query("select s " + REGISTRATION_CANDIDATE_SCOPE
+            + "and (:pattern is null or lower(s.registration) like :pattern escape '!')")
+    Page<Student> registrationCandidates(String pattern, Pageable pageable);
+
+    @Query("select s " + REGISTRATION_CANDIDATE_SCOPE + "and s.id = :id")
+    Optional<Student> registrationCandidate(Long id);
+
     boolean existsByRegistration(String registration);
     boolean existsByCourseId(Long courseId);
     boolean existsByCampusIdAndStatus(Long campusId, StudentStatus status);

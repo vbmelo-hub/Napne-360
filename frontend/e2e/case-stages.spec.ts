@@ -54,7 +54,7 @@ test('ADMIN configura uma etapa que o NAPNE usa e cujo nome fica registrado no h
     await loginUi(page, 'napne');
     await page.goto('/estudantes/' + student.id);
     await page.getByRole('button', { name: 'Casos', exact: true }).click();
-    const card = page.getByRole('article', { name: opened.source, exact: true });
+    const card = page.getByRole('article', { name: 'Caso nº ' + opened.id + ' · ' + opened.source, exact: true });
     await expect(card).toBeVisible();
     return card;
   };
@@ -84,6 +84,7 @@ test('ADMIN configura uma etapa que o NAPNE usa e cujo nome fica registrado no h
 
   await test.step('renomear a etapa e manter seu nome anterior no histórico', async () => {
     await openEditor();
+    await page.getByRole('searchbox', { name: 'Buscar etapas' }).fill(initialLabel);
     const field = nameField(created.position);
     await expect(field).toHaveValue(initialLabel);
     await field.fill(renamedLabel);

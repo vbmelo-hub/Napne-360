@@ -12,6 +12,7 @@ import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 import { ModalShellComponent } from '../shared/modal-shell.component';
 import { PaginationComponent } from '../shared/pagination.component';
+import { SearchableSelectComponent } from '../shared/searchable-select.component';
 
 function availableStages(item: NapneCase) {
   return item.stageOptions ?? item.allowedNextStages.map(code => ({ code, label: labelFor(code) }));
@@ -19,7 +20,7 @@ function availableStages(item: NapneCase) {
 
 @Component({
   selector: 'app-case-card',
-  imports: [DatePipe, ReactiveFormsModule, ConfirmDialogComponent, ModalShellComponent, PaginationComponent],
+  imports: [DatePipe, ReactiveFormsModule, ConfirmDialogComponent, ModalShellComponent, PaginationComponent, SearchableSelectComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <article class="case-card" [attr.aria-labelledby]="'case-' + item().id">
@@ -122,15 +123,8 @@ function availableStages(item: NapneCase) {
           @if (eligibleCandidates().length && canTransfer()) {
             <p class="field-hint">O novo responsável assumirá a gestão do caso. A transferência ficará registrada no histórico.</p>
             <fieldset class="stack" [disabled]="busy() || !canTransfer()">
-              <label>
-                Novo responsável
-                <select name="responsibleId" [formControl]="responsibleId">
-                  @if (eligibleCandidates().length !== 1) {<option value="">Selecione</option>}
-                  @for (candidate of eligibleCandidates(); track candidate.id) {
-                    <option [value]="candidate.id">{{candidate.name}}</option>
-                  }
-                </select>
-              </label>
+              <app-searchable-select label="Novo responsável" [formControl]="responsibleId" [required]="true"
+                [options]="responsibleOptions()" [readonly]="busy()" placeholder="Pesquisar nome" />
               <label>Motivo (opcional)<textarea [formControl]="reason" maxlength="500"></textarea></label>
             </fieldset>
           }
@@ -304,6 +298,8 @@ export class CaseCardComponent {
   readonly eligibleCandidates = computed(() =>
     this.candidates()?.filter(candidate => candidate.id !== this.item().responsibleId) ?? []
   );
+  protected readonly responsibleOptions = computed(() => this.eligibleCandidates().map(candidate =>
+    ({ id: String(candidate.id), label: candidate.name })));
   readonly responsibleId = new FormControl('', {nonNullable: true});
   readonly reason = new FormControl('', {nonNullable: true, validators: Validators.maxLength(500)});
 

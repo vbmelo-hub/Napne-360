@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { LIST_PAGE_SIZE } from './list-view';
-import { AdminCourse, AdminSubject, AssignmentView, Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, CaseStageOption, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiAnnexI, PeiCreateRequest, PeiTransferCandidate, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserDetails, UserView } from './models';
+import { AdminCourse, AdminSubject, AssignmentView, Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, CaseStageOption, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiAnnexI, PeiCreateRequest, PeiTransferCandidate, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentRegistrationCandidate, StudentSummary, Subject, TimelineEvent, UserDetails, UserView } from './models';
 
 type PeiVersionAction = Exclude<PeiAction, 'EDIT' | 'TRANSFER'>;
 
@@ -119,7 +119,7 @@ export class ApiService {
   }
   campuses() { return this.http.get<Campus[]>('/api/v1/catalog/campuses'); }
   userCandidates(criteria: { roles: readonly string[]; campusId?: number; excludedId?: number;
-    query: string; selectedId?: number }) {
+    query: string; selectedId?: number; page?: number; includeInactive?: true }) {
     return this.http.post<{ content: UserView[]; totalElements: number; selected: UserView | null }>(
       '/api/v1/admin/users/candidates', criteria);
   }
@@ -159,7 +159,10 @@ export class ApiService {
   setSubjectActive(id: number, active: boolean) {
     return this.http.patch<AdminSubject>(`/api/v1/admin/subjects/${id}/${active ? 'reactivate' : 'archive'}`, null);
   }
-  registrations() { return this.http.get<{id:number,registration:string,campusId:number,courseId:number}[]>('/api/v1/admin/student-registrations'); }
+  studentRegistrationCandidates(criteria: { query?: string; selectedId?: number; page?: number }) {
+    return this.http.post<{ content: StudentRegistrationCandidate[]; totalElements: number; selected: StudentRegistrationCandidate | null }>(
+      '/api/v1/admin/student-registrations/candidates', criteria);
+  }
   assignmentPage(page: number, filters: Readonly<Record<string, string>>) {
     let params = new HttpParams().set('page', page).set('size', LIST_PAGE_SIZE);
     for (const [key, value] of Object.entries(filters)) {

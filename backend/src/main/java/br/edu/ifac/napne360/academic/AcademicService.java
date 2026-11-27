@@ -180,7 +180,14 @@ public class AcademicService {
 
     public List<OfferingView> peiOffers(Long studentId) {
         var actor = currentUser.require();
-        return academic.peiOffers(studentId, actor.getId()).stream().map(OfferingView::of).toList();
+        var offers = academic.peiOffers(studentId, actor.getId());
+        if (offers.isEmpty()) return List.of();
+        var occupied = peis.occupiedDraftScopes(studentId);
+        return offers.stream()
+                .filter(offer -> !occupied.contains(new PeiSeriesStore.DraftScope(
+                        offer.getSubject().getId(), offer.getPeriod().getCode())))
+                .map(OfferingView::of)
+                .toList();
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
