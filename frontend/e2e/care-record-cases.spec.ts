@@ -33,8 +33,9 @@ test('NAPNE escolhe o caso pertinente e conserva o vínculo após arquivamento',
   const selector = page.getByRole('combobox', { name: 'Caso vinculado (opcional)', exact: true });
   await expect(selector.locator('option')).toHaveCount(2);
   await expect(selector).toHaveValue('');
-  await page.getByLabel('Título', { exact: false }).fill('Registro geral');
+  await page.getByRole('textbox', { name: 'Título', exact: true }).fill('Registro geral');
   const unlinkedRequest = responseFor('POST', recordPath);
+  await page.locator('select[formControlName=type]').selectOption('PEDAGOGICAL_GUIDANCE');
   await page.getByRole('button', { name: 'Salvar registro', exact: true }).click();
   const unlinked = await unlinkedRequest;
   expect(unlinked.status()).toBe(200);
@@ -64,9 +65,10 @@ test('NAPNE escolhe o caso pertinente e conserva o vínculo após arquivamento',
 
   await selector.selectOption(String(selected.id));
   await page.getByLabel('Tipo', { exact: false }).selectOption(recordBody.type);
-  await page.getByLabel('Título', { exact: false }).fill(recordBody.title);
+  await page.getByRole('textbox', { name: 'Título', exact: true }).fill(recordBody.title);
   await page.locator('select[formControlName="status"]').selectOption(recordBody.status);
   const linkedRequest = responseFor('POST', recordPath);
+  await page.locator('select[formControlName=type]').selectOption('PEDAGOGICAL_GUIDANCE');
   await page.getByRole('button', { name: 'Salvar registro', exact: true }).click();
   const linked = await linkedRequest;
   expect(linked.status()).toBe(200);
@@ -88,7 +90,7 @@ test('NAPNE escolhe o caso pertinente e conserva o vínculo após arquivamento',
   await record.getByRole('button', { name: 'Editar', exact: true }).click();
   await expect(selector).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Editar registro', exact: true }).locator('xpath=ancestor::form')).toContainText(`Caso #${archived.id} · Solicitação do estudante · Arquivado`);
-  await page.getByLabel('Título', { exact: false }).fill('Orientação revisada');
+  await page.getByRole('textbox', { name: 'Título', exact: true }).fill('Orientação revisada');
   const updateRequest = responseFor('PUT', recordPath + '/' + saved.id);
   await page.getByRole('button', { name: 'Salvar alterações', exact: true }).click();
   const updated = await updateRequest;

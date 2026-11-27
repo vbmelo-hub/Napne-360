@@ -1,9 +1,10 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input, output, signal } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Observable } from 'rxjs';
 import { ApiService } from '../core/api.service';
+import { reconcileRequiredSelection } from '../core/required-selection';
 import { trackFormChanges } from '../core/form-changes';
 import { CaseHistoryView, CaseResponsibleCandidate, NapneCase, Page } from '../core/models';
 import { errorMessage, labelFor, toneFor } from '../core/presentation';
@@ -124,7 +125,7 @@ function availableStages(item: NapneCase) {
               <label>
                 Novo responsável
                 <select name="responsibleId" [formControl]="responsibleId">
-                  <option value="">Selecione</option>
+                  @if (eligibleCandidates().length !== 1) {<option value="">Selecione</option>}
                   @for (candidate of eligibleCandidates(); track candidate.id) {
                     <option [value]="candidate.id">{{candidate.name}}</option>
                   }
@@ -152,16 +153,26 @@ function availableStages(item: NapneCase) {
     <app-modal-shell [open]="historyOpen()" title="Histórico do caso" (closed)="toggleHistory()">
       <div class="case-panel">
         @if (historyOpen()) {
-          <label class="list-filter">
-            Tipo de evento
-            <select [value]="historyType()" [disabled]="busy()" (change)="filterHistory($any($event.target).value)">
-              <option value="">Todos os eventos</option>
-              <option value="OPENED">{{historyLabels.OPENED}}</option>
-              <option value="STAGE_CHANGED">{{historyLabels.STAGE_CHANGED}}</option>
-              <option value="RESPONSIBLE_CHANGED">{{historyLabels.RESPONSIBLE_CHANGED}}</option>
-              <option value="DETAILS_UPDATED">{{historyLabels.DETAILS_UPDATED}}</option>
-            </select>
-          </label>
+          <form class="server-list-toolbar" [formGroup]="historyForm" (ngSubmit)="filterHistory()">
+            <label>Tipo de evento
+              <select formControlName="type" (change)="filterHistory()" [attr.disabled]="busy() ? '' : null">
+                <option value="">Todos os eventos</option>
+                <option value="OPENED">{{historyLabels.OPENED}}</option>
+                <option value="STAGE_CHANGED">{{historyLabels.STAGE_CHANGED}}</option>
+                <option value="RESPONSIBLE_CHANGED">{{historyLabels.RESPONSIBLE_CHANGED}}</option>
+                <option value="DETAILS_UPDATED">{{historyLabels.DETAILS_UPDATED}}</option>
+              </select>
+            </label>
+            <label>Autoria <input formControlName="actor" placeholder="Nome registrado"></label>
+            <label>Versão <input type="number" min="1" formControlName="version"></label>
+            <label>A partir de <input type="date" formControlName="from"></label>
+            <label>Até <input type="date" formControlName="to"></label>
+            <button type="submit" class="secondary compact" [disabled]="busy() || historyForm.invalid">Filtrar histórico</button>
+            @if (historyFiltered()) {
+              <button type="button" class="secondary compact" [disabled]="busy()" (click)="clearHistoryFilters()">Limpar filtros</button>
+            }
+            @if (history(); as page) {<span class="meta" role="status">{{page.totalElements}} resultado(s)</span>}
+          </form>
         }
         @if (pending() === 'history') {
           <p role="status">Carregando histórico…</p>
@@ -174,7 +185,7 @@ function availableStages(item: NapneCase) {
         }
         @if (history(); as page) {
           @if (page.content.length === 0) {
-            <p>{{historyType() ? 'Nenhum evento do tipo selecionado.' : 'Nenhum evento no histórico deste caso.'}}</p>
+            <p>{{historyFiltered() ? 'Nenhum evento corresponde aos filtros.' : 'Nenhum evento no histórico deste caso.'}}</p>
           } @else {
             <ol class="revisions">
               @for (entry of page.content; track entry.id) {
@@ -334,7 +345,15 @@ export class CaseCardComponent {
 
   readonly historyOpen = signal(false);
   readonly history = signal<Page<CaseHistoryView> | null>(null);
-  readonly historyType = signal('');
+  readonly historyForm = inject(FormBuilder).group({
+    type: new FormControl('', { nonNullable: true }),
+    actor: new FormControl('', { nonNullable: true }),
+    version: new FormControl<number | null>(null, [Validators.min(1), Validators.pattern(/^\d+$/)]),
+    from: new FormControl('', { nonNullable: true }),
+    to: new FormControl('', { nonNullable: true }),
+  });
+  private readonly historyCriteria = signal(this.historyForm.getRawValue());
+  readonly historyFiltered = computed(() => Object.values(this.historyCriteria()).some(Boolean));
   readonly requestedPage = signal(0);
   readonly historyError = signal('');
 
@@ -362,7 +381,7 @@ export class CaseCardComponent {
 
   closeTransfer() {
     if (this.busy()) return;
-    if ((this.reason.value.trim() || this.responsibleId.value)
+    if ((this.reason.value.trim() || this.responsibleId.dirty)
         && !window.confirm('Descartar a transferência ainda não confirmada?')) return;
     this.resetTransfer();
   }
@@ -383,6 +402,7 @@ export class CaseCardComponent {
     this.api.caseResponsibleCandidates(this.item().id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: values => {
         this.candidates.set(values);
+        reconcileRequiredSelection(this.responsibleId, this.eligibleCandidates().map(candidate => String(candidate.id)));
         this.pending.set(null);
       },
       error: error => {
@@ -434,11 +454,21 @@ export class CaseCardComponent {
     if (this.historyOpen()) this.loadHistory(0);
   }
 
-  filterHistory(type: string) {
-    if (this.busy() || this.historyType() === type) return;
-    this.historyType.set(type);
+  filterHistory(): void {
+    if (this.busy() || this.historyForm.invalid) return;
+    const filter = this.historyForm.getRawValue();
+    if (filter.from && filter.to && filter.from > filter.to) {
+      this.historyError.set('A data final deve ser igual ou posterior à data inicial.');
+      return;
+    }
+    this.historyCriteria.set({ ...filter, actor: filter.actor.trim() });
     this.history.set(null);
     this.loadHistory(0);
+  }
+
+  clearHistoryFilters(): void {
+    this.historyForm.reset();
+    this.filterHistory();
   }
 
   loadHistory(page: number) {
@@ -446,7 +476,13 @@ export class CaseCardComponent {
     this.pending.set('history');
     this.requestedPage.set(page);
     this.historyError.set('');
-    this.api.caseHistory(this.item().id, page, this.historyType()).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    const { type, actor, version, from, to } = this.historyCriteria();
+    this.api.caseHistory(this.item().id, page, type, {
+      actor,
+      version: version ?? undefined,
+      from: from ? new Date(from + 'T00:00:00').toISOString() : undefined,
+      to: to ? new Date(to + 'T23:59:59.999').toISOString() : undefined,
+    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: response => {
         this.history.set(response);
         this.pending.set(null);

@@ -2,7 +2,7 @@ import { DatePipe } from '@angular/common';
 import { Component, DestroyRef, HostListener, OnInit, computed, inject, signal, viewChildren } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, FormControl, FormRecord, ReactiveFormsModule, Validators } from '@angular/forms';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Subscription, forkJoin, map, merge } from 'rxjs';
 import { DOSSIER_FIELDS, RECORD_FIELDS } from '../core/care-forms';
 import { AcademicApi, AcademicOffering } from '../core/academic-api.service';
@@ -10,19 +10,23 @@ import { ApiService } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
 import { trackFormChanges } from '../core/form-changes';
 import { createListView } from '../core/list-view';
-import { Attachment, CareRecord, Course, Dossier, NapneCase, Page, Pei, ReferenceOption, StudentDetails, Subject, TimelineEvent } from '../core/models';
+import { Attachment, CareRecord, CaseStageOption, Course, Dossier, NapneCase, Page, Pei, ReferenceOption, StudentDetails, Subject, TimelineEvent } from '../core/models';
 import { errorMessage, labelFor, timelineLabel, toneFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 import { ModalShellComponent } from '../shared/modal-shell.component';
 import { PageFragmentDirective } from '../shared/page-fragment.directive';
 import { PaginationComponent } from '../shared/pagination.component';
+import { SearchableSelectComponent } from '../shared/searchable-select.component';
 import { AttachmentActionsComponent } from './attachment-actions.component';
 import { AcademicEnrollmentsComponent } from './academic-enrollments.component';
 import { CaseCardComponent } from './case-card.component';
 import { CareRecordHistoryComponent } from './care-record-history.component';
 
-@Component({standalone:true,imports:[ReactiveFormsModule,RouterLink,DatePipe,CaseCardComponent,CareRecordHistoryComponent,ModalShellComponent,PaginationComponent,PageFragmentDirective,ConfirmDialogComponent,AcademicEnrollmentsComponent,AttachmentActionsComponent],template:`
+import { ListFiltersComponent } from '../shared/list-filters.component';
+import { reconcileRequiredSelection } from '../core/required-selection';
+
+@Component({standalone:true,imports:[ReactiveFormsModule,RouterLink,DatePipe,CaseCardComponent,CareRecordHistoryComponent,ModalShellComponent,PaginationComponent,ListFiltersComponent,PageFragmentDirective,ConfirmDialogComponent,AcademicEnrollmentsComponent,AttachmentActionsComponent,SearchableSelectComponent],template:`
   <a routerLink="/estudantes" class="back-link">← Voltar aos estudantes</a>
   @if(loading()){<div class="loading-grid" aria-label="Carregando acompanhamento"><span class="skeleton skeleton-card"></span><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-card"></span></div>}
   @if(loadError()){<div class="error" role="alert"><strong>Não foi possível carregar o acompanhamento.</strong><p>{{loadError()}}</p><button class="secondary" (click)="loadAll()">Tentar novamente</button></div>}
@@ -77,10 +81,7 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
           @if (historyLoading()) {
             <span class="skeleton skeleton-card"></span>
           } @else {
-            <label class="list-filter">
-              Buscar versões do dossiê por número ou autoria
-              <input type="search" [value]="dossierRevisions.query()" (input)="dossierRevisions.setQuery($any($event.target).value)">
-            </label>
+            <app-list-filters [list]="dossierRevisions" label="Buscar versões" placeholder="Número ou autoria" />
             @if (dossierHistory().length === 0) {
               <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhuma versão anterior</h3><p>O histórico aparecerá após uma nova atualização do dossiê.</p></div>
             }
@@ -116,6 +117,7 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
     @if(auth.hasRole('NAPNE')){
       <section [hidden]="tab()!=='cases'">
         <div class="section-header"><div><span class="eyebrow">Fluxo de acompanhamento</span><h2>Casos e encaminhamentos</h2><p>Acompanhe a etapa atual e o histórico de cada caso.</p></div></div>
+        @if (value.status !== 'ARCHIVED') {
         <form class="card stack create-panel" [formGroup]="caseForm" (ngSubmit)="createCase()">
           <div class="section-header"><div><h2>Abrir novo caso</h2><p>Registre a origem e um resumo inicial do encaminhamento.</p></div></div>
           <fieldset class="catalog-field" [disabled]="actionBusy()">
@@ -123,12 +125,10 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
           </fieldset>
           <div><button [disabled]="caseForm.invalid||actionBusy()">Abrir caso</button></div>
         </form>
+        }
         <section class="card">
           <h2>Casos registrados</h2>
-          <label class="list-filter">
-            Buscar casos por origem, etapa, responsável ou resumo
-            <input type="search" [value]="caseList.query()" [disabled]="caseListBusy()" (input)="caseList.setQuery($any($event.target).value)">
-          </label>
+          <fieldset class="catalog-field" [disabled]="caseListBusy()"><app-list-filters [list]="caseList" label="Número ou resumo" placeholder="Número ou texto do caso" /></fieldset>
           @if(cases().length===0){
             <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum caso registrado</h3><p>Os encaminhamentos e suas etapas aparecerão aqui.</p></div>
           } @else if (caseList.totalElements() === 0) {
@@ -147,7 +147,7 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
 
     @if(tab()==='records'){
       <div class="section-header"><div><span class="eyebrow">Prática pedagógica</span><h2>Acompanhamento</h2><p>Registros organizados por tipo, autoria e situação.</p></div></div>
-      @if(canCreateRecord()||editingRecord()){<form class="card stack create-panel" [formGroup]="recordForm" (ngSubmit)="saveRecord()"><div class="section-header"><div><h2 id="record-form-heading" tabindex="-1">{{editingRecord()?'Editar registro':'Novo registro'}}</h2><p>{{editingRecord()?'Atualize as informações pedagógicas. Os vínculos do registro são preservados.':'O formulário exibe somente os campos pertinentes ao tipo escolhido.'}}</p></div></div><fieldset [disabled]="actionBusy()" class="record-form-fields"><div class="grid two"><label><span>Tipo&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="type" [attr.disabled]="editingRecord()?'':null"><option value="">Selecione</option>@if(editingRecord()&&!hasRecordType(editingRecord()!.type)){<option [value]="editingRecord()!.type">{{label(editingRecord()!.type)}}</option>}@for(option of recordTypes();track option.value){<option [value]="option.value">{{option.label}}</option>}</select></label><label><span>Título&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="title"></label></div><label>Componente curricular<select formControlName="subjectId" [attr.disabled]="editingRecord()?'':null"><option value="">Sem componente específico</option>@for(subject of subjects();track subject.id){<option [value]="subject.id">{{subject.name}}</option>}</select></label>
+      @if(canCreateRecord()||editingRecord()){<form class="card stack create-panel" [formGroup]="recordForm" (ngSubmit)="saveRecord()"><div class="section-header"><div><h2 id="record-form-heading" tabindex="-1">{{editingRecord()?'Editar registro':'Novo registro'}}</h2><p>{{editingRecord()?'Atualize as informações pedagógicas. Os vínculos do registro são preservados.':'O formulário exibe somente os campos pertinentes ao tipo escolhido.'}}</p></div></div><fieldset [disabled]="actionBusy()" class="record-form-fields"><div class="grid two"><label><span>Tipo&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="type" [attr.disabled]="editingRecord()?'':null">@if (!editingRecord() && recordTypes().length > 1) {<option value="">Selecione</option>}@if(editingRecord()&&!hasRecordType(editingRecord()!.type)){<option [value]="editingRecord()!.type">{{label(editingRecord()!.type)}}</option>}@for(option of recordTypes();track option.value){<option [value]="option.value">{{option.label}}</option>}</select></label><label><span>Título&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="title"></label></div><label><span>Componente curricular @if(recordSubjectRequired()){<span class="field-required" aria-hidden="true">*</span>}</span><select formControlName="subjectId" [attr.disabled]="editingRecord()||!subjects().length?'':null" [attr.aria-required]="recordSubjectRequired()||null">@if(!recordSubjectRequired()){<option value="">Sem componente específico</option>}@else if(subjects().length!==1){<option value="">{{subjects().length?'Selecione':'Nenhum componente disponível'}}</option>}@for(subject of subjects();track subject.id){<option [value]="subject.id">{{subject.name}}</option>}</select></label>
         @if(auth.hasRole('NAPNE')){
           @if(editingRecord();as record){
             @if(record.caseId;as caseId){<p><strong>Caso vinculado</strong><br>{{recordCaseLabel(caseId)}}</p>}
@@ -168,21 +168,9 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
             : 'Registro disponível aos profissionais autorizados, de acordo com seus vínculos e permissões.'}}</span>
         </label></fieldset><div class="record-actions"><button type="submit" [disabled]="recordForm.invalid||actionBusy()||(!!editingRecord()&&!recordChanges.changed())">{{editingRecord()?'Salvar alterações':'Salvar registro'}}</button>@if(editingRecord()){<button type="button" class="secondary" (click)="confirmCancelRecordEdit()" [disabled]="actionBusy()">Cancelar edição</button>}</div></form>}
       <section class="records-list" aria-label="Registros de acompanhamento">
-        <label class="list-filter">
-          Buscar registros por título, tipo, situação ou autoria
-          <input type="search" [value]="recordList.query()" (input)="recordList.setQuery($any($event.target).value)">
-        </label>
+        <app-list-filters [list]="recordList" label="Título do acompanhamento" placeholder="Buscar por título" />
         <label class="checkbox-row"><input type="checkbox" [checked]="showArchivedRecords()"
           (change)="showArchivedRecords.set($any($event.target).checked); recordList.setPage(0)"> Mostrar acompanhamentos arquivados</label>
-        @if (auth.hasRole('NAPNE') && cases().length > 0) {
-          <label class="list-filter">Caso vinculado
-            <select [value]="recordCaseFilter()" (change)="recordCaseFilter.set($any($event.target).value); recordList.setPage(0)">
-              <option value="">Todos os registros</option>
-              <option value="none">Sem caso vinculado</option>
-              @for (item of cases(); track item.id) { <option [value]="item.id">{{caseLabel(item)}}</option> }
-            </select>
-          </label>
-        }
         <div class="records-grid">
           @if (records().length === 0) {
             <div class="empty-state card"><span class="empty-state-mark">0</span><h3>Nenhum registro pedagógico</h3><p>Os registros autorizados para este estudante aparecerão aqui.</p></div>
@@ -227,7 +215,7 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
     }
 
     @if(tab()==='pei'){
-      <div class="section-header"><div><span class="eyebrow">Planejamento individualizado</span><h2>Planos de Ensino Individualizados</h2><p>Crie, revise e acompanhe os PEIs por componente curricular.</p></div></div>
+      <div class="section-header"><div><span class="eyebrow">Planejamento individualizado</span><h2>Planos de Ensino Individualizados</h2><p>{{peiDescription()}}</p></div></div>
       @if (canCreatePei()) {
         @if (offersLoading()) {
           <p role="status">Carregando ofertas válidas…</p>
@@ -242,14 +230,8 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
             <div class="section-header"><div><h2>Criar rascunho de PEI</h2><p>O rascunho exige revisão humana.</p></div></div>
             <fieldset class="catalog-field" [disabled]="actionBusy()">
               <div class="grid two">
-                <label><span>Oferta curricular&nbsp;<span class="field-required" aria-hidden="true">*</span></span>
-                  <select formControlName="offeringId" required>
-                    <option value="">Selecione</option>
-                    @for (offer of peiOffers(); track offer.id) {
-                      <option [value]="offer.id">{{offer.subjectName}} · {{offer.groupCode}} · {{offer.periodLabel}}</option>
-                    }
-                  </select>
-                </label>
+                <app-searchable-select label="Oferta curricular" formControlName="offeringId" [required]="true"
+                  [options]="peiOfferOptions()" placeholder="Componente, turma ou período" />
                 <label>Docente responsável<input [value]="auth.user()?.name??''" readonly></label>
               </div>
             </fieldset>
@@ -259,12 +241,9 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
       }
       <section class="card">
         <h2>Planos por componente</h2>
-        <label class="list-filter">
-          Buscar PEIs por componente, período ou situação
-          <input type="search" [value]="peiList.query()" (input)="peiList.setQuery($any($event.target).value)">
-        </label>
+        <app-list-filters [list]="peiList" label="Buscar PEIs" placeholder="Componente, período ou docente" />
         @if (peis().length === 0) {
-          <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum PEI criado</h3><p>Nenhum PEI criado está disponível para este estudante.</p></div>
+          <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum PEI disponível</h3><p>{{peiOffers().length ? 'Crie um rascunho a partir de uma oferta curricular acima.' : 'Nenhum PEI está disponível neste acompanhamento.'}}</p></div>
         } @else if (peiList.totalElements() === 0) {
           <p role="status">Nenhum PEI corresponde à busca.</p>
         }
@@ -287,10 +266,7 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
       </button></form>}
       <section class="card">
         <h2>Arquivos disponíveis</h2>
-        <label class="list-filter">
-          Buscar documentos por nome, categoria ou autoria
-          <input type="search" [value]="attachmentList.query()" (input)="attachmentList.setQuery($any($event.target).value)">
-        </label>
+        <app-list-filters [list]="attachmentList" label="Nome do documento" placeholder="Buscar por nome" />
         @if (auth.hasRole('NAPNE')) {
           <label class="checkbox-row"><input type="checkbox" [checked]="showArchivedAttachments()"
             (change)="toggleArchivedAttachments($any($event.target).checked)"> Incluir documentos arquivados</label>
@@ -325,12 +301,25 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
     @if (tab() === 'timeline') {
       <div class="section-header"><div><span class="eyebrow">Histórico integrado</span><h2>Linha do tempo</h2><p>Acontecimentos do acompanhamento em ordem cronológica.</p></div></div>
       <section class="card">
-        <label class="list-filter">Filtrar por tipo
-          <select [value]="timelineFilter()" (change)="filterTimeline($any($event.target).value)">
-            <option value="">Todos os eventos</option><option value="CASE">Casos e etapas</option><option value="DOSSIER">Dossiê</option>
-            <option value="CARE_RECORD">Acompanhamentos</option><option value="PEI">PEI</option><option value="ATTACHMENT">Documentos</option>
-          </select>
-        </label>
+        <form class="server-list-toolbar" [formGroup]="timelineForm" (ngSubmit)="filterTimeline()">
+          <label>Tipo de evento
+            <select formControlName="type" (change)="filterTimeline()">
+              <option value="">Todos os eventos</option><option value="CASE">Casos e etapas</option><option value="DOSSIER">Dossiê</option>
+              <option value="CARE_RECORD">Acompanhamentos</option><option value="PEI">PEI</option><option value="ATTACHMENT">Documentos</option>
+            </select>
+          </label>
+          <label>Profissional <input formControlName="actor" placeholder="Nome registrado"></label>
+          <label>A partir de <input type="date" formControlName="from"></label>
+          <label>Até <input type="date" formControlName="to"></label>
+          <button type="submit" class="secondary compact">Filtrar eventos</button>
+          @if (timelineFilterActive()) {
+            <button type="button" class="secondary compact" (click)="clearTimelineFilters()">Limpar filtros</button>
+          }
+          @if (timeline() && !timelineLoading() && !timelineError()) {
+            <span class="meta" role="status">{{timeline()?.totalElements}} resultado(s)</span>
+          }
+        </form>
+        @if (timelineRangeError()) {<p class="error" role="alert">{{timelineRangeError()}}</p>}
         @if (timelineLoading()) {
           <p role="status">Carregando linha do tempo…</p>
         }
@@ -340,7 +329,7 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
         }
         @if (timeline(); as page) {
           @if (page.content.length === 0) {
-            <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum evento na linha do tempo</h3><p>{{timelineFilter() ? 'Nenhum acontecimento do tipo selecionado está disponível.' : 'Os acontecimentos autorizados aparecerão aqui.'}}</p></div>
+            <div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum evento na linha do tempo</h3><p>{{timelineFilterActive() ? 'Nenhum acontecimento corresponde aos filtros selecionados.' : 'Os acontecimentos autorizados aparecerão aqui.'}}</p></div>
           }
           <ol class="timeline">
             @for (item of page.content; track item.id) {
@@ -360,11 +349,10 @@ import { CareRecordHistoryComponent } from './care-record-history.component';
     <form class="stack" [formGroup]="studentEditForm" (ngSubmit)="saveStudent()">
       <div class="notice"><strong>Matrícula {{student()?.registration}}</strong><br><span>A matrícula identifica o cadastro e não é alterada por esta edição.</span></div>
       <fieldset><legend>Identificação</legend><div class="grid two"><label><span>Nome civil&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="civilName" autocomplete="off"></label><label>Nome social<input formControlName="socialName" autocomplete="off"></label><label>Data de nascimento<input type="date" formControlName="birthDate"></label></div></fieldset>
-      <fieldset><legend>Vínculo acadêmico e contato</legend><div class="grid two"><label><span>Curso&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="courseId"><option value="">Selecione</option>
-        @if (unlistedStudentCourse(); as current) {
-          <option [value]="current.courseId">{{current.course}} · vínculo atual</option>
-        }
-        @for(course of courses();track course.id){<option [value]="course.id">{{course.name}}</option>}</select></label><label>E-mail institucional<input type="email" formControlName="institutionalEmail"></label><label>Telefone<input formControlName="phone"></label></div></fieldset>
+      <fieldset><legend>Vínculo acadêmico e contato</legend><div class="grid two">@if(editStudentOpen()) {
+        <app-searchable-select label="Curso" formControlName="courseId" [required]="true"
+          [options]="studentCourseOptions()" [readonly]="studentSaving()" placeholder="Nome, código ou campus" />
+      }<label>E-mail institucional<input type="email" formControlName="institutionalEmail"></label><label>Telefone<input formControlName="phone"></label></div></fieldset>
       <div class="dialog-actions"><button type="button" class="secondary" (click)="closeStudentEdit()" [disabled]="studentSaving()">Cancelar</button><button type="submit" [disabled]="studentEditForm.invalid||studentSaving()||!studentChanges.changed()">@if(studentSaving()){<span class="spinner"></span>}Salvar alterações</button></div>
     </form>
   </app-modal-shell>
@@ -373,10 +361,11 @@ export class StudentDetailComponent implements OnInit{
   private attachmentUpload?: { file: File; category: string; previousId: string; key: string };
   private timelineRequest?: Subscription;
   private readonly destroyRef = inject(DestroyRef);
+  private readonly router = inject(Router);
   private readonly route=inject(ActivatedRoute);private readonly api=inject(ApiService);private readonly academic=inject(AcademicApi);private readonly fb=inject(FormBuilder);private readonly toast=inject(ToastService);readonly auth=inject(AuthService);
   readonly id=Number(this.route.snapshot.paramMap.get('id'));readonly tabs=[{id:'dossier',label:'Dossiê'},{id:'enrollments',label:'Matrículas'},{id:'cases',label:'Casos'},{id:'records',label:'Acompanhamento'},{id:'pei',label:'PEI'},{id:'documents',label:'Documentos'},{id:'timeline',label:'Linha do tempo'}];readonly dossierFields=DOSSIER_FIELDS;readonly recordFields=RECORD_FIELDS;readonly dossierSections=[{key:'identification',label:'Identificação e demanda'},{key:'educationalNeeds',label:'Necessidades educacionais'},{key:'healthAndSupport',label:'Saúde e serviços de apoio'},{key:'familyContext',label:'Contexto familiar e autonomia'},{key:'schoolHistory',label:'História escolar'},{key:'strengths',label:'Potencialidades'},{key:'difficulties',label:'Dificuldades'},{key:'initialInterventions',label:'Intervenções e acompanhamento'}];readonly label=labelFor;readonly tone=toneFor;
   readonly structuredDossier=new FormRecord<FormControl<string>>(Object.fromEntries(Object.entries(DOSSIER_FIELDS).flatMap(([section,fields])=>fields.map(field=>[section+'.'+field.key,new FormControl('',{nonNullable:true})]))));readonly structuredRecord=new FormRecord<FormControl<string>>(Object.fromEntries(Object.values(RECORD_FIELDS).flat().map(field=>[field.key,new FormControl('',{nonNullable:true})])));
-  readonly student=signal<StudentDetails|null>(null);readonly dossier=signal<Dossier|null>(null);readonly cases=signal<NapneCase[]>([]);readonly records=signal<CareRecord[]>([]);readonly editingRecord=signal<CareRecord|null>(null);readonly peis=signal<Pei[]>([]);readonly subjects=signal<Subject[]>([]);readonly courses=signal<Course[]>([]);readonly attachments=signal<Attachment[]>([]);readonly loading=signal(true);readonly loadError=signal('');readonly tab=signal('dossier');readonly timelineFilter=signal('');readonly selectedFile=signal<File|null>(null);readonly editStudentOpen=signal(false);readonly studentSaving=signal(false);readonly actionBusy=signal(false);readonly dossierSaving=signal(false);readonly historyVisible=signal(false);readonly historyLoading=signal(false);readonly dossierHistory=signal<{version:number,fields:Record<string,unknown>,author:string,occurredAt:string}[]>([]);
+  readonly student=signal<StudentDetails|null>(null);readonly dossier=signal<Dossier|null>(null);readonly cases=signal<NapneCase[]>([]);readonly records=signal<CareRecord[]>([]);readonly editingRecord=signal<CareRecord|null>(null);readonly peis=signal<Pei[]>([]);readonly subjects=signal<Subject[]>([]);readonly courses=signal<Course[]>([]);readonly attachments=signal<Attachment[]>([]);readonly loading=signal(true);readonly loadError=signal('');readonly tab=signal('dossier');readonly selectedFile=signal<File|null>(null);readonly editStudentOpen=signal(false);readonly studentSaving=signal(false);readonly actionBusy=signal(false);readonly dossierSaving=signal(false);readonly historyVisible=signal(false);readonly historyLoading=signal(false);readonly dossierHistory=signal<{version:number,fields:Record<string,unknown>,author:string,occurredAt:string}[]>([]);
   readonly attachmentForm = this.fb.nonNullable.group({
     category: ['Laudo ou documento', Validators.required],
     previousVersion: [''],
@@ -389,26 +378,74 @@ export class StudentDetailComponent implements OnInit{
   ));
   private readonly caseCards = viewChildren(CaseCardComponent);
   readonly caseListBusy = computed(() => this.caseCards().some(card => card.busy()));
-  readonly dossierRevisions = createListView(this.dossierHistory, version => [`Versão ${version.version}`, version.author]);
-  readonly caseList = createListView(this.cases, item => [this.caseLabel(item), item.responsible, item.summary]);
+  readonly dossierRevisions = createListView(this.dossierHistory, version => [`Versão ${version.version}`, version.author], {
+    author: { label: 'Autoria', value: item => item.author },
+    version: { label: 'Versão', value: item => item.version },
+    from: { label: 'A partir de', value: item => item.occurredAt, kind: 'from' },
+    to: { label: 'Até', value: item => item.occurredAt, kind: 'to' },
+  });
+  private readonly configuredCaseStages = signal<CaseStageOption[] | null>(null);
+  readonly caseList = createListView(this.cases, item => [item.id, item.summary, item.source], {
+    source: { label: 'Origem', value: item => item.source },
+    stage: { label: 'Etapa', value: item => item.stage, display: stage =>
+      this.cases().find(item => item.stage === stage)?.stageLabel ?? this.label(stage),
+      options: () => (this.configuredCaseStages() ?? []).map(stage => ({ value: stage.code, label: stage.label })) },
+    responsible: { label: 'Responsável', value: item => item.responsibleId, display: id =>
+      this.cases().find(item => item.responsibleId === Number(id))?.responsible ?? id },
+    status: { label: 'Situação', value: item => item.stage === 'ARCHIVED' ? 'Arquivado' : item.closedAt ? 'Encerrado' : 'Aberto' },
+    openedFrom: { label: 'Abertura a partir de', value: item => item.openedAt, kind: 'from' },
+    openedTo: { label: 'Abertura até', value: item => item.openedAt, kind: 'to' },
+    closedFrom: { label: 'Encerramento a partir de', value: item => item.closedAt, kind: 'from' },
+    closedTo: { label: 'Encerramento até', value: item => item.closedAt, kind: 'to' },
+  });
   readonly recordToArchive = signal<CareRecord | null>(null);
   readonly showArchivedRecords = signal(false);
-  readonly recordCaseFilter = signal('');
-  private readonly displayedRecords = computed(() => {
-    const caseFilter = this.recordCaseFilter();
-    return this.records().filter(item => (this.showArchivedRecords() || item.status !== 'ARCHIVED')
-      && (!caseFilter || (item.caseId == null ? 'none' : String(item.caseId)) === caseFilter));
-  });
+  private readonly displayedRecords = computed(() => this.records().filter(item =>
+    this.showArchivedRecords() || item.status !== 'ARCHIVED'));
   readonly recordList = createListView(this.displayedRecords, item => [
     item.title, this.label(item.type), this.recordStatusLabel(item.status), item.createdBy,
-  ]);
+  ], {
+    type: { label: 'Tipo de registro', value: item => item.type, display: this.label },
+    author: { label: 'Autoria', value: item => item.createdBy },
+    subject: { label: 'Componente', value: item => item.subjectId ?? 'general',
+      display: id => id === 'general' ? 'Sem componente específico' : this.subjectName(Number(id)) },
+    ...(this.auth.hasRole('NAPNE') ? { case: {
+      label: 'Caso vinculado', value: (item: CareRecord) => item.caseId ?? 'none',
+      display: (id: string) => id === 'none' ? 'Sem caso vinculado' : this.recordCaseLabel(Number(id)),
+    } } : {}),
+    status: { label: 'Situação', value: item => item.status, display: status => this.recordStatusLabel(status) },
+    from: { label: 'Registro a partir de', value: item => item.createdAt ?? item.updatedAt, kind: 'from' },
+    to: { label: 'Registro até', value: item => item.createdAt ?? item.updatedAt, kind: 'to' },
+  });
   readonly unlistedStudentCourse = computed(() => {
     const current = this.student();
     return current && !this.courses().some(course => course.id === current.courseId) ? current : null;
   });
+  readonly studentCourseOptions = computed(() => {
+    const current = this.unlistedStudentCourse();
+    return [
+      ...(current ? [{ id: String(current.courseId), label: current.course, detail: 'vínculo atual' }] : []),
+      ...this.courses().map(course => ({
+        id: String(course.id), label: course.name, detail: `${course.code} · ${course.campus}`,
+      })),
+    ];
+  });
   readonly peiList = createListView(this.peis, item => [
-    this.peiSubjectName(item), item.academicTermLabel ?? item.academicTerm, this.peiStatusLabel(item.status),
-  ]);
+    this.peiSubjectName(item), item.academicTermLabel ?? item.academicTerm, this.peiStatusLabel(item.status), this.peiTeacher(item),
+  ], {
+    subject: { label: 'Componente curricular', value: item => item.subjectId,
+      display: id => {
+        const item = this.peis().find(pei => pei.subjectId === Number(id));
+        return item ? this.peiSubjectName(item) : this.subjectName(Number(id));
+      } },
+    term: { label: 'Período letivo', value: item => item.academicTerm, display: term =>
+      this.peis().find(item => item.academicTerm === term)?.academicTermLabel ?? term },
+    teacher: { label: 'Docente responsável', value: item => item.teacherId, display: id => {
+      const item = this.peis().find(pei => pei.teacherId === Number(id));
+      return item ? this.peiTeacher(item) || 'Docente #' + id : 'Docente #' + id;
+    } },
+    status: { label: 'Situação', value: item => item.status, display: status => this.peiStatusLabel(status) },
+  });
   readonly showArchivedAttachments = signal(false);
   readonly archivedAttachmentsLoading = signal(false);
   readonly archivedAttachmentsError = signal('');
@@ -416,7 +453,17 @@ export class StudentDetailComponent implements OnInit{
   protected readonly displayedAttachments = computed(() => this.showArchivedAttachments()
     ? [...this.attachments(), ...this.archivedAttachments()]
     : this.attachments());
-  readonly attachmentList = createListView(this.displayedAttachments, item => [item.originalName, item.category, item.uploadedBy]);
+  readonly attachmentList = createListView(this.displayedAttachments, item => [item.originalName, item.category, item.uploadedBy], {
+    category: { label: 'Categoria', value: item => item.category },
+    author: { label: 'Autor do envio', value: item => item.uploadedBy },
+    status: { label: 'Situação', value: item => item.archived ? 'Arquivado' : 'Ativo' },
+    from: { label: 'Envio a partir de', value: item => item.uploadedAt, kind: 'from' },
+    to: { label: 'Envio até', value: item => item.uploadedAt, kind: 'to' },
+  });
+  readonly timelineForm = this.fb.nonNullable.group({ type: '', actor: '', from: '', to: '' });
+  readonly timelineRangeError = signal('');
+  private readonly timelineApplied = signal(this.timelineForm.getRawValue());
+  readonly timelineFilterActive = computed(() => Object.values(this.timelineApplied()).some(Boolean));
   readonly timeline = signal<Page<TimelineEvent> | null>(null);
   readonly requestedTimelinePage = signal(0);
   readonly timelineLoading = signal(false);
@@ -457,6 +504,10 @@ export class StudentDetailComponent implements OnInit{
 
   readonly needCategories=signal<ReferenceOption[]>([]);
   readonly peiOffers = signal<AcademicOffering[]>([]);
+  readonly peiOfferOptions = computed(() => this.peiOffers().map(offer => ({
+    id: String(offer.id), label: offer.subjectName,
+    detail: `${offer.groupCode} · ${offer.periodLabel}${offer.periodLabel === offer.periodCode ? '' : ` · ${offer.periodCode}`}`,
+  })));
   readonly categoriesLoading=signal(false);
   readonly categoriesError=signal('');
   readonly offersLoading = signal(false);
@@ -469,10 +520,46 @@ export class StudentDetailComponent implements OnInit{
     if(active.some(option=>option.id===id))return active.map(option=>option.id===id?{...option,label:snapshot||option.label}:option);
     return [{id,code:'',label:`${snapshot||'Categoria registrada'} · referência histórica`},...active];
   });
-  ngOnInit(){if(!this.auth.hasRole('NAPNE'))this.tab.set('records');this.loadAll();if(this.auth.hasRole('NAPNE'))this.loadCategories();if(this.canCreatePei())this.loadPeiOffers()}
+  ngOnInit() {
+    this.recordForm.controls.type.valueChanges.pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.reconcileRecordSubject());
+    if (!this.auth.hasRole('NAPNE')) this.tab.set('records');
+    this.loadAll();
+    if (this.auth.hasRole('NAPNE')) this.loadCategories();
+    if (this.canCreatePei()) this.loadPeiOffers();
+  }
+
+  recordSubjectRequired(): boolean {
+    return !this.editingRecord() && this.recordForm.controls.type.value === 'TEACHER_FEEDBACK';
+  }
+
+  private reconcileRecordSubject(): void {
+    const control = this.recordForm.controls.subjectId;
+    control.setValidators(this.recordSubjectRequired() ? Validators.required : null);
+    if (this.recordSubjectRequired()) {
+      reconcileRequiredSelection(control, this.subjects().map(subject => String(subject.id)));
+    }
+    control.updateValueAndValidity();
+  }
+
+  private loadStudentSubjects(): void {
+    this.api.studentSubjects(this.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: subjects => {
+        this.subjects.set(subjects);
+        this.reconcileRecordSubject();
+      },
+      error: error => this.toast.show(errorMessage(error, 'carregar os componentes curriculares'), 'error'),
+    });
+  }
   protected selectTab(id: string) {
     this.tab.set(id);
     if (id === 'timeline') this.refreshTimeline();
+    if (id === 'cases' && this.auth.hasRole('NAPNE') && this.configuredCaseStages() === null) {
+      this.api.studentCaseStages(this.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+        next: stages => this.configuredCaseStages.set(stages),
+        error: error => this.toast.show(errorMessage(error, 'carregar as etapas para filtragem'), 'error'),
+      });
+    }
   }
   canLeave(): boolean {
     return !this.auth.authenticated() || !this.hasUnsavedChanges()
@@ -481,7 +568,8 @@ export class StudentDetailComponent implements OnInit{
 
   private hasUnsavedChanges(): boolean {
     return this.dossierDirty() || (this.editStudentOpen() && this.studentChanges.changed())
-      || (!!this.editingRecord() && this.recordChanges.changed());
+      || (this.editingRecord() ? this.recordChanges.changed() : this.recordForm.dirty || this.structuredRecord.dirty)
+      || this.caseForm.dirty || !!this.selectedFile();
   }
 
   @HostListener('window:beforeunload', ['$event'])
@@ -493,6 +581,24 @@ export class StudentDetailComponent implements OnInit{
   }
 
   canCreatePei(){return this.auth.hasRole('TEACHER')}
+
+  protected peiDescription(): string {
+    const actions = this.peis().flatMap(item => item.allowedActions ?? []);
+    const canDraft = (this.canCreatePei() && this.peiOffers().length > 0) || actions.includes('EDIT');
+    const canReview = actions.some(action => action === 'APPROVE' || action === 'RETURN');
+    if (canDraft && canReview) return 'Elabore, revise e acompanhe os PEIs por componente curricular.';
+    if (canDraft) return 'Elabore e acompanhe os PEIs por componente curricular.';
+    if (canReview) return 'Analise e acompanhe os PEIs disponíveis para revisão.';
+    if (!this.peis().length && !this.auth.hasRole('NAPNE', 'TEACHER', 'COTEP', 'COURSE_COORDINATOR')) {
+      return 'A disponibilidade de PEIs segue as permissões do acompanhamento.';
+    }
+    return 'Consulte os PEIs disponíveis para este estudante por componente curricular.';
+  }
+
+  private peiTeacher(item: Pei): string {
+    const name = item.content?.['teacherName'];
+    return typeof name === 'string' ? name : '';
+  }
   loadCategories(){
     if(!this.auth.hasRole('NAPNE')||this.dossier()?.redacted||this.categoriesLoading()||this.dossierSaving())return;
     this.categoriesLoading.set(true);this.categoriesError.set('');
@@ -505,10 +611,7 @@ export class StudentDetailComponent implements OnInit{
     this.academic.peiOffers(this.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: offers => {
         this.peiOffers.set(offers);
-        const current = this.peiForm.controls.offeringId.value;
-        if (!offers.some(offer => String(offer.id) === current)) {
-          this.peiForm.controls.offeringId.setValue(offers.length === 1 ? String(offers[0].id) : '');
-        }
+        reconcileRequiredSelection(this.peiForm.controls.offeringId, offers.map(offer => String(offer.id)));
         this.offersLoading.set(false);
       },
       error: error => {
@@ -517,14 +620,36 @@ export class StudentDetailComponent implements OnInit{
       },
     });
   }
-  visibleTabs(){return this.tabs.filter(t=>this.auth.hasRole('NAPNE')||!['dossier','enrollments','cases','documents'].includes(t.id))} activeRecordFields(){return RECORD_FIELDS[this.recordForm.controls.type.value]??[]} recordTypes(){if(this.auth.hasRole('NAPNE'))return[{value:'INITIAL_SCREENING',label:'Triagem inicial'},{value:'WELCOMING',label:'Acolhimento'},{value:'CASE_STUDY',label:'Estudo de caso'},{value:'PEDAGOGICAL_GUIDANCE',label:'Orientações pedagógicas'},{value:'ACTION_PLAN',label:'Plano de ação'},{value:'SUPPORT_REFUSAL',label:'Recusa de apoio'},{value:'SUPPORT_REQUEST',label:'Nova solicitação de apoio'}];if(this.auth.hasRole('COTEP','COURSE_COORDINATOR'))return[{value:'PEDAGOGICAL_GUIDANCE',label:'Orientações pedagógicas'},{value:'ACTION_PLAN',label:'Plano de ação'}];if(this.auth.hasRole('TEACHER'))return[{value:'TEACHER_FEEDBACK',label:'Devolutiva docente'}];if(this.auth.hasRole('TUTOR'))return[{value:'TUTOR_OBSERVATION',label:'Observação de tutoria'}];return[]} canCreateRecord(){return this.recordTypes().length>0}
-  loadAll(){this.loading.set(true);this.loadError.set('');forkJoin({student:this.api.student(this.id),dossier:this.api.dossier(this.id),cases:this.api.cases(this.id),records:this.api.records(this.id),peis:this.api.peis(this.id),attachments:this.api.attachments(this.id)}).subscribe({next:v=>{this.student.set(v.student);this.dossier.set(v.dossier);this.cases.set(v.cases);this.records.set(v.records);this.peis.set(v.peis);this.attachments.set(v.attachments);this.fillDossier(v.dossier);this.api.studentSubjects(this.id).subscribe(s=>this.subjects.set(s));if(this.auth.hasRole('NAPNE'))this.api.courses().subscribe({next:c=>this.courses.set(c),error:e=>this.toast.show(errorMessage(e,'carregar os cursos'),'error')});this.recordForm.controls.type.setValue(this.recordTypes()[0]?.value??'');this.loading.set(false);this.refreshTimeline()},error:e=>{this.loading.set(false);this.loadError.set(errorMessage(e,'carregar o acompanhamento'))}})}
+  visibleTabs() {
+    return this.tabs.filter(tab => this.auth.hasRole('NAPNE') || !['dossier', 'enrollments', 'cases', 'documents'].includes(tab.id));
+  }
+
+  activeRecordFields() { return RECORD_FIELDS[this.recordForm.controls.type.value] ?? []; }
+
+  readonly recordTypes = computed(() => {
+    const types = new Set<string>();
+    if (this.auth.hasRole('NAPNE')) {
+      ['INITIAL_SCREENING', 'WELCOMING', 'CASE_STUDY', 'PEDAGOGICAL_GUIDANCE', 'ACTION_PLAN',
+        'SUPPORT_REFUSAL', 'SUPPORT_REQUEST'].forEach(type => types.add(type));
+    }
+    if (this.auth.hasRole('COTEP', 'COURSE_COORDINATOR')) {
+      types.add('PEDAGOGICAL_GUIDANCE');
+      types.add('ACTION_PLAN');
+    }
+    if (this.auth.hasRole('TEACHER')) types.add('TEACHER_FEEDBACK');
+    if (this.auth.hasRole('TUTOR')) types.add('TUTOR_OBSERVATION');
+    return Array.from(types, value => ({ value, label: this.label(value) }));
+  });
+
+  canCreateRecord() { return this.student()?.status !== 'ARCHIVED' && this.recordTypes().length > 0; }
+
+  loadAll(){this.loading.set(true);this.loadError.set('');forkJoin({student:this.api.student(this.id),dossier:this.api.dossier(this.id),cases:this.api.cases(this.id),records:this.api.records(this.id),peis:this.api.peis(this.id),attachments:this.api.attachments(this.id)}).subscribe({next:v=>{this.student.set(v.student);this.dossier.set(v.dossier);this.cases.set(v.cases);this.records.set(v.records);this.peis.set(v.peis);this.attachments.set(v.attachments);this.fillDossier(v.dossier);this.loadStudentSubjects();if(this.auth.hasRole('NAPNE'))this.api.courses().subscribe({next:c=>this.courses.set(c),error:e=>this.toast.show(errorMessage(e,'carregar os cursos'),'error')});reconcileRequiredSelection(this.recordForm.controls.type, this.recordTypes().map(option => option.value));this.loading.set(false);this.refreshTimeline()},error:e=>{this.loading.set(false);this.loadError.set(errorMessage(e,'carregar o acompanhamento'))}})}
   openStudentEdit(){const value=this.student();if(!value)return;this.studentEditForm.reset({courseId:String(value.courseId),civilName:value.civilName??'',socialName:value.socialName??'',birthDate:value.birthDate??'',institutionalEmail:value.institutionalEmail??'',phone:value.phone??''});this.studentChanges.capture();this.editStudentOpen.set(true)}
   closeStudentEdit(){
     if (!this.studentSaving() && (!this.studentChanges.changed()
         || window.confirm('Descartar alterações ainda não salvas no cadastro?'))) this.editStudentOpen.set(false);
   }
-  saveStudent(){const current=this.student();this.studentEditForm.markAllAsTouched();if(!current||this.studentEditForm.invalid||this.studentSaving()||!this.studentChanges.changed())return;const value=this.studentEditForm.getRawValue();this.studentSaving.set(true);this.api.updateStudent(this.id,{registration:current.registration,courseId:Number(value.courseId),civilName:value.civilName,socialName:value.socialName,birthDate:value.birthDate||null,institutionalEmail:value.institutionalEmail||null,phone:value.phone||null}).subscribe({next:updated=>{this.student.set(updated);this.studentSaving.set(false);this.editStudentOpen.set(false);this.toast.show('Dados cadastrais do estudante atualizados.','success');this.api.studentSubjects(this.id).subscribe(s=>this.subjects.set(s))},error:e=>{this.studentSaving.set(false);this.toast.show(errorMessage(e,'atualizar o cadastro do estudante'),'error')}})}
+  saveStudent(){const current=this.student();this.studentEditForm.markAllAsTouched();if(!current||this.studentEditForm.invalid||this.studentSaving()||!this.studentChanges.changed())return;const value=this.studentEditForm.getRawValue();this.studentSaving.set(true);this.api.updateStudent(this.id,{registration:current.registration,courseId:Number(value.courseId),civilName:value.civilName,socialName:value.socialName,birthDate:value.birthDate||null,institutionalEmail:value.institutionalEmail||null,phone:value.phone||null}).subscribe({next:updated=>{this.student.set(updated);this.studentSaving.set(false);this.editStudentOpen.set(false);this.toast.show('Dados cadastrais do estudante atualizados.','success');this.loadStudentSubjects()},error:e=>{this.studentSaving.set(false);this.toast.show(errorMessage(e,'atualizar o cadastro do estudante'),'error')}})}
   saveDossier(){
     const previous=this.dossier();
     if (!previous || !this.canSaveDossier()) return;
@@ -571,8 +696,7 @@ export class StudentDetailComponent implements OnInit{
   }
 
   showCaseRecords(caseId: number): void {
-    this.recordCaseFilter.set(String(caseId));
-    this.recordList.setPage(0);
+    this.recordList.setFilter('case', String(caseId));
     this.selectTab('records');
   }
 
@@ -587,7 +711,7 @@ export class StudentDetailComponent implements OnInit{
   }
 
   canEditRecord(item:CareRecord):boolean{
-    if (item.status === 'ARCHIVED' || item.status === 'SUPERSEDED') return false;
+    if (this.student()?.status === 'ARCHIVED' || item.status === 'ARCHIVED' || item.status === 'SUPERSEDED') return false;
     if (item.editable !== undefined && item.editable !== null) return item.editable;
     if(this.auth.hasRole('NAPNE'))return true;
     const user=this.auth.user();
@@ -631,7 +755,9 @@ export class StudentDetailComponent implements OnInit{
 
   cancelRecordEdit(){
     this.editingRecord.set(null);
-    this.recordForm.reset({type:this.recordTypes()[0]?.value??'',title:'',notes:'',subjectId:'',caseId:'',status:'DRAFT'});
+    this.recordForm.reset();
+    reconcileRequiredSelection(this.recordForm.controls.type, this.recordTypes().map(option => option.value));
+    this.reconcileRecordSubject();
     this.structuredRecord.reset();
   }
   saveRecord(){
@@ -729,7 +855,15 @@ export class StudentDetailComponent implements OnInit{
     this.api.createPei(this.id, { offeringId }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: pei => {
         this.peis.update(items => [pei, ...items.filter(item => item.id !== pei.id)]);
-        this.done('Rascunho do PEI criado. Revise-o e envie-o quando estiver pronto.');
+        if (this.hasUnsavedChanges()) {
+          this.done('Rascunho criado. Conclua as outras alterações e abra o rascunho na listagem.');
+          return;
+        }
+        this.toast.show('Rascunho do PEI criado.', 'success');
+        void this.router.navigate(['/estudantes', this.id, 'pei', pei.id]).then(
+          opened => { if (!opened) this.peiNavigationFailed(); },
+          () => this.peiNavigationFailed(),
+        );
       },
       error: error => {
         this.actionBusy.set(false);
@@ -737,6 +871,12 @@ export class StudentDetailComponent implements OnInit{
       },
     });
   }
+  private peiNavigationFailed(): void {
+    this.actionBusy.set(false);
+    this.toast.show('Rascunho criado. Abra o editor pela listagem de PEIs.', 'error');
+    this.refreshTimeline();
+  }
+
   upload(fileInput?: HTMLInputElement) {
     const file = this.selectedFile();
     if (!file || this.attachmentForm.invalid || this.actionBusy()) return;
@@ -802,14 +942,28 @@ export class StudentDetailComponent implements OnInit{
 
   readonly timelineLabel = timelineLabel;
 
-  filterTimeline(type: string) {
-    this.timelineFilter.set(type);
-    this.timeline.set(null);
+  filterTimeline(): void {
+    const filter = this.timelineForm.getRawValue();
+    if (filter.from && filter.to && filter.from > filter.to) {
+      this.timelineRangeError.set('A data final deve ser igual ou posterior à data inicial.');
+      return;
+    }
+    this.timelineRangeError.set('');
+    this.timelineApplied.set({ ...filter, actor: filter.actor.trim() });
     this.refreshTimeline();
+  }
+
+  clearTimelineFilters(): void {
+    this.timelineForm.reset();
+    this.filterTimeline();
   }
 
   changes(fields:Record<string,unknown>){return Object.entries(fields).map(([key,previous])=>({key,previous,current:this.dossier()?.[key as keyof Dossier]})).filter(v=>JSON.stringify(v.previous)!==JSON.stringify(v.current))}
   selectFile(event:Event){this.selectedFile.set((event.target as HTMLInputElement).files?.[0]??null)}download(item:Attachment){this.api.downloadAttachment(this.id,item.id).subscribe({next:blob=>{const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=item.originalName;a.click();URL.revokeObjectURL(url)},error:e=>this.toast.show(errorMessage(e,'baixar o documento'),'error')})}
+  private subjectName(id: number): string {
+    return this.subjects().find(subject => subject.id === id)?.name ?? `Componente #${id}`;
+  }
+
   peiSubjectName(pei: Pei): string {
     const subject = this.subjects().find(item => item.id === pei.subjectId);
     const savedName = pei.content['subject'];
@@ -824,7 +978,13 @@ export class StudentDetailComponent implements OnInit{
     this.requestedTimelinePage.set(page);
     this.timelineLoading.set(true);
     this.timelineError.set('');
-    this.timelineRequest = this.api.timeline(this.id, this.timelineFilter(), page)
+    const { type, actor, from, to } = this.timelineApplied();
+    const filters = {
+      actor,
+      from: from ? new Date(from + 'T00:00:00').toISOString() : undefined,
+      to: to ? new Date(to + 'T23:59:59.999').toISOString() : undefined,
+    };
+    this.timelineRequest = this.api.timeline(this.id, type, page, filters)
       .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
         next: response => {
           this.timeline.set(response);

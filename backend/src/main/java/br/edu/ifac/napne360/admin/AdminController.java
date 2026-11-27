@@ -13,6 +13,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 @RestController
@@ -46,8 +49,8 @@ public class AdminController {
 
     @GetMapping("/subjects")
     @Transactional(readOnly = true)
-    public List<SubjectView> allSubjects() {
-        return subjects.findAll().stream().map(SubjectView::of).toList();
+    public List<AdminSubjectView> allSubjects() {
+        return subjects.findAll().stream().map(AdminSubjectView::of).toList();
     }
 
     @GetMapping("/student-registrations")
@@ -63,6 +66,32 @@ public class AdminController {
         return assignments.findAllByOrderByIdDesc().stream()
                 .map(a -> AssignmentView.of(a, effectiveIds.contains(a.getId()))).toList();
     }
+
+    @GetMapping("/assignments/page")
+    @Transactional(readOnly = true)
+    public Page<AssignmentView> assignmentPage(AssignmentFilters filter, Pageable page) {
+        if (page.getPageSize() > 100 || page.getOffset() > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Paginação inválida.");
+        }
+        Long subjectId = filter.subject() == null || "general".equals(filter.subject())
+                ? null : Long.valueOf(filter.subject());
+        var results = assignments.adminPage(searchPattern(filter.query()), searchPattern(filter.registration()),
+                searchPattern(filter.actor()), filter.campus(), filter.course(), subjectId,
+                "general".equals(filter.subject()), filter.type(), filter.origin(),
+                filter.period() == null || filter.period().isBlank() ? null : filter.period().strip().toLowerCase(Locale.ROOT),
+                filter.active(), page);
+        if (results.isEmpty()) return results.map(link -> AssignmentView.of(link, false));
+        var ids = assignments.effectiveAssignmentIdsFor(results.getContent().stream().map(StudentAssignment::getId).toList());
+        return results.map(link -> AssignmentView.of(link, ids.contains(link.getId())));
+    }
+
+    private static String searchPattern(String text) {
+        return text == null || text.isBlank() ? null : "%"
+                + text.strip().toLowerCase(Locale.ROOT).replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%";
+    }
+
+    public record AssignmentFilters(String query, String registration, String actor, Long campus, Long course,
+                                    String subject, AssignmentType type, AssignmentOrigin origin, String period, Boolean active) {}
 
     @PatchMapping("/assignments/{id}/active")
     @Transactional
@@ -140,12 +169,109 @@ public class AdminController {
     }
 
     @PostMapping("/subjects")
-    @Transactional
-    public SubjectView createSubject(@Valid @RequestBody SubjectRequest request) {
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public AdminSubjectView createSubject(@Valid @RequestBody SubjectRequest request) {
         Course course = lockActiveCourse(request.courseId());
-        Subject subject = subjects.save(Subject.builder().course(course).name(request.name().trim())
-                .code(request.code().trim().toUpperCase()).workloadHours(request.workloadHours()).syllabus(request.syllabus()).build());
-        return SubjectView.of(subject);
+        requireSubjectCampusActive(course);
+        Subject subject = Subject.builder().course(course).name(request.name()).code(request.code())
+                .workloadHours(request.workloadHours()).syllabus(request.syllabus()).build();
+        return saveSubject(subject);
+    }
+
+    @PutMapping("/subjects/{id}")
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public AdminSubjectView updateSubject(@PathVariable Long id, @Valid @RequestBody SubjectRequest request) {
+        Long courseId = subjectCourseId(id);
+        if (!courseId.equals(request.courseId())) {
+            throw subjectConflict("SUBJECT_COURSE_IMMUTABLE", "Não é possível transferir o componente para outro curso.");
+        }
+        lockCourse(courseId);
+        Subject subject = lockSubject(id);
+        if (!subject.isActive()) {
+            throw subjectConflict("SUBJECT_ARCHIVED", "Reative o componente antes de editá-lo.");
+        }
+        if (request.version() == null || subject.getVersion() != request.version()) {
+            throw subjectConflict("SUBJECT_CONCURRENT_EDIT", "O componente foi alterado. Recarregue os dados antes de salvar.");
+        }
+        if (sameSubjectFields(subject, request.name(), request.code(), request.workloadHours(), request.syllabus())) {
+            throw subjectConflict("SUBJECT_UNCHANGED", "Nenhuma alteração foi informada para o componente.");
+        }
+        if (!subject.getCode().equals(request.code())
+                && (assignments.existsBySubjectId(id) || academic.hasSubjectOfferings(id)
+                || subjectReferences.hasHistory(List.of(subject)))) {
+            throw subjectConflict("SUBJECT_CODE_IN_USE", "O código do componente está vinculado a registros acadêmicos ou históricos.");
+        }
+        subject.setName(request.name());
+        subject.setCode(request.code());
+        subject.setWorkloadHours(request.workloadHours());
+        subject.setSyllabus(request.syllabus());
+        return saveSubject(subject);
+    }
+
+    @PatchMapping("/subjects/{id}/archive")
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public AdminSubjectView archiveSubject(@PathVariable Long id) {
+        lockCourse(subjectCourseId(id));
+        Subject subject = lockSubject(id);
+        if (!subject.isActive()) return AdminSubjectView.of(subject);
+        if (academic.hasActiveSubjectDependencies(id)) {
+            throw subjectConflict("SUBJECT_ACTIVE_ACADEMIC_DEPENDENCIES",
+                    "Encerre as ofertas, matrículas e atribuições docentes ativas do componente antes de arquivá-lo.");
+        }
+        if (assignments.existsBySubjectIdAndActiveTrue(id)) {
+            throw subjectConflict("SUBJECT_ACTIVE_LINKS", "O componente possui vínculos ativos.");
+        }
+        if (subjectReferences.hasOpenWork(List.of(subject))) {
+            throw subjectConflict("SUBJECT_OPEN_WORK", "O componente possui acompanhamentos em andamento ou PEIs vigentes.");
+        }
+        subject.setActive(false);
+        subjects.flush();
+        return AdminSubjectView.of(subject);
+    }
+
+    @PatchMapping("/subjects/{id}/reactivate")
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public AdminSubjectView reactivateSubject(@PathVariable Long id) {
+        Course course = lockCourse(subjectCourseId(id));
+        Subject subject = lockSubject(id);
+        if (!course.isActive()) {
+            throw subjectConflict("SUBJECT_COURSE_ARCHIVED", "O curso do componente está arquivado.");
+        }
+        requireSubjectCampusActive(course);
+        subject.setActive(true);
+        subjects.flush();
+        return AdminSubjectView.of(subject);
+    }
+
+    private Long subjectCourseId(Long id) {
+        return subjects.courseIdOf(id).orElseThrow(() -> new NotFoundException("Componente não encontrado."));
+    }
+
+    private Subject lockSubject(Long id) {
+        return subjects.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Componente não encontrado."));
+    }
+
+    private void requireSubjectCampusActive(Course course) {
+        if (!course.getCampus().isActive()) {
+            throw subjectConflict("SUBJECT_CAMPUS_ARCHIVED", "O campus do componente está arquivado.");
+        }
+    }
+
+    private boolean sameSubjectFields(Subject subject, String name, String code, int workload, String syllabus) {
+        return subject.getName().equals(name) && subject.getCode().equals(code)
+                && subject.getWorkloadHours() == workload && Objects.equals(subject.getSyllabus(), syllabus);
+    }
+
+    private AdminSubjectView saveSubject(Subject subject) {
+        try {
+            return AdminSubjectView.of(subjects.saveAndFlush(subject));
+        } catch (DataIntegrityViolationException exception) {
+            throw subjectConflict("SUBJECT_DUPLICATE_CODE", "Já existe um componente com esse código neste curso.");
+        }
+    }
+
+    private ApiOperationException subjectConflict(String code, String detail) {
+        return new ApiOperationException(HttpStatus.CONFLICT, code, detail);
     }
 
     @PostMapping("/assignments")
@@ -227,8 +353,23 @@ public class AdminController {
             code = code == null ? null : code.trim().toUpperCase(Locale.ROOT);
         }
     }
-    public record SubjectRequest(@NotNull Long courseId, @NotBlank String name, @NotBlank String code,
-                                 @Min(1) int workloadHours, String syllabus) {}
+    public record SubjectRequest(@NotNull Long courseId, @NotBlank @Size(max = 180) String name,
+                                 @NotBlank @Size(max = 60) String code, @Min(1) int workloadHours,
+                                 @Size(max = 16383) String syllabus, @Min(0) Long version) {
+        public SubjectRequest {
+            name = name == null ? null : name.trim();
+            code = code == null ? null : code.trim().toUpperCase(Locale.ROOT);
+            syllabus = syllabus == null || syllabus.isBlank() ? null : syllabus;
+        }
+    }
+
+    public record AdminSubjectView(Long id, String name, String code, int workloadHours, Long courseId,
+                                   boolean active, String syllabus, long version) {
+        static AdminSubjectView of(Subject subject) {
+            return new AdminSubjectView(subject.getId(), subject.getName(), subject.getCode(),
+                    subject.getWorkloadHours(), subject.getCourse().getId(), subject.isActive(), subject.getSyllabus(), subject.getVersion());
+        }
+    }
     public record CourseView(Long id, String name, String code, Long campusId, String campus, boolean active) {
         static CourseView of(Course course) {
             return new CourseView(course.getId(), course.getName(), course.getCode(),

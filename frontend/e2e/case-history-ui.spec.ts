@@ -21,7 +21,7 @@ test('NAPNE abre o caso, mantém rascunhos no conflito e consulta as revisões p
   await expect(page.getByRole('heading', { name: student.socialName, exact: true })).toBeVisible();
   const casesTab = page.getByRole('button', { name: 'Casos', exact: true });
   await casesTab.click();
-  const sourceField = page.getByLabel('Origem do encaminhamento', { exact: true });
+  const sourceField = page.getByRole('textbox', { name: 'Origem do encaminhamento', exact: true });
   await sourceField.fill(source);
   await page.getByLabel('Resumo inicial', { exact: true }).fill(summary);
   const opening = responseFor('POST', path + '/cases');

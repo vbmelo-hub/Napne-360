@@ -229,7 +229,22 @@ export interface Attachment {
 export interface Course { id: number; name: string; code: string; campusId: number; campus: string; }
 export interface AdminCourse extends Course { active: boolean; }
 export interface Subject { id: number; name: string; code: string; workloadHours: number; courseId: number; }
-export interface AdminSubject extends Subject { active: boolean; }
+export interface AssignmentView {
+  id: number;
+  studentId: number;
+  userId: number;
+  subjectId: number | null;
+  studentName?: string;
+  registration?: string;
+  userName?: string;
+  subjectName?: string | null;
+  origin?: 'MANUAL' | 'AUTOMATIC';
+  periodCode?: string | null;
+  assignmentType: string;
+  active: boolean;
+}
+
+export interface AdminSubject extends Subject { active: boolean; syllabus?: string | null; version?: number; }
 export interface Campus { id: number; name: string; code: string; active: boolean; }
 export interface UserView {
   id: number;

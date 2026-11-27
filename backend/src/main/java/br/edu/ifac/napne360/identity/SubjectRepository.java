@@ -14,6 +14,9 @@ public interface SubjectRepository extends JpaRepository<Subject, Long> {
     Optional<Subject> findById(Long id);
     List<Subject> findByCourseIdAndActiveTrueOrderByName(Long courseId);
 
+    @Query("select s.course.id from Subject s where s.id = :id")
+    Optional<Long> courseIdOf(Long id);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Subject s where s.id = :id")
     Optional<Subject> findByIdForUpdate(Long id);

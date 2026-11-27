@@ -47,7 +47,8 @@ test('administra catálogos pela interface e preserva snapshots após renomear e
   await page.goto(`/estudantes/${f.student.id}`);
   await page.getByRole('button', { name: 'PEI', exact: true }).click();
   const peiForm = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Criar rascunho de PEI', exact: true }) });
-  await peiForm.getByRole('combobox', { name: /^Oferta curricular/ }).selectOption(String(offering.id));
+  await peiForm.getByRole('button', { name: /^Oferta curricular/ }).click();
+  await peiForm.getByRole('option').filter({ hasText: term.label }).click();
   const peiResponse = page.waitForResponse(r => r.url().endsWith(`${f.path}/peis`) && r.request().method() === 'POST');
   await peiForm.getByRole('button', { name: 'Criar rascunho', exact: true }).click();
   const created = await peiResponse;
@@ -107,7 +108,8 @@ test('administra catálogos pela interface e preserva snapshots após renomear e
   await loginUi(page, 'professor');
   await page.goto(`/estudantes/${f.student.id}`);
   await page.getByRole('button', { name: 'PEI', exact: true }).click();
-  await expect(peiForm.getByRole('combobox', { name: /^Oferta curricular/ }).locator(`option[value="${offering.id}"]`)).toHaveCount(1);
+  await peiForm.getByRole('button', { name: /^Oferta curricular/ }).click();
+  await expect(peiForm.getByRole('option').filter({ hasText: termLabel })).toHaveCount(1);
   const revision = await request.put(`${f.path}/peis/${pei.id}`, {
     headers: f.teacherHeaders, data: { version: pei.storageVersion, content: pei.content }
   });

@@ -43,19 +43,30 @@ public class StudentService {
     private final PeiSeriesStore peis;
 
     @Transactional(readOnly = true)
-    public Page<StudentSummary> list(String query, String academicQuery, boolean archived, Pageable pageable) {
+    public Page<StudentSummary> list(String query, String academicQuery, boolean archived, Long courseId, StudentStatus status, Pageable pageable) {
         UserAccount user = currentUser.require();
         if (user.getRoles().stream().anyMatch(CAMPUS_WIDE::contains)) {
             var campusId = user.getCampus().getId();
-            var rows = archived ? students.searchArchivedCampus(campusId, clean(query), pageable)
-                    : students.searchCampus(campusId, clean(query), pageable);
+            var rows = (archived || status == StudentStatus.ARCHIVED) ? students.searchArchivedCampus(campusId, clean(query), courseId, status, pageable)
+                    : students.searchCampus(campusId, clean(query), courseId, status, pageable);
             return rows.map(StudentService::summary);
         }
-        if (archived) return Page.empty(pageable);
+        if (archived || status == StudentStatus.ARCHIVED) return Page.empty(pageable);
         if (user.getRoles().contains(RoleName.TEACHER) && !clean(academicQuery).isEmpty())
-            return students.searchTeachingScope(user.getId(), clean(query), clean(academicQuery), pageable).map(StudentService::summary);
-        return students.searchAssigned(user.getId(), clean(query), pageable).map(StudentService::summary);
+            return students.searchTeachingScope(user.getId(), clean(query), clean(academicQuery), courseId, status, pageable).map(StudentService::summary);
+        return students.searchAssigned(user.getId(), clean(query), courseId, status, pageable).map(StudentService::summary);
     }
+
+    @Transactional(readOnly = true)
+    public List<FilterCourse> filterCourses() {
+        var user = currentUser.require();
+        var allowed = user.getRoles().stream().anyMatch(CAMPUS_WIDE::contains)
+                ? students.campusFilterCourses(user.getCampus().getId()) : students.assignedFilterCourses(user.getId());
+        return allowed.stream().map(course -> new FilterCourse(course.getId(), course.getName(), course.getCode()))
+                .sorted(java.util.Comparator.comparing(FilterCourse::name).thenComparing(FilterCourse::code)).toList();
+    }
+
+    public record FilterCourse(Long id, String name, String code) {}
 
     @Transactional(readOnly = true)
     public StudentDetails get(Student student) {

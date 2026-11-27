@@ -1,3 +1,4 @@
+import type { SearchableLookup } from '../shared/searchable-select.component';
 import { Signal, inject } from '@angular/core';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { catchError, distinctUntilChanged, map, of, switchMap } from 'rxjs';
@@ -20,13 +21,22 @@ export function createCpfLookup(query: Signal<string>) {
   };
 }
 
-export function createProfessionalSearch(query: Signal<string>) {
-  const cpfForUser = createCpfLookup(query);
-  const normalize = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('pt-BR');
-  return (user: UserView) => {
-    const searched = normalize(query()).trim().split(/\s+/).filter(Boolean);
-    const fields = [user.name, user.email, user.institutionalRegistration, cpfForUser(user)]
-      .filter((value): value is string => !!value).map(normalize);
-    return searched.every(term => fields.some(field => field.includes(term)));
+export function createProfessionalCandidates() {
+  const api = inject(ApiService);
+  return (criteria: { roles: readonly string[]; campusId?: number; excludedId?: number }): SearchableLookup =>
+    (query, selectedId) => api.userCandidates({ ...criteria, query, selectedId: selectedId ? Number(selectedId) : undefined }).pipe(
+      map(({ content, totalElements, selected }) => ({
+        content: content.map(professionalOption),
+        totalElements,
+        selected: selected ? professionalOption(selected) : null,
+      })),
+    );
+}
+
+function professionalOption(user: UserView) {
+  return {
+    id: String(user.id),
+    label: user.name,
+    detail: [user.institutionalRegistration, user.email].filter(Boolean).join(' · '),
   };
 }

@@ -4,12 +4,12 @@ for (const role of ['napne','professor','tutor','cotep','coordenacao','gestao'])
   test(`${role}: login, acompanhamento autorizado e logout`, async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel('E-mail institucional').fill(`${role}@napne.local`);
-    await page.getByLabel('Senha',{exact:true}).fill('Napne360!Demo');
+    await page.getByLabel(/^Senha/).fill('Napne360!Demo');
     await page.getByRole('button',{name:'Entrar',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Acompanhamento NAPNE',exact:true})).toBeVisible();
     await page.locator('a[href="/estudantes"]').filter({hasText:'Estudantes acompanhados'}).click();
     // Repeated fictional fixtures can move the seed student beyond the first page.
-    await page.getByRole('textbox',{name:'Buscar estudante',exact:true}).fill('Alex Exemplo');
+    await page.getByRole('searchbox',{name:'Buscar estudante',exact:true}).fill('Alex Exemplo');
     await page.getByRole('button',{name:'Buscar',exact:true}).click();
     const row=page.getByRole('row').filter({hasText:'Alex Exemplo'});
     await expect(row).toBeVisible();
@@ -30,7 +30,7 @@ for (const role of ['napne','professor','tutor','cotep','coordenacao','gestao'])
 test('administrador: configuração sem conteúdo clínico',async({page})=>{
   await page.goto('/login');
   await page.getByLabel('E-mail institucional').fill('admin@napne.local');
-  await page.getByLabel('Senha',{exact:true}).fill('Napne360!Demo');
+  await page.getByLabel(/^Senha/).fill('Napne360!Demo');
   await page.getByRole('button',{name:'Entrar',exact:true}).click();
   await page.locator('a[href="/administracao"]').filter({hasText:'Configuração institucional'}).click();
   await expect(page.getByRole('heading',{name:'Administração técnica'})).toBeVisible();

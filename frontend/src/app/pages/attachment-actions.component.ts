@@ -11,9 +11,11 @@ import { ToastService } from '../core/toast.service';
 
 const PREVIEW_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
 
+import { ListFiltersComponent } from '../shared/list-filters.component';
+
 @Component({
   selector: 'app-attachment-actions',
-  imports: [DatePipe, PaginationComponent],
+  imports: [DatePipe, PaginationComponent, ListFiltersComponent],
   template: `
     <div class="actions">
       @if (canPreview(attachment())) {
@@ -46,9 +48,7 @@ const PREVIEW_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
         @case ('versions') {
           @if (busy()) { <p role="status">Carregando versões…</p> }
           @if (versions().length > 0) {
-            <label>Buscar versões por arquivo, categoria ou autoria
-              <input type="search" [value]="versionList.query()" (input)="versionList.setQuery($any($event.target).value)">
-            </label>
+            <app-list-filters [list]="versionList" label="Buscar versões" placeholder="Nome do arquivo" />
           }
           <ul class="versions">
             @for (version of versionList.items(); track version.id) {
@@ -117,7 +117,13 @@ export class AttachmentActionsComponent {
   readonly versions = signal<Attachment[]>([]);
   readonly versionList = createListView(this.versions, item => [
     item.originalName, item.category, item.uploadedBy, item.revision,
-  ]);
+  ], {
+    author: { label: 'Autoria', value: item => item.uploadedBy },
+    version: { label: 'Versão', value: item => item.revision },
+    status: { label: 'Situação', value: item => item.archived ? 'Arquivado' : 'Disponível' },
+    from: { label: 'A partir de', value: item => item.uploadedAt, kind: 'from' },
+    to: { label: 'Até', value: item => item.uploadedAt, kind: 'to' },
+  });
   readonly fromVersions = signal(false);
   readonly imageUrl = signal('');
   readonly pdfUrl = signal<SafeResourceUrl | null>(null);

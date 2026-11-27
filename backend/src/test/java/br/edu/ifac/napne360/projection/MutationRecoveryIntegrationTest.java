@@ -19,6 +19,7 @@ import br.edu.ifac.napne360.student.StudentRepository;
 import br.edu.ifac.napne360.timeline.TimelineEventDocument;
 import br.edu.ifac.napne360.timeline.TimelineRepository;
 import br.edu.ifac.napne360.timeline.TimelineService;
+import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.h2.api.Trigger;
 import org.junit.jupiter.api.AfterAll;
@@ -51,6 +52,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -63,6 +65,7 @@ import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.doAnswer;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
@@ -143,6 +146,38 @@ class MutationRecoveryIntegrationTest {
 
     @AfterAll void dropFixtureDatabase() {
         if (DATABASE.equals(mongo.getDb().getName())) mongo.getDb().drop();
+    }
+
+    @Test void timelineFiltersApplyToStoredEventsBeforeCountingAndRejectAnotherCampus() throws Exception {
+        var start = Instant.parse("2026-11-01T00:00:00Z");
+        timeline.saveAll(List.of(
+                timelineFixture("CASE_CREATED", "Autora fictícia", start),
+                timelineFixture("CASE_UPDATED", "AUTORA FICTÍCIA", start.plusSeconds(1)),
+                timelineFixture("CASE_CREATED", "Outro autor", start),
+                timelineFixture("CASE_CREATED", "Autora fictícia", start.minusSeconds(1)),
+                timelineFixture("DOSSIER_UPDATED", "Autora fictícia", start)));
+
+        var request = get(studentPath() + "/timeline/page").param("actor", " autora fictícia ")
+                .param("type", "case").param("from", start.toString())
+                .param("to", start.plusSeconds(1).toString()).param("page", "1").param("size", "1");
+        var response = mvc.perform(request.with(user(actor.getEmail()).roles("NAPNE"))).andReturn().getResponse();
+        assertThat(response.getStatus()).isEqualTo(200);
+        var page = json.readTree(response.getContentAsByteArray());
+        assertThat(page.path("totalElements").asLong()).isEqualTo(2);
+        assertThat(page.path("content").get(0).path("eventType").asText()).isEqualTo("CASE_CREATED");
+
+        var outsideCampus = campuses.saveAndFlush(Campus.builder().name("Outro campus")
+                .code(UUID.randomUUID().toString()).build());
+        var outsideUser = users.saveAndFlush(UserAccount.builder().campus(outsideCampus).name("Outro usuário")
+                .email(UUID.randomUUID() + "@example.test").passwordHash("fictício").roles(Set.of(RoleName.NAPNE)).build());
+        var denied = mvc.perform(get(studentPath() + "/timeline/page").param("actor", actor.getName())
+                .with(user(outsideUser.getEmail()).roles("NAPNE"))).andReturn().getResponse();
+        assertThat(denied.getStatus()).isEqualTo(403);
+    }
+
+    private TimelineEventDocument timelineFixture(String type, String author, Instant date) {
+        return TimelineEventDocument.builder().studentId(student.getId()).eventType(type).actor(author)
+                .visibility(TimelineVisibility.RESTRICTED).createdAt(date).build();
     }
 
     @Test void dossierIsSavedDuringTimelineOutageAndItsEventIsRecoveredOnce() throws Exception {

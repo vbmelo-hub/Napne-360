@@ -6,17 +6,16 @@ import { CareRecord } from '../core/models';
 import { labelFor, toneFor } from '../core/presentation';
 import { PaginationComponent } from '../shared/pagination.component';
 
+import { ListFiltersComponent } from '../shared/list-filters.component';
+
 @Component({
   selector: 'app-care-record-history',
-  imports: [DatePipe, PaginationComponent],
+  imports: [DatePipe, PaginationComponent, ListFiltersComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <details class="record-history">
       <summary>Histórico de versões ({{record().history?.length}})</summary>
-      <label class="list-filter">
-        Buscar versões por título, autoria ou situação
-        <input type="search" [value]="revisions.query()" (input)="revisions.setQuery($any($event.target).value)">
-      </label>
+      <app-list-filters [list]="revisions" label="Buscar versões" placeholder="Título ou versão" />
       <div class="history-revisions">
         @for (revision of revisions.items(); track revision.version ?? revision) {
           <article class="revision-card">
@@ -60,5 +59,11 @@ export class CareRecordHistoryComponent {
   protected readonly tone = toneFor;
   protected readonly revisions = createListView(() => this.record().history ?? [], revision => [
     revision.title, revision.author, labelFor(revision.status), `Versão ${revision.version ?? 'anterior'}`,
-  ]);
+  ], {
+    author: { label: 'Autoria', value: revision => revision.author },
+    version: { label: 'Versão', value: revision => revision.version },
+    status: { label: 'Situação', value: revision => revision.status, display: labelFor },
+    from: { label: 'A partir de', value: revision => revision.occurredAt, kind: 'from' },
+    to: { label: 'Até', value: revision => revision.occurredAt, kind: 'to' },
+  });
 }

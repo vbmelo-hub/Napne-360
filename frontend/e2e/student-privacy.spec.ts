@@ -56,7 +56,8 @@ test('CA05 protege os dados cadastrais e usa o nome de exibição no novo PEI', 
     const dialog = page.getByRole('dialog', { name: 'Cadastrar estudante', exact: true });
     await fillRegistration(dialog, initial);
     await dialog.getByLabel('Matrícula', { exact: true }).fill(registration);
-    await dialog.getByRole('combobox', { name: /^Curso/ }).selectOption(String(course.id));
+    await dialog.getByRole('button', { name: /^Curso/ }).click();
+    await dialog.getByRole('option').filter({ hasText: course.name }).filter({ hasText: course.code }).click();
     const creation = waitForWrite('POST', studentList);
     await dialog.getByRole('button', { name: 'Salvar estudante', exact: true }).click();
     const response = await creation;

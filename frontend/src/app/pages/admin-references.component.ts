@@ -11,7 +11,9 @@ import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 import { PaginationComponent } from '../shared/pagination.component';
 
-@Component({selector:'app-admin-references',standalone:true,imports:[ReactiveFormsModule,ConfirmDialogComponent,PaginationComponent],template:`
+import { ListFiltersComponent } from '../shared/list-filters.component';
+
+@Component({selector:'app-admin-references',standalone:true,imports:[ReactiveFormsModule,ConfirmDialogComponent,PaginationComponent,ListFiltersComponent],template:`
   <header class="module-head"><span class="eyebrow">Cadastros de referência</span><h2>Categorias e modelos</h2><p>Padronize opções usadas nos registros e nos novos rascunhos sem expor códigos técnicos aos usuários finais.</p></header>
 
   @if(loading()){
@@ -29,11 +31,7 @@ import { PaginationComponent } from '../shared/pagination.component';
       <section class="card catalog-card">
         <div class="section-header"><div><h3>Itens cadastrados</h3><p>Ative, inative ou revise os itens utilizados pela plataforma.</p></div><span class="badge">{{entries().length}} item(ns)</span></div>
         @if (entries().length) {
-          <div class="list-filter-toolbar">
-            <label class="list-filter">Filtrar itens de catálogo
-              <input type="search" [value]="entryList.query()" (input)="entryList.setQuery($any($event.target).value)">
-            </label>
-          </div>
+          <app-list-filters [list]="entryList" label="Buscar itens de catálogo" placeholder="Nome ou código" />
         }
         @if(entries().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum item cadastrado</h3><p>As categorias cadastradas aparecerão aqui.</p></div>}
         @else if (!entryList.totalElements()) {
@@ -61,11 +59,7 @@ import { PaginationComponent } from '../shared/pagination.component';
     <section class="card templates-card">
       <div class="section-header"><div><h3>Modelos cadastrados</h3><p>Versões disponíveis para criação de novos rascunhos.</p></div><span class="badge badge--info">{{templates().length}} modelo(s)</span></div>
       @if (templates().length) {
-          <div class="list-filter-toolbar">
-            <label class="list-filter">Filtrar modelos
-              <input type="search" [value]="templateList.query()" (input)="templateList.setQuery($any($event.target).value)">
-            </label>
-          </div>
+          <app-list-filters [list]="templateList" label="Buscar modelos" placeholder="Nome ou código" />
         }
         @if(templates().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum modelo cadastrado</h3><p>Crie um modelo quando houver valores iniciais institucionais a reutilizar.</p></div>}
         @else if (!templateList.totalElements()) {
@@ -92,10 +86,16 @@ export class AdminReferencesComponent implements OnInit {
   readonly templates=signal<DocumentTemplateView[]>([]);
   readonly entryList = createListView(this.entries, entry => [
     entry.label, this.kindLabel(entry.kind), entry.code, entry.description, entry.active ? 'Ativo' : 'Inativo',
-  ]);
+  ], {
+    kind: { label: 'Catálogo', value: entry => entry.kind, display: kind => this.kindLabel(kind) },
+    status: { label: 'Situação', value: entry => entry.active ? 'Ativo' : 'Inativo' },
+  });
   readonly templateList = createListView(this.templates, template => [
     template.name, labelFor(template.documentType), template.version, template.active ? 'Ativo' : 'Inativo',
-  ]);
+  ], {
+    type: { label: 'Documento', value: item => item.documentType, display: labelFor },
+    status: { label: 'Situação', value: item => item.active ? 'Ativo' : 'Inativo' },
+  });
   readonly loading=signal(true);
   readonly busy=signal(false);
   readonly jsonError=signal('');

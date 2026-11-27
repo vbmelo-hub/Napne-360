@@ -3,6 +3,8 @@ package br.edu.ifac.napne360.pei;
 import br.edu.ifac.napne360.academic.AcademicService;
 
 import br.edu.ifac.napne360.common.ConflictException;
+import br.edu.ifac.napne360.common.ApiOperationException;
+import org.springframework.http.HttpStatus;
 import br.edu.ifac.napne360.common.NotFoundException;
 import br.edu.ifac.napne360.document.CareRecordDocument;
 import br.edu.ifac.napne360.document.CareRecordService;
@@ -98,14 +100,14 @@ public class PeiService {
                 term == null ? null : term.getId(), term == null ? null : term.getCode());
         Subject subject = subjects.findByIdForUpdate(offering.subjectId()).orElseThrow(() -> new NotFoundException("Componente não encontrado."));
         if (!subject.isActive() || !subject.getCourse().isActive()) {
-            throw new ConflictException("O componente está arquivado.");
+            throw new ApiOperationException(HttpStatus.CONFLICT, "PEI_SUBJECT_ARCHIVED", "O componente está arquivado.");
         }
         if (!subject.getCourse().getId().equals(student.getCourse().getId())) {
             throw new IllegalArgumentException("O componente deve pertencer ao curso do estudante.");
         }
         var series = store.load(student.getId(), subject.getId(), offering.periodCode());
         if (series.hasOpenWork() || series.current().isPresent()) {
-            throw new ConflictException("Já existe trabalho em andamento ou PEI vigente neste período.");
+            throw new ApiOperationException(HttpStatus.CONFLICT, "PEI_DRAFT_EXISTS", "Já existe um PEI em andamento ou vigente para este componente e período.");
         }
         var now = recordedAt();
         var plan = PeiDocument.builder().id(newId()).studentId(student.getId()).subjectId(subject.getId())

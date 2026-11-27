@@ -52,7 +52,7 @@ export class AppComponent {
     const value = this.path();
     if (value.startsWith('/administracao')) return 'Configuração institucional';
     if (value.startsWith('/conta')) return 'Minha conta';
-    if (value.includes('/pei/')) return 'Editor do PEI';
+    if (value.includes('/pei/')) return 'Plano de Ensino Individualizado';
     if (value.startsWith('/estudantes/')) return 'Central do estudante';
     if (value.startsWith('/estudantes')) return 'Estudantes';
     return 'Início';

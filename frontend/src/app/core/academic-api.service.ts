@@ -39,6 +39,16 @@ export interface AcademicEnrollment {
   active: boolean;
 }
 
+export interface AcademicListFilters {
+  courseId?: string;
+  subjectId?: string;
+  subject?: string;
+  groupCode?: string;
+  periodCode?: string;
+  teacherId?: string;
+  active?: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AcademicApi {
   private readonly http = inject(HttpClient);
@@ -57,9 +67,9 @@ export class AcademicApi {
     return this.http.patch<AcademicPeriod>(`${this.admin}/periods/${id}/active`, { active });
   }
 
-  offerings(page: number, query: string, onlyActive = false) {
+  offerings(page: number, query: string, onlyActive = false, filters: AcademicListFilters = {}) {
     return this.http.get<Page<AcademicOffering>>(`${this.admin}/offerings`, {
-      params: this.listParams(page, query).set('onlyActive', onlyActive),
+      params: this.listParams(page, query, filters).set('onlyActive', onlyActive),
     });
   }
 
@@ -71,8 +81,8 @@ export class AcademicApi {
     return this.http.patch<AcademicOffering>(`${this.admin}/offerings/${id}/active`, { active });
   }
 
-  teaching(page: number, query: string) {
-    return this.http.get<Page<TeachingAssignment>>(`${this.admin}/teaching`, { params: this.listParams(page, query) });
+  teaching(page: number, query: string, filters: AcademicListFilters = {}) {
+    return this.http.get<Page<TeachingAssignment>>(`${this.admin}/teaching`, { params: this.listParams(page, query, filters) });
   }
 
   createTeaching(offeringId: number, teacherId: number) {
@@ -93,9 +103,9 @@ export class AcademicApi {
     });
   }
 
-  enrollments(studentId: number, page: number, query: string) {
+  enrollments(studentId: number, page: number, query: string, filters: AcademicListFilters = {}) {
     return this.http.get<Page<AcademicEnrollment>>(`${this.student(studentId)}/enrollments`, {
-      params: this.listParams(page, query),
+      params: this.listParams(page, query, filters),
     });
   }
 
@@ -111,7 +121,11 @@ export class AcademicApi {
     return this.http.get<AcademicOffering[]>(`${this.student(studentId)}/pei-offers`);
   }
 
-  private listParams(page: number, query: string) {
-    return new HttpParams().set('page', page).set('size', 10).set('query', query.trim());
+  private listParams(page: number, query: string, filters: AcademicListFilters = {}) {
+    let params = new HttpParams().set('page', page).set('size', 10).set('query', query.trim());
+    for (const [key, value] of Object.entries(filters)) {
+      if (value.trim()) params = params.set(key, value.trim());
+    }
+    return params;
   }
 }

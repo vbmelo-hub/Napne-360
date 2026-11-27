@@ -29,7 +29,8 @@ public class AdminAuditConfiguration implements WebMvcConfigurer {
                 Object variables=request.getAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE);
                 Object id=variables instanceof Map<?,?> map?map.get("id"):null;
                 Object path = request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
-                boolean read = request.getMethod().equals("GET") || "/api/v1/admin/users/cpf-search".equals(path);
+                boolean read = request.getMethod().equals("GET") || "/api/v1/admin/users/cpf-search".equals(path)
+                        || "/api/v1/admin/users/page".equals(path);
                 audit.record(auth,request,read ? "ADMIN_VIEW" : "ADMIN_CHANGE","CONFIGURATION",id,
                         response.getStatus()<400?"SUCCESS":"DENIED", request.getMethod()+" "+path);
             }

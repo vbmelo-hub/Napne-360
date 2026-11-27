@@ -6,10 +6,15 @@ import { AdminComponent } from './admin.component';
 
 describe('AdminComponent', () => {
   const users = '/api/v1/admin/users';
+  const pageUrl = users + '/page';
   const campuses = '/api/v1/admin/campuses';
   const account: UserView = {
     id: 1, name: 'Conta técnica', email: 'conta@example.test', cpfMasked: '***.***.***-25',
     institutionalRegistration: '00081', active: true, campusId: null, roles: ['ADMIN'],
+  };
+  const professional: UserView = {
+    id: 2, name: 'Profissional de apoio', email: 'apoio@example.test', institutionalRegistration: 'M-02',
+    active: true, campusId: 7, roles: ['NAPNE', 'TUTOR'],
   };
   let fixture: ComponentFixture<AdminComponent>;
   let http: HttpTestingController;
@@ -23,15 +28,31 @@ describe('AdminComponent', () => {
     http = TestBed.inject(HttpTestingController);
     root = fixture.nativeElement;
     fixture.detectChanges();
-    http.expectOne(users).flush([account, {
-      id: 2, name: 'Profissional de apoio', email: 'apoio@example.test', institutionalRegistration: 'M-02',
-      active: true, campusId: 7, roles: ['NAPNE', 'TUTOR'],
-    }]);
-    http.expectOne(campuses).flush([]);
+    page(0, [account, professional], 12);
+    http.expectOne(campuses).flush([{ id: 7, name: 'Campus de apoio', code: 'APOIO', active: true }]);
     fixture.detectChanges();
   });
 
   afterEach(() => http.verify());
+
+  function page(number: number, content: UserView[], totalElements = content.length,
+                filters: Record<string, string> = {}) {
+    const request = http.expectOne(req => req.url === pageUrl && req.body.page === number);
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body.size).toBe(10);
+    for (const [key, value] of Object.entries(filters)) expect(request.request.body[key]).toBe(value);
+    request.flush({ content, totalElements, totalPages: Math.ceil(totalElements / 10), number, size: 10 });
+    return request;
+  }
+
+  function selectUserFilter(label: string, value: string) {
+    const field = Array.from(root.querySelectorAll('.users-card app-list-filters label'))
+      .find(element => element.textContent?.trim().startsWith(label))!;
+    const select = field.querySelector('select')!;
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    fixture.detectChanges();
+  }
 
   function button(label: string) {
     return Array.from(root.querySelectorAll('button')).find(element => element.textContent?.trim() === label)!;
@@ -82,21 +103,70 @@ describe('AdminComponent', () => {
   });
 
   it('finds a masked account with an exact CPF search before rendering matches', async () => {
-    input('input[type="search"]', '529.982.247-25');
+    input('input[type="search"]', '529.982.247-25 técnica');
     await fixture.whenStable();
-    const request = http.expectOne(users + '/cpf-search');
-    expect(request.request.method).toBe('POST');
-    expect(request.request.body).toEqual({ cpf: '529.982.247-25' });
-    request.flush({ id: 1 });
+    const result = page(0, [account], 1, { query: '529.982.247-25 técnica' });
+    expect(result.request.urlWithParams).not.toContain('529');
     fixture.detectChanges();
     expect(root.querySelector('tbody')?.textContent).toContain('Conta técnica');
     expect(root.querySelector('tbody')?.textContent).not.toContain('529.982.247-25');
   });
 
-  it('keeps matches for each role when an account has multiple roles', () => {
-    input('input[type="search"]', 'napne tutor/monitor M-02');
+  it('requests server pages and combines filters from the first page', async () => {
+    button('Próxima').click();
+    page(1, [professional], 12);
+    fixture.detectChanges();
+    selectUserFilter('Perfil', 'TUTOR');
+    page(0, [professional], 1, { role: 'TUTOR' });
+    selectUserFilter('Campus', '7');
+    page(0, [], 0, { role: 'TUTOR', campus: '7' });
+    fixture.detectChanges();
+    expect(root.textContent).toContain('Nenhuma conta corresponde aos filtros.');
+    selectUserFilter('Situação', 'ACTIVE');
+    page(0, [professional], 1, { role: 'TUTOR', campus: '7', status: 'ACTIVE' });
+    fixture.detectChanges();
+
+    input('input[type="search"]', 'M-02');
+    await fixture.whenStable();
+    page(0, [professional], 1, { role: 'TUTOR', campus: '7', status: 'ACTIVE', query: 'M-02' });
+    fixture.detectChanges();
     expect(root.querySelector('tbody')?.textContent).toContain('Profissional de apoio');
     expect(root.querySelector('tbody')?.textContent).not.toContain('Conta técnica');
+    expect(root.textContent).toContain('1 resultado');
+
+    button('Limpar filtros').click();
+    const cleared = page(0, [account, professional], 12);
+    expect(JSON.parse(cleared.request.serializeBody() as string)).toEqual({ page: 0, size: 10 });
+    http.expectNone(users);
+  });
+
+  it('cancels a stale page request when the search changes', async () => {
+    button('Próxima').click();
+    const pending = http.expectOne(req => req.url === pageUrl && req.body.page === 1);
+    input('input[type="search"]', 'apoio');
+    expect(pending.cancelled).toBeTrue();
+    await fixture.whenStable();
+    page(0, [professional], 1, { query: 'apoio' });
+  });
+
+  it('refreshes the selected page after a mutation and falls back when it becomes empty', () => {
+    selectUserFilter('Situação', 'ACTIVE');
+    page(0, [account], 11, { status: 'ACTIVE' });
+    fixture.detectChanges();
+    button('Próxima').click();
+    page(1, [professional], 11, { status: 'ACTIVE' });
+    fixture.detectChanges();
+    button('Inativar').click();
+    fixture.detectChanges();
+    button('Inativar conta').click();
+    const mutation = http.expectOne(users + '/2/active');
+    expect(mutation.request.body).toEqual({ active: false });
+    mutation.flush({ ...professional, active: false });
+    page(1, [], 10, { status: 'ACTIVE' });
+    page(0, [account], 10, { status: 'ACTIVE' });
+    fixture.detectChanges();
+    expect(root.querySelector('tbody')?.textContent).toContain('Conta técnica');
+    http.expectNone(campuses);
   });
 
   it('prevents assigning COTEP to a technical administrator without a campus', () => {

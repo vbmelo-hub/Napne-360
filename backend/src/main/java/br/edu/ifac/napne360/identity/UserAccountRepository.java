@@ -2,13 +2,14 @@ package br.edu.ifac.napne360.identity;
 
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
 import java.util.Optional;
 
-public interface UserAccountRepository extends JpaRepository<UserAccount, Long> {
+public interface UserAccountRepository extends JpaRepository<UserAccount, Long>, JpaSpecificationExecutor<UserAccount> {
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"campus", "roles"})
     Optional<UserAccount> findByEmailIgnoreCase(String email);
     boolean existsByEmailIgnoreCase(String email);

@@ -9,6 +9,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.time.Instant;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -19,6 +20,13 @@ public class CaseController {
 
     @GetMapping("/students/{studentId}/cases")
     public List<CaseService.CaseView> list(@PathVariable Long studentId) { return service.list(access.requireView(studentId)); }
+
+    @GetMapping("/students/{studentId}/cases/stages")
+    @PreAuthorize("hasRole('NAPNE')")
+    public List<CaseStageCatalogue.Option> stages(@PathVariable Long studentId) {
+        access.requireView(studentId);
+        return service.stages();
+    }
 
     @PostMapping("/students/{studentId}/cases")
     @PreAuthorize("@accessGuard.canEditDossier(#studentId)")
@@ -60,8 +68,12 @@ public class CaseController {
     @PreAuthorize("hasRole('NAPNE')")
     public CaseService.HistoryPage history(@PathVariable String caseId, @RequestParam(required = false) String page,
                                            @RequestParam(required = false) String size,
-                                           @RequestParam(required = false) CaseHistory.Type type) {
-        return service.history(caseId(caseId), page == null ? 0 : pageNumber(page), size == null ? 20 : pageNumber(size), type);
+                                           @RequestParam(required = false) CaseHistory.Type type,
+                                           @RequestParam(required = false) String actor,
+                                           @RequestParam(required = false) Long version,
+                                           @RequestParam(required = false) Instant from,
+                                           @RequestParam(required = false) Instant to) {
+        return service.history(caseId(caseId), page == null ? 0 : pageNumber(page), size == null ? 20 : pageNumber(size), type, actor, version, from, to);
     }
 
     private long caseId(String value) {

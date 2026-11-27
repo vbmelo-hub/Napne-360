@@ -52,7 +52,7 @@ export async function academicFixture(request: APIRequestContext, input: Academi
   const offering = await create('/admin/academic/offerings', {
     subjectId: input.subjectId, periodId: term!.id,
     groupCode: `TEST-${input.studentId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-  }, input.adminHeaders) as { id: number };
+  }, input.adminHeaders) as { id: number; groupCode: string };
   const teaching = [];
   for (const teacherId of input.teacherIds) {
     teaching.push(await create('/admin/academic/teaching', { teacherId, offeringId: offering.id }, input.adminHeaders) as { id: number });

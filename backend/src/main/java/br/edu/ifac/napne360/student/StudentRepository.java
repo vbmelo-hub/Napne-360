@@ -10,6 +10,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.List;
+import br.edu.ifac.napne360.identity.Course;
 
 public interface StudentRepository extends JpaRepository<Student, Long> {
     @Override
@@ -23,21 +25,25 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
     @Query("""
             select s from Student s
             where s.campus.id = :campusId and s.status <> br.edu.ifac.napne360.student.StudentStatus.ARCHIVED
+            and (:courseId is null or s.course.id = :courseId)
+            and (:status is null or s.status = :status)
             and (:query = '' or lower(s.civilName) like lower(concat('%', :query, '%'))
                  or lower(coalesce(s.socialName, '')) like lower(concat('%', :query, '%'))
                  or lower(s.registration) like lower(concat('%', :query, '%')))
             """)
-    Page<Student> searchCampus(@Param("campusId") Long campusId, @Param("query") String query, Pageable pageable);
+    Page<Student> searchCampus(@Param("campusId") Long campusId, @Param("query") String query, Long courseId, StudentStatus status, Pageable pageable);
 
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"campus", "course"})
     @Query("""
             select s from Student s
             where s.campus.id = :campusId and s.status = br.edu.ifac.napne360.student.StudentStatus.ARCHIVED
+            and (:courseId is null or s.course.id = :courseId)
+            and (:status is null or s.status = :status)
             and (:query = '' or lower(s.civilName) like lower(concat('%', :query, '%'))
                  or lower(coalesce(s.socialName, '')) like lower(concat('%', :query, '%'))
                  or lower(s.registration) like lower(concat('%', :query, '%')))
             """)
-    Page<Student> searchArchivedCampus(Long campusId, String query, Pageable pageable);
+    Page<Student> searchArchivedCampus(Long campusId, String query, Long courseId, StudentStatus status, Pageable pageable);
 
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"campus", "course"})
     @Query("""
@@ -46,11 +52,13 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
             """ + AcademicRepository.EFFECTIVE + """
               and a.user.campus.id = s.campus.id
               and s.status <> br.edu.ifac.napne360.student.StudentStatus.ARCHIVED
-              and (:query = '' or lower(s.civilName) like lower(concat('%', :query, '%'))
+              and (:courseId is null or s.course.id = :courseId)
+            and (:status is null or s.status = :status)
+            and (:query = '' or lower(s.civilName) like lower(concat('%', :query, '%'))
                    or lower(coalesce(s.socialName, '')) like lower(concat('%', :query, '%'))
                    or lower(s.registration) like lower(concat('%', :query, '%')))
             """)
-    Page<Student> searchAssigned(@Param("userId") Long userId, @Param("query") String query, Pageable pageable);
+    Page<Student> searchAssigned(@Param("userId") Long userId, @Param("query") String query, Long courseId, StudentStatus status, Pageable pageable);
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"campus", "course"})
     @Query("""
             select s from Student s where exists (select 1
@@ -58,11 +66,25 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
                 and e.student.id = s.id and t.teacher.id = :userId
                 and lower(concat(o.subject.name, ' ', o.subject.code, ' ', o.groupCode, ' ', o.period.code))
                     like lower(concat('%', :academicQuery, '%')))
+            and (:courseId is null or s.course.id = :courseId)
+            and (:status is null or s.status = :status)
             and (:query = '' or lower(s.civilName) like lower(concat('%', :query, '%'))
                  or lower(coalesce(s.socialName, '')) like lower(concat('%', :query, '%'))
                  or lower(s.registration) like lower(concat('%', :query, '%')))
             """)
-    Page<Student> searchTeachingScope(Long userId, String query, String academicQuery, Pageable pageable);
+    Page<Student> searchTeachingScope(Long userId, String query, String academicQuery, Long courseId, StudentStatus status, Pageable pageable);
+
+    @Query("select distinct s.course from Student s where s.campus.id = :campusId")
+    List<Course> campusFilterCourses(Long campusId);
+
+    @Query("""
+            select distinct s.course from Student s join StudentAssignment a on a.student.id = s.id
+            where a.user.id = :userId and
+            """ + AcademicRepository.EFFECTIVE + """
+              and a.user.campus.id = s.campus.id
+              and s.status <> br.edu.ifac.napne360.student.StudentStatus.ARCHIVED
+            """)
+    List<Course> assignedFilterCourses(Long userId);
 
     boolean existsByRegistration(String registration);
     boolean existsByCourseId(Long courseId);

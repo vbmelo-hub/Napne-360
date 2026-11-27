@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { ActivatedRoute, provideRouter } from '@angular/router';
+import { ActivatedRoute, Router, provideRouter } from '@angular/router';
 import { of, Subject, throwError } from 'rxjs';
 import { StudentDetailComponent } from './student-detail.component';
 import { AcademicApi, AcademicOffering } from '../core/academic-api.service';
@@ -105,9 +105,10 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     fixture.componentInstance.openStudentEdit();
     fixture.detectChanges();
     const dom: HTMLElement = fixture.nativeElement;
-    const course = dom.querySelector<HTMLSelectElement>('select[formControlName="courseId"]');
-    expect(course?.value).toBe('10');
-    expect(course?.selectedOptions[0].textContent).toContain('Curso');
+    const course = dom.querySelector('app-searchable-select[formControlName="courseId"] button');
+    expect(fixture.componentInstance.studentEditForm.controls.courseId.value).toBe('10');
+    expect(course?.textContent).toContain('Curso');
+    expect(course?.textContent).toContain('vínculo atual');
   });
 
   it('mostra rótulos ativos e envia categoria numérica sem perder notas, extras e versão', () => {
@@ -139,9 +140,9 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     saveDossier();
     expect(api.saveDossier).toHaveBeenCalledWith(1, jasmine.objectContaining({ educationalNeeds:
       jasmine.objectContaining({ categoryId: 91, category: 'Categoria histórica', notes: 'Conservar' }) }));
-    const periods = view('pei').querySelector<HTMLSelectElement>('select[formControlName="offeringId"]');
+    const periods = view('pei').querySelector('app-searchable-select[formControlName="offeringId"]');
     expect(periods).not.toBeNull(); expect(periods?.textContent).not.toContain('Categoria histórica');
-    expect(periods?.querySelector('option[value="91"]')).toBeNull();
+    expect(fixture.componentInstance.peiForm.controls.offeringId.value).toBe('22');
   });
 
   it('mostra o snapshot anterior mesmo se o mesmo ID ativo foi renomeado', () => {
@@ -203,7 +204,7 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     expect(dossier.textContent).toContain('Legado legível');
     expect(dossier.querySelector('[data-testid="category-catalog-error"]')).toBeNull();
     const dom = view('pei');
-    expect(dom.querySelector('select[formControlName="offeringId"]')).toBeNull();
+    expect(dom.querySelector('app-searchable-select[formControlName="offeringId"]')).toBeNull();
     expect(dom.querySelector('.pei-row')?.textContent).toContain('2026.1');
     expect(fixture.componentInstance.loadError()).toBe('');
   });
@@ -239,11 +240,19 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
 
   it('cria PEI pela oferta selecionada e mostra o período registrado dos planos antigos', () => {
     setSession(['TEACHER']);
-    academic.peiOffers.and.returnValue(of([offer, { ...offer, id: 23, groupCode: 'Turma B' }]));
+    academic.peiOffers.and.returnValue(of([{ ...offer, groupCode: 'A-01' }, { ...offer, id: 23, groupCode: 'Turma B' }]));
     api.createPei.and.returnValue(of({ ...pei, id: 'novo-pei' }));
     api.peis.and.returnValue(of([{ ...pei, academicTermLabel: 'Período registrado' }, { ...pei, id: 'legado', academicTerm: '2025.2' }]));
     start(); const dom = view('pei');
-    const term = changeSelect('select[formControlName="offeringId"]', '22');
+    const term = dom.querySelector<HTMLElement>('app-searchable-select[formControlName="offeringId"]')!;
+    term.querySelector('button')!.click(); fixture.detectChanges();
+    const search = term.querySelector<HTMLInputElement>('input[type="search"]')!;
+    search.value = '2026.1 a-01';
+    search.dispatchEvent(new Event('input')); fixture.detectChanges();
+    const options = term.querySelectorAll<HTMLElement>('[role="option"]');
+    expect(options).toHaveSize(1);
+    expect(fixture.componentInstance.peiForm.controls.offeringId.value).toBe('');
+    options[0].click(); fixture.detectChanges();
     expect(dom.querySelector<HTMLInputElement>('.create-panel input[readonly]')?.value).toBe('Docente fictício');
     expect(dom.querySelector('select[formControlName="teacherId"]')).toBeNull();
     expect(term?.textContent).toContain('Primeiro semestre de 2026');
@@ -253,16 +262,69 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     expect(dom.textContent).toContain('Período registrado'); expect(dom.textContent).toContain('2025.2');
   });
 
+  it('abre o editor do rascunho criado com o ID da resposta e impede criação concorrente', async () => {
+    setSession(['TEACHER']);
+    const pending = new Subject<Pei>();
+    api.createPei.and.returnValue(pending);
+    const navigate = spyOn(TestBed.inject(Router), 'navigate').and.resolveTo(true);
+    start();
+    const page = fixture.componentInstance;
+    page.createPei();
+    page.createPei();
+    expect(api.createPei).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
+    pending.next({ ...pei, id: 'rascunho-novo' });
+    await fixture.whenStable();
+    expect(navigate).toHaveBeenCalledOnceWith(['/estudantes', 1, 'pei', 'rascunho-novo']);
+    expect(page.peis().some(item => item.id === 'rascunho-novo')).toBeTrue();
+  });
+
+  it('mantém o rascunho acessível se a navegação for recusada', async () => {
+    setSession(['TEACHER']);
+    const navigate = spyOn(TestBed.inject(Router), 'navigate').and.resolveTo(false);
+    api.createPei.and.returnValue(of({ ...pei, id: 'rascunho-recuperavel' }));
+    start();
+    fixture.componentInstance.createPei();
+    await fixture.whenStable();
+    expect(navigate).toHaveBeenCalledOnceWith(['/estudantes', 1, 'pei', 'rascunho-recuperavel']);
+    expect(fixture.componentInstance.actionBusy()).toBeFalse();
+    expect(fixture.componentInstance.peis()[0].id).toBe('rascunho-recuperavel');
+  });
+
+  it('preserva o acompanhamento em elaboração quando cria o rascunho do PEI', () => {
+    setSession(['TEACHER']);
+    const navigate = spyOn(TestBed.inject(Router), 'navigate');
+    api.createPei.and.returnValue(of({ ...pei, id: 'rascunho-sem-redirecionamento' }));
+    start();
+    const component = fixture.componentInstance;
+    component.recordForm.controls.title.setValue('Texto não salvo');
+    component.recordForm.controls.title.markAsDirty();
+    component.createPei();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(component.recordForm.controls.title.value).toBe('Texto não salvo');
+    expect(component.peis()[0].id).toBe('rascunho-sem-redirecionamento');
+  });
+
+  it('seleciona o tipo único de acompanhamento e apresenta PEIs como consulta para tutoria', () => {
+    setSession(['TUTOR']);
+    start();
+    expect(fixture.componentInstance.recordForm.controls.type.value).toBe('TUTOR_OBSERVATION');
+    expect(view('records').querySelector('select[formControlName="type"] option[value=""]')).toBeNull();
+    expect(view('pei').textContent).toContain('A disponibilidade de PEIs segue as permissões');
+    expect(view('pei').textContent).not.toContain('Crie um rascunho');
+  });
+
   it('bloqueia campos do novo PEI durante envio e conserva seleção após erro', () => {
     setSession(['TEACHER']);
     const pending = new Subject<Pei>(); api.createPei.and.returnValue(pending);
     start(); const dom = view('pei');
-    changeSelect('select[formControlName="offeringId"]', '22');
+    expect(fixture.componentInstance.peiForm.controls.offeringId.value).toBe('22');
     dom.querySelector<HTMLButtonElement>('.create-panel button[type="submit"]')?.click(); fixture.detectChanges();
-    const term = dom.querySelector<HTMLSelectElement>('select[formControlName="offeringId"]');
+    const term = dom.querySelector<HTMLButtonElement>('app-searchable-select[formControlName="offeringId"] button');
     expect(term?.matches(':disabled')).toBeTrue();
     pending.error({ status: 400 }); fixture.detectChanges();
-    expect(term?.matches(':disabled')).toBeFalse(); expect(term?.value).toBe('22');
+    expect(term?.matches(':disabled')).toBeFalse();
+    expect(fixture.componentInstance.peiForm.controls.offeringId.value).toBe('22');
   });
 
   it('falha das ofertas bloqueia criação e mantém planos históricos acessíveis', () => {
@@ -278,7 +340,7 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
 
   it('não oferece criação de PEI ao NAPNE, mas mantém a consulta aos existentes', () => {
     api.peis.and.returnValue(of([pei])); start(); const dom = view('pei');
-    expect(dom.querySelector('select[formControlName="offeringId"]')).toBeNull();
+    expect(dom.querySelector('app-searchable-select[formControlName="offeringId"]')).toBeNull();
     expect(dom.querySelector('.pei-row a')).not.toBeNull();
   });
 
@@ -286,7 +348,7 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     setSession(['TEACHER']);
     academic.peiOffers.and.returnValue(of([]));
     start(); const dom = view('pei');
-    expect(dom.querySelector('select[formControlName="offeringId"]')).toBeNull();
+    expect(dom.querySelector('app-searchable-select[formControlName="offeringId"]')).toBeNull();
     expect(dom.textContent).toContain('Nenhuma oferta com matrícula e atribuição docente válidas');
   });
 

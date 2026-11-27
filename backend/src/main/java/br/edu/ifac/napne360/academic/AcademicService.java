@@ -49,8 +49,8 @@ public class AcademicService {
         return PeriodView.of(period);
     }
 
-    Page<OfferingView> offerings(String query, boolean onlyActive, Pageable page) {
-        return academic.offerings(query, onlyActive, null, page).map(OfferingView::of);
+    Page<OfferingView> offerings(String query, boolean onlyActive, AcademicListFilters filters, Pageable page) {
+        return academic.offerings(query, onlyActive, null, filters, page).map(OfferingView::of);
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -86,8 +86,8 @@ public class AcademicService {
         return OfferingView.of(offering);
     }
 
-    Page<TeachingView> teaching(String query, Pageable page) {
-        return academic.teaching(query, page).map(TeachingView::of);
+    Page<TeachingView> teaching(String query, AcademicListFilters filters, Pageable page) {
+        return academic.teaching(query, filters, page).map(TeachingView::of);
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -138,12 +138,12 @@ public class AcademicService {
     Page<OfferingView> enrollmentOptions(Long studentId, String query, Pageable page) {
         var student = napneStudent(studentId, false);
         if (student.getStatus() != StudentStatus.ACTIVE) return Page.empty(page);
-        return academic.offerings(query, true, student.getCourse().getId(), page).map(OfferingView::of);
+        return academic.offerings(query, true, student.getCourse().getId(), AcademicListFilters.NONE, page).map(OfferingView::of);
     }
 
-    Page<EnrollmentView> enrollments(Long studentId, String query, Pageable page) {
+    Page<EnrollmentView> enrollments(Long studentId, String query, AcademicListFilters filters, Pageable page) {
         napneStudent(studentId, false);
-        return academic.enrollments(studentId, query, page).map(EnrollmentView::of);
+        return academic.enrollments(studentId, query, filters, page).map(EnrollmentView::of);
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)

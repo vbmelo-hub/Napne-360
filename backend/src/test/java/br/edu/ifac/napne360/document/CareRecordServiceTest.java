@@ -98,6 +98,19 @@ class CareRecordServiceTest {
                 Map.of("notes", "Texto inicial"), user.getEmail(), Instant.parse("2026-11-01T10:00:00Z")));
     }
 
+    @Test
+    void timelineRecordVisibilityUsesOriginalAuthorshipAndStudentScope() {
+        when(records.findById("r1")).thenReturn(Optional.of(record));
+        when(access.canViewSubject(1L, 2L)).thenReturn(true);
+        assertThat(service.canViewTimelineRecord(1L, "r1")).isTrue();
+        assertThat(service.canViewTimelineRecord(2L, "r1")).isFalse();
+
+        record.setCreatedBy("outro@example.test");
+        assertThat(service.canViewTimelineRecord(1L, "r1")).isFalse();
+        record.setStatus(RecordStatus.ACTIVE);
+        assertThat(service.canViewTimelineRecord(1L, "r1")).isTrue();
+    }
+
     // Omitting the client-version check would return 200 and mutate these exact snapshots.
     @ParameterizedTest
     @ValueSource(strings = {"absent", "null", "0", "3", "5"})

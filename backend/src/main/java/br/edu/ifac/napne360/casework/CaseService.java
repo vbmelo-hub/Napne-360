@@ -54,6 +54,11 @@ public class CaseService {
                 .map(value -> view(value, catalogue)).toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<CaseStageCatalogue.Option> stages() {
+        return stageConfiguration.current().stages();
+    }
+
     @Transactional
     public CaseView create(Student student, CaseRequest request, Authentication auth, HttpServletRequest http) {
         var currentStudent = students.findByIdForUpdate(student.getId())
@@ -186,13 +191,17 @@ public class CaseService {
     }
 
     @Transactional(readOnly = true)
-    public HistoryPage history(Long caseId, int page, int size, CaseHistory.Type type) {
+    public HistoryPage history(Long caseId, int page, int size, CaseHistory.Type type,
+                               String actor, Long version, Instant from, Instant to) {
         requireCase(caseId);
         if (page < 0 || size < 1 || size > 100 || (long) page * size > Integer.MAX_VALUE)
             throw new IllegalArgumentException("Paginação inválida.");
         var pagination = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "version", "id"));
-        var values = type == null ? history.findByNapneCaseId(caseId, pagination)
-                : history.findByNapneCaseIdAndType(caseId, type, pagination);
+        if (from != null && to != null && from.isAfter(to)) {
+            throw new IllegalArgumentException("A data inicial deve ser anterior ou igual à data final.");
+        }
+        var values = history.filter(caseId, type, actor == null || actor.isBlank() ? null : actor.strip(),
+                version, from, to, pagination);
         return new HistoryPage(values.getContent().stream().map(entry -> new CaseHistoryView(entry.getId(), caseId, entry.getVersion(), entry.getType(),
                 entry.getFromStage(), entry.getToStage(), entry.getFromResponsibleId(), entry.getFromResponsible(),
                 entry.getToResponsibleId(), entry.getToResponsible(), entry.getActorId(), entry.getActor(), entry.getOccurredAt(), entry.getReason(),

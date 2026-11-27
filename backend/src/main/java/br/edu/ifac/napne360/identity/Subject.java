@@ -23,4 +23,6 @@ public class Subject {
     @Column(nullable = false)
     @Builder.Default
     private boolean active = true;
+    @Version
+    private long version;
 }

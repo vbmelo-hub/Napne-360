@@ -5,6 +5,7 @@ import { FormBuilder, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { EMPTY, Subscription, catchError, finalize, switchMap } from 'rxjs';
 import { FormValue, sameFormValue } from '../core/form-changes';
+import { reconcileRequiredSelection } from '../core/required-selection';
 import { ApiService } from '../core/api.service';
 import { PEI_ANNEX_I_VERSION, Pei, PeiAction, PeiAnnexI, PeiTransferCandidate } from '../core/models';
 import { errorMessage, labelFor, toneFor } from '../core/presentation';
@@ -35,7 +36,7 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
       <header class="pei-header">
         <div>
           <span class="eyebrow">Plano de Ensino Individualizado</span>
-          <h1 #editorTitle tabindex="-1">Editor do PEI</h1>
+          <h1 #editorTitle tabindex="-1">{{canEdit() ? 'Editor do PEI' : hasAction('APPROVE') || hasAction('RETURN') ? 'Revisão do PEI' : 'Consulta ao PEI'}}</h1>
           <p>Período {{ value.academicTermLabel ?? value.academicTerm }} · revisão {{ value.revision }}</p>
           @if (value.status === 'APPROVED') { <p class="pei-lifecycle">Versão vigente</p> }
           @if (value.status === 'SUPERSEDED' || value.status === 'ARCHIVED') {
@@ -44,10 +45,12 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
         </div>
         <span [class]="'badge badge--' + tone(value.status)">{{ peiStatusLabel(value.status) }}</span>
       </header>
-      <div class="notice review-note" role="note">
-        <span class="review-mark" aria-hidden="true">✓</span>
-        <div><strong>Revisão humana obrigatória</strong><p>Este rascunho apoia o planejamento pedagógico. Não representa diagnóstico e não substitui a análise do docente e da equipe responsável.</p></div>
-      </div>
+      @if (canEdit() || hasAction('APPROVE') || hasAction('RETURN')) {
+        <div class="notice review-note" role="note">
+          <span class="review-mark" aria-hidden="true">✓</span>
+          <div><strong>Revisão humana obrigatória</strong><p>A equipe responsável analisa o rascunho antes de aprovar a versão que ficará vigente.</p></div>
+        </div>
+      }
       @if (value.transfer; as transfer) {
         <div class="notice review-note" role="note">
           <div><strong>Motivo da transferência</strong><p>{{ transfer.reason }}</p></div>
@@ -93,12 +96,12 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
           } @else {
           <fieldset class="pei-fields" [disabled]="!canEdit() || saving()">
             <section class="card form-section" id="overview">
-              <div class="section-header"><div><span class="eyebrow">01 · Visão geral</span><h2>Direcionamento pedagógico</h2><p>Defina o objetivo central e as competências profissionais.</p></div></div>
+              <div class="section-header"><div><span class="eyebrow">01 · Visão geral</span><h2>Direcionamento pedagógico</h2>@if (canEdit()) {<p>Defina o objetivo central e as competências profissionais.</p>}</div></div>
               <label><span>Objetivo geral · necessário para aprovação&nbsp;<span class="field-required" aria-hidden="true">*</span></span><textarea formControlName="generalObjectives"></textarea></label>
               <label>Habilidades e competências profissionais<textarea formControlName="professionalSkills" placeholder="Uma habilidade por linha"></textarea></label>
             </section>
             <section class="card form-section" id="objectives">
-              <div class="section-header"><div><span class="eyebrow">02 · Objetivos</span><h2>Objetivos de aprendizagem</h2><p>Registre um objetivo por linha para facilitar a revisão.</p></div></div>
+              <div class="section-header"><div><span class="eyebrow">02 · Objetivos</span><h2>Objetivos de aprendizagem</h2>@if (canEdit()) {<p>Registre um objetivo por linha para facilitar a revisão.</p>}</div></div>
               <div class="grid two"><label>Objetivos específicos<textarea formControlName="specificObjectives"></textarea></label><label>Objetivos não aplicáveis e justificativas<textarea formControlName="eliminatedObjectives"></textarea></label><label>Objetivos alternativos<textarea formControlName="alternativeObjectives"></textarea></label><label>Objetivos complementares<textarea formControlName="complementaryObjectives"></textarea></label></div>
             </section>
             <section class="card form-section" id="content">
@@ -118,7 +121,7 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
               <div class="grid two"><label>Bibliografia básica<textarea formControlName="basicBibliography" placeholder="Uma referência por linha"></textarea></label><label>Bibliografia complementar<textarea formControlName="complementaryBibliography" placeholder="Uma referência por linha"></textarea></label></div>
             </section>
             <section class="card form-section" id="skills">
-              <div class="section-header"><div><span class="eyebrow">07 · Inventário</span><h2>Habilidades e competências</h2><p>Registre a observação em cada dimensão. Todas as opções mantêm o significado institucional previsto.</p></div></div>
+              <div class="section-header"><div><span class="eyebrow">07 · Inventário</span><h2>Habilidades e competências</h2>@if (canEdit()) {<p>Registre a observação em cada dimensão.</p>}</div></div>
               <div class="skills-grid">@for (dimension of dimensions; track dimension.key) {
                 <label>{{ dimension.label }}<select [formControlName]="dimension.key"><option value="REALIZA_COM_AJUDA">Realiza com ajuda</option><option value="REALIZA_SEM_AJUDA">Realiza sem ajuda</option><option value="NAO_REALIZA">Não realiza</option><option value="NAO_OBSERVADO">Não foi observado</option></select></label>
               }</div>
@@ -159,7 +162,7 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
           <fieldset class="stack" [formGroup]="transferForm" [disabled]="saving()">
             <label><span>Novo docente&nbsp;<span class="field-required" aria-hidden="true">*</span></span>
               <select formControlName="teacherId" required>
-                <option value="">Selecione um docente</option>
+                @if (candidates.length > 1) {<option value="">Selecione um docente</option>}
                 @for (candidate of candidates; track candidate.id) {
                   <option [value]="candidate.id">{{ candidate.label }}</option>
                 }
@@ -546,6 +549,7 @@ export class PeiEditorComponent implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
         next: candidates => {
           this.transferCandidates.set(candidates);
+          reconcileRequiredSelection(this.transferForm.controls.teacherId, candidates.map(candidate => String(candidate.id)));
           this.loadingTransferCandidates.set(false);
         },
         error: error => {

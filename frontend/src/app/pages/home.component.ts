@@ -16,7 +16,22 @@ export class HomeComponent{
   readonly auth=inject(AuthService);readonly firstName=computed(()=>this.auth.user()?.name.split(' ')[0]??'');readonly roleLabel=computed(()=>labelFor(this.auth.user()?.roles[0]));
   readonly greeting=computed(()=>new Date().getHours()<12?'Bom dia':new Date().getHours()<18?'Boa tarde':'Boa noite');
   readonly title=computed(()=>this.auth.hasRole('ADMIN')?'Estrutura institucional em um só lugar':'Acompanhamento NAPNE');
-  readonly description=computed(()=>this.auth.hasRole('ADMIN')?'Administre a estrutura que sustenta o acompanhamento inclusivo, sem acesso automático aos dossiês dos estudantes.':'Consulte o percurso educacional dos estudantes vinculados e registre as contribuições permitidas ao seu perfil.');
-  hip='';
-  guidance():string{if(this.auth.hasRole('NAPNE'))return'Organize dossiês, casos, registros, documentos, linha do tempo e PEIs dos estudantes do campus.';if(this.auth.hasRole('TEACHER'))return'Acesse seus estudantes vinculados, registre devolutivas docentes e participe da elaboração e revisão do PEI.';if(this.auth.hasRole('TUTOR'))return'Acompanhe estudantes atribuídos e registre observações de tutoria no contexto pedagógico.';if(this.auth.hasRole('COTEP','COURSE_COORDINATOR'))return'Consulte o acompanhamento autorizado, produza orientações pedagógicas e colabore com o PEI.';if(this.auth.hasRole('MANAGEMENT'))return'Consulte o acompanhamento dos estudantes autorizados, respeitando a finalidade e os limites de acesso.';return'Gerencie contas, perfis e vínculos que definem o acesso seguro à plataforma.';}
+  readonly description = computed(() => {
+    if (this.auth.hasRole('ADMIN')) {
+      return 'Administre a estrutura que sustenta o acompanhamento inclusivo, com acesso à configuração institucional.';
+    }
+    if (this.auth.hasRole('NAPNE', 'TEACHER', 'TUTOR', 'COTEP', 'COURSE_COORDINATOR')) {
+      return 'Consulte o percurso educacional e registre suas contribuições no acompanhamento dos estudantes.';
+    }
+    return 'Consulte o percurso educacional e o histórico autorizado dos estudantes.';
+  });
+
+  guidance(): string {
+    if (this.auth.hasRole('NAPNE')) return 'Acompanhe dossiês, casos, registros, documentos, linha do tempo e PEIs dos estudantes do campus.';
+    if (this.auth.hasRole('TEACHER')) return 'Registre devolutivas dos estudantes vinculados e elabore PEIs nas ofertas em que você atua.';
+    if (this.auth.hasRole('COTEP', 'COURSE_COORDINATOR')) return 'Acesse os acompanhamentos autorizados, registre orientações e planos de ação e consulte os PEIs disponíveis.';
+    if (this.auth.hasRole('TUTOR')) return 'Acompanhe os estudantes atribuídos e registre observações de tutoria.';
+    if (this.auth.hasRole('MANAGEMENT')) return 'Consulte os acompanhamentos disponíveis para a gestão.';
+    return 'Gerencie contas, perfis, estrutura acadêmica e vínculos.';
+  }
 }

@@ -4,7 +4,7 @@ import { catalogFixture, loginUi } from './catalog-fixtures';
 
 test('docente preenche, reabre e baixa o PEI do Anexo I na revisão salva', async ({ page, request }, testInfo) => {
   const f = await catalogFixture(request);
-  const { term, offering } = f.academic;
+  const { term } = f.academic;
   const apiPath = `${f.path}/peis`;
   const editorResponse = (method: string, pathname: string) => page.waitForResponse(response =>
     response.request().method() === method && new URL(response.url()).pathname === pathname
@@ -14,7 +14,8 @@ test('docente preenche, reabre e baixa o PEI do Anexo I na revisão salva', asyn
   await page.goto(`/estudantes/${f.student.id}`);
   await page.getByRole('button', { name: 'PEI', exact: true }).click();
   const create = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Criar rascunho de PEI' }) });
-  await create.getByRole('combobox', { name: /^Oferta curricular/ }).selectOption(String(offering.id));
+  await create.getByRole('button', { name: /^Oferta curricular/ }).click();
+  await create.getByRole('option').filter({ hasText: term.label }).click();
   const creation = editorResponse('POST', apiPath);
   await create.getByRole('button', { name: 'Criar rascunho', exact: true }).click();
   const created = await creation;
@@ -33,8 +34,7 @@ test('docente preenche, reabre e baixa o PEI do Anexo I na revisão salva', asyn
   });
   expect(Object.values(draft.content.skillsInventory)).toEqual(Array(28).fill('NAO_OBSERVADO'));
 
-  await page.locator('article.pei-row').filter({ hasText: term.label })
-    .getByRole('link', { name: 'Editar rascunho', exact: true }).click();
+  await expect(page).toHaveURL(`/estudantes/${f.student.id}/pei/${draft.id}`);
   const annex = page.locator('app-pei-annex-i');
   const status = page.locator('.pei-header .badge');
   await expect(annex.getByRole('heading', { name: 'Plano de Ensino Individualizado - PEI', exact: true })).toBeVisible();

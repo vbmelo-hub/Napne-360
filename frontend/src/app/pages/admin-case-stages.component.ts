@@ -8,6 +8,8 @@ import { errorMessage } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { PaginationComponent } from '../shared/pagination.component';
 
+import { ListFiltersComponent } from '../shared/list-filters.component';
+
 interface DraftStage {
   id: number;
   code: string | null;
@@ -17,7 +19,7 @@ interface DraftStage {
 @Component({
   selector: 'app-admin-case-stages',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [PaginationComponent],
+  imports: [PaginationComponent, ListFiltersComponent],
   template: `
     <form class="card stack stages-form" (submit)="$event.preventDefault(); save()">
       <header class="section-header">
@@ -49,9 +51,7 @@ interface DraftStage {
       @if (version() !== null) {
         <fieldset class="stack" [disabled]="busy()">
           <legend class="sr-only">Nomes e ordem das etapas dos casos</legend>
-          <label class="list-filter">Filtrar etapas
-            <input #stageFilter type="search" [value]="stageList.query()" (input)="filterStages(stageFilter.value)">
-          </label>
+          <app-list-filters [list]="stageFilters" label="Buscar etapas" placeholder="Nome ou código" />
           <ol class="stages-list">
             @for (stage of stageList.items(); track stage.id) {
               @let stageIndex = stageOrder().get(stage.id) ?? 0;
@@ -93,7 +93,7 @@ interface DraftStage {
           <app-pagination [page]="stageList.page()" [totalPages]="stageList.totalPages()"
             label="Paginação das etapas" (pageChange)="stageList.setPage($event)" />
 
-          @if (invalid() && (stageList.totalPages() > 1 || stageList.query().trim())) {
+          @if (invalid() && (stageList.totalPages() > 1 || stageList.query().trim() || stageList.filters()['category'])) {
             <p role="status">Revise os nomes das etapas antes de salvar, inclusive os das outras páginas.</p>
           }
           <div class="row">
@@ -141,7 +141,14 @@ export class AdminCaseStagesComponent implements OnInit {
   private readonly filterLabels = signal(new Map<number, string>());
   protected readonly stageList = createListView(this.stages, stage => [
     this.filterLabels().get(stage.id) ?? stage.label, stage.code,
-  ]);
+  ], {
+    category: { label: 'Categoria', value: stage =>
+      stage.code === 'CLOSED' ? 'Encerramento' : stage.code === 'ARCHIVED' ? 'Arquivamento' : 'Etapa operacional' },
+  });
+  protected readonly stageFilters = {
+    ...this.stageList,
+    setQuery: (query: string) => this.filterStages(query),
+  };
 
   ngOnInit() {
     this.load();
@@ -189,7 +196,7 @@ export class AdminCaseStagesComponent implements OnInit {
     const stages = [...this.stages()];
     [stages[index], stages[destination]] = [stages[destination], stages[index]];
     this.stages.set(stages);
-    if (!this.stageList.query().trim()) this.stageList.setPage(Math.floor(destination / LIST_PAGE_SIZE));
+    if (!this.stageList.query().trim() && !this.stageList.filters()['category']) this.stageList.setPage(Math.floor(destination / LIST_PAGE_SIZE));
   }
 
   protected add() {

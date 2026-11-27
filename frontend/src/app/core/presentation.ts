@@ -67,6 +67,8 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
   ATTACHMENT_UNSUPPORTED: 'Selecione um arquivo PDF, PNG, JPEG ou DOCX.',
   ATTACHMENT_INVALID: 'O conteúdo do arquivo não corresponde ao formato informado ou o documento está danificado.',
   ATTACHMENT_VERSION_MISSING: 'A versão anterior do documento não foi encontrada.',
+  PEI_DRAFT_EXISTS: 'Já existe um PEI em andamento ou vigente para este componente e período.',
+  PEI_SUBJECT_ARCHIVED: 'O componente da oferta está arquivado.',
   CASE_STUDENT_ARCHIVED: 'Reative o cadastro do estudante antes de abrir um caso.',
   CASE_STAGE_INVALID: 'A mudança para essa etapa não é permitida no estado atual do caso.',
   CASE_REOPEN_REASON_REQUIRED: 'Informe um motivo de reabertura com até 500 caracteres.',

@@ -21,8 +21,16 @@ public class StudentController {
     @PreAuthorize("hasAnyRole('NAPNE','COTEP','COURSE_COORDINATOR','MANAGEMENT','TEACHER','TUTOR')")
     public Page<StudentService.StudentSummary> list(@RequestParam(defaultValue = "") String query,
                                                     @RequestParam(defaultValue = "") String academicQuery,
-                                                    @RequestParam(defaultValue = "false") boolean archived, Pageable pageable) {
-        return service.list(query, academicQuery, archived, pageable);
+                                                    @RequestParam(defaultValue = "false") boolean archived,
+                                                    @RequestParam(required = false) Long courseId,
+                                                    @RequestParam(required = false) StudentStatus status, Pageable pageable) {
+        return service.list(query, academicQuery, archived, courseId, status, pageable);
+    }
+
+    @GetMapping("/filter-courses")
+    @PreAuthorize("hasAnyRole('NAPNE','COTEP','COURSE_COORDINATOR','MANAGEMENT','TEACHER','TUTOR')")
+    public java.util.List<StudentService.FilterCourse> filterCourses() {
+        return service.filterCourses();
     }
 
     @GetMapping("/{id}")

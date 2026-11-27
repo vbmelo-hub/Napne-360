@@ -1,44 +1,42 @@
 import { Component, DestroyRef, HostListener, OnInit, computed, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import { Observable, map } from 'rxjs';
+import { Observable, Subject, catchError, map, of, switchMap, timer } from 'rxjs';
 import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ApiService } from '../core/api.service';
-import { createListView } from '../core/list-view';
-import { Campus, UserView } from '../core/models';
+import { LIST_PAGE_SIZE, ListFilters, createListView } from '../core/list-view';
+import { Campus, Page, UserView } from '../core/models';
 import { cpfDigits, formatCpf, validateCpf } from '../core/cpf';
 import { trackFormChanges } from '../core/form-changes';
-import { createCpfLookup } from '../core/professional-search';
 import { errorMessage, labelFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 import { ModalShellComponent } from '../shared/modal-shell.component';
 import { PaginationComponent } from '../shared/pagination.component';
+import { ListFiltersComponent } from '../shared/list-filters.component';
 import { AdminAcademicComponent } from './admin-academic.component';
 import { AdminCaseStagesComponent } from './admin-case-stages.component';
 import { AdminReferencesComponent } from './admin-references.component';
 
 type UserAction = 'archive' | 'reactivate' | 'revoke' | 'block';
 
-@Component({standalone:true,imports:[FormsModule,ReactiveFormsModule,AdminAcademicComponent,AdminReferencesComponent,AdminCaseStagesComponent,ConfirmDialogComponent,ModalShellComponent,PaginationComponent],template:`
+const EMPTY_USERS: Page<UserView> = { content: [], totalElements: 0, totalPages: 0, number: 0, size: LIST_PAGE_SIZE };
+
+@Component({standalone:true,imports:[FormsModule,ReactiveFormsModule,AdminAcademicComponent,AdminReferencesComponent,AdminCaseStagesComponent,ConfirmDialogComponent,ModalShellComponent,PaginationComponent,ListFiltersComponent],template:`
   <header class="page-header"><div><span class="eyebrow">Configuração institucional</span><h1>Administração técnica</h1><p>Gerencie a estrutura e os acessos do sistema. Este perfil não recebe acesso automático aos dossiês.</p></div></header>
   <nav class="tabs admin-tabs" aria-label="Áreas da administração">@for(item of tabs;track item.id){<button type="button" [class.selected]="tab()===item.id" [attr.aria-current]="tab()===item.id?'page':null" (click)="selectTab(item.id)">{{item.label}}</button>}</nav>
   @if(tab()==='users'){
     <section class="card users-card"><div class="section-header"><div><h2>Contas cadastradas</h2><p>Perfis, campus e situação de acesso.</p></div><button type="button" (click)="openCreateUser()">Nova conta</button></div>
-      @if (!loading() && users().length) {
-        <div class="list-filter-toolbar">
-          <label class="list-filter">Filtrar contas
-            <input type="search" [value]="userList.query()" (input)="userList.setQuery($any($event.target).value)"
-              placeholder="Nome, CPF, matrícula ou perfil">
-          </label>
-        </div>
-      }
-      @if(loading()){<div class="loading-grid"><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-card"></span></div>}@else if(users().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhuma conta cadastrada</h3><p>Crie a primeira conta institucional para começar.</p></div>}
-      @else if (!userList.totalElements()) {
-        <p class="empty-state">Nenhuma conta corresponde ao filtro.</p>
-      } @else {<div class="table-wrap"><table class="mobile-cards"><thead><tr><th>Usuário</th><th>Campus</th><th>Perfis</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>@for(u of userList.items();track u.id){<tr><td data-label="Usuário"><strong>{{u.name}}</strong><small>{{u.email}}</small>@if (u.cpfMasked || u.institutionalRegistration) {<small>{{u.cpfMasked}} {{u.institutionalRegistration}}</small>}</td><td data-label="Campus">{{campusLabel(u.campusId)}}</td><td data-label="Perfis"><div class="roles">@for(role of u.roles;track role){<span class="badge badge--info">{{label(role)}}</span>}</div></td><td data-label="Situação"><span [class]="u.active?'badge badge--success':'badge'">{{userStatus(u)}}</span></td><td><div class="row"><button class="secondary compact" (click)="openEditUser(u)" [disabled]="busy()">Editar</button><button class="secondary compact" (click)="editAccess(u)">Acessos</button>@if (u.active || u.securityBlocked) {<button class="secondary compact" (click)="askUserAction(u,'archive')">Inativar</button>}@if (!u.active) {<button class="secondary compact" (click)="askUserAction(u,'reactivate')">Reativar</button>}</div></td></tr>}</tbody></table></div>}
-      @if (!loading() && userList.totalPages() > 1) {
-        <app-pagination class="list-pagination" [page]="userList.page()" [totalPages]="userList.totalPages()"
-          label="Paginação de contas" (pageChange)="userList.setPage($event)" />
+      <app-list-filters [list]="userFilters" label="Buscar contas" placeholder="Nome, CPF ou matrícula" [showCount]="!loading() && !usersError()" />
+      @if (loading()) {
+        <div class="loading-grid" aria-label="Carregando contas"><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-card"></span></div>
+      } @else if (usersError()) {
+        <div class="empty-state"><p>Não foi possível carregar as contas.</p><button type="button" class="secondary" (click)="reloadUsers()">Tentar novamente</button></div>
+      } @else if (!userResults().totalElements) {
+        <p class="empty-state">{{userQuery().trim() || hasUserFilters() ? 'Nenhuma conta corresponde aos filtros.' : 'Nenhuma conta cadastrada.'}}</p>
+      } @else {<div class="table-wrap"><table class="mobile-cards"><thead><tr><th>Usuário</th><th>Campus</th><th>Perfis</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>@for(u of userResults().content;track u.id){<tr><td data-label="Usuário"><strong>{{u.name}}</strong><small>{{u.email}}</small>@if (u.cpfMasked || u.institutionalRegistration) {<small>{{u.cpfMasked}} {{u.institutionalRegistration}}</small>}</td><td data-label="Campus">{{campusLabel(u.campusId)}}</td><td data-label="Perfis"><div class="roles">@for(role of u.roles;track role){<span class="badge badge--info">{{label(role)}}</span>}</div></td><td data-label="Situação"><span [class]="u.active?'badge badge--success':'badge'">{{userStatus(u)}}</span></td><td><div class="row"><button class="secondary compact" (click)="openEditUser(u)" [disabled]="busy()">Editar</button><button class="secondary compact" (click)="editAccess(u)">Acessos</button>@if (u.active || u.securityBlocked) {<button class="secondary compact" (click)="askUserAction(u,'archive')">Inativar</button>}@if (!u.active) {<button class="secondary compact" (click)="askUserAction(u,'reactivate')">Reativar</button>}</div></td></tr>}</tbody></table></div>}
+      @if (!loading() && userResults().totalPages > 1) {
+        <app-pagination class="list-pagination" [page]="userPage()" [totalPages]="userResults().totalPages"
+          label="Paginação de contas" (pageChange)="setUserPage($event)" />
       }
     </section>
   }
@@ -46,12 +44,10 @@ type UserAction = 'archive' | 'reactivate' | 'revoke' | 'block';
     <section class="card">
       <div class="section-header"><h2>Campi cadastrados</h2><button type="button" (click)="openCampusForm()">Novo campus</button></div>
       @if (campuses().length) {
-        <label class="list-filter">Filtrar campi
-          <input type="search" [value]="campusList.query()" (input)="campusList.setQuery($any($event.target).value)">
-        </label>
+        <app-list-filters [list]="campusList" label="Buscar campi" placeholder="Nome ou código" />
       }
       @if (!campusList.totalElements()) {
-        <p class="empty-state">{{campusList.query().trim() ? 'Nenhum campus corresponde ao filtro.' : 'Nenhum campus cadastrado.'}}</p>
+        <p class="empty-state">{{campuses().length ? 'Nenhum campus corresponde aos filtros.' : 'Nenhum campus cadastrado.'}}</p>
       }
       @for (campus of campusList.items(); track campus.id) {
         <article class="campus-row">
@@ -183,7 +179,13 @@ export class AdminComponent implements OnInit {
     { value: 'MANAGEMENT', label: 'Gestão' },
   ];
 
-  readonly users = signal<UserView[]>([]);
+  readonly userResults = signal<Page<UserView>>(EMPTY_USERS);
+  readonly userQuery = signal('');
+  readonly userPage = signal(0);
+  readonly usersError = signal(false);
+  private readonly selectedUserFilters = signal<Readonly<Record<string, string>>>({});
+  private readonly userRequests = new Subject<boolean>();
+  readonly hasUserFilters = computed(() => Object.values(this.selectedUserFilters()).some(Boolean));
   readonly campuses = signal<Campus[]>([]);
   readonly loading = signal(true);
   readonly busy = signal(false);
@@ -246,14 +248,41 @@ export class AdminComponent implements OnInit {
   }));
   readonly campusChanges = trackFormChanges(this.campusFields);
 
-  readonly userList = createListView(this.users, user => [
-    user.id, user.name, user.email, user.institutionalRegistration, user.cpfMasked, this.cpfForUser(user),
-    this.campusLabel(user.campusId), ...user.roles.map(labelFor), this.userStatus(user),
-  ]);
-  private readonly cpfForUser = createCpfLookup(this.userList.query);
+  readonly userFilters: ListFilters = {
+    query: this.userQuery.asReadonly(),
+    filters: this.selectedUserFilters.asReadonly(),
+    fields: computed(() => [
+      { key: 'campus', label: 'Campus', kind: 'select', options: [
+        { value: 'none', label: 'Sem campus' },
+        ...this.campuses().map(campus => ({
+          value: String(campus.id), label: campus.active ? campus.name : campus.name + ' (arquivado)',
+        })),
+      ] },
+      { key: 'role', label: 'Perfil', kind: 'select', options: this.roles },
+      { key: 'status', label: 'Situação', kind: 'select', options: [
+        { value: 'ACTIVE', label: 'Ativa' }, { value: 'INACTIVE', label: 'Inativa' },
+        { value: 'BLOCKED', label: 'Bloqueada' },
+      ] },
+    ]),
+    totalElements: computed(() => this.loading() ? 0 : this.userResults().totalElements),
+    setQuery: value => {
+      this.userQuery.set(value);
+      this.userPage.set(0);
+      this.reloadUsers(true);
+    },
+    setFilter: (key, value) => {
+      this.selectedUserFilters.update(filters => ({ ...filters, [key]: value }));
+      this.setUserPage(0);
+    },
+    reset: () => {
+      this.userQuery.set('');
+      this.selectedUserFilters.set({});
+      this.setUserPage(0);
+    },
+  };
   readonly campusList = createListView(this.campuses, campus => [
     campus.name, campus.code, campus.active ? 'Ativo' : 'Arquivado Inativo',
-  ]);
+  ], { status: { label: 'Situação', value: campus => campus.active ? 'Ativo' : 'Arquivado' } });
 
   readonly userActionText = computed(() => {
     const target = this.userTarget();
@@ -268,7 +297,31 @@ export class AdminComponent implements OnInit {
   });
 
   ngOnInit() {
-    this.load();
+    this.userRequests.pipe(
+      switchMap(debounce => {
+        const page = this.userPage();
+        const query = this.userQuery().trim();
+        const filters = this.selectedUserFilters();
+        return (debounce ? timer(250) : of(0)).pipe(
+          switchMap(() => this.api.usersPage(page, query, filters)),
+          catchError(failure => {
+            this.toast.show(errorMessage(failure, 'carregar as contas'), 'error');
+            return of(null);
+          }),
+        );
+      }),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(result => {
+      if (result && this.userPage() >= Math.max(result.totalPages, 1)) {
+        this.setUserPage(Math.max(0, result.totalPages - 1));
+        return;
+      }
+      this.userResults.set(result ?? EMPTY_USERS);
+      this.usersError.set(result === null);
+      this.loading.set(false);
+    });
+    this.reloadUsers();
+    this.loadCampuses();
   }
 
   selectTab(tab: string) {
@@ -358,7 +411,7 @@ export class AdminComponent implements OnInit {
         this.showUserForm.set(false);
         this.busy.set(false);
         this.toast.show(user ? 'Conta atualizada.' : 'Conta criada com sucesso.', 'success');
-        this.load();
+        this.reloadUsers();
       },
       error: failure => this.fail(failure, user ? 'salvar os dados da conta' : 'criar a conta'),
     });
@@ -401,7 +454,7 @@ export class AdminComponent implements OnInit {
         this.roleChanges.capture();
         this.busy.set(false);
         this.toast.show('Perfis atualizados e sessões revogadas.', 'success');
-        this.load();
+        this.reloadUsers();
       },
       error: failure => this.fail(failure, 'salvar os perfis'),
     });
@@ -439,7 +492,7 @@ export class AdminComponent implements OnInit {
         this.busy.set(false);
         this.userTarget.set(null);
         this.toast.show(action === 'revoke' ? 'Sessões revogadas.' : 'Situação da conta atualizada.', 'success');
-        this.load();
+        this.reloadUsers();
       },
       error: failure => {
         this.userTarget.set(null);
@@ -472,7 +525,7 @@ export class AdminComponent implements OnInit {
         this.showCampusForm.set(false);
         this.busy.set(false);
         this.toast.show(campus ? 'Campus atualizado.' : 'Campus cadastrado.', 'success');
-        this.load();
+        this.loadCampuses();
       },
       error: failure => this.fail(failure, 'salvar o campus'),
     });
@@ -487,7 +540,7 @@ export class AdminComponent implements OnInit {
         this.busy.set(false);
         this.campusTarget.set(null);
         this.toast.show(campus.active ? 'Campus arquivado.' : 'Campus reativado.', 'success');
-        this.load();
+        this.loadCampuses();
       },
       error: failure => {
         this.campusTarget.set(null);
@@ -496,12 +549,18 @@ export class AdminComponent implements OnInit {
     });
   }
 
-  private load() {
+  setUserPage(page: number) {
+    this.userPage.set(page);
+    this.reloadUsers();
+  }
+
+  reloadUsers(debounce = false) {
     this.loading.set(true);
-    this.api.users().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: users => { this.users.set(users); this.loading.set(false); },
-      error: failure => { this.loading.set(false); this.fail(failure, 'carregar as contas'); },
-    });
+    this.usersError.set(false);
+    this.userRequests.next(debounce);
+  }
+
+  private loadCampuses() {
     this.api.adminCampuses().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: campuses => this.campuses.set(campuses),
       error: failure => this.fail(failure, 'carregar os campi'),

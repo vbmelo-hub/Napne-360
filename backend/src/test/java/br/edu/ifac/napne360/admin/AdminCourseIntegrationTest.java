@@ -10,6 +10,8 @@ import br.edu.ifac.napne360.identity.Campus;
 import br.edu.ifac.napne360.identity.CampusRepository;
 import br.edu.ifac.napne360.identity.Course;
 import br.edu.ifac.napne360.identity.CourseRepository;
+import br.edu.ifac.napne360.identity.ReferenceEntry;
+import br.edu.ifac.napne360.identity.ReferenceEntryRepository;
 import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.Subject;
 import br.edu.ifac.napne360.identity.SubjectRepository;
@@ -53,6 +55,7 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -62,6 +65,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -80,6 +84,7 @@ class AdminCourseIntegrationTest {
     @Autowired CampusRepository campuses;
     @Autowired CourseRepository courses;
     @Autowired SubjectRepository subjects;
+    @Autowired ReferenceEntryRepository references;
     @Autowired StudentRepository students;
     @Autowired StudentAssignmentRepository assignments;
     @Autowired UserAccountRepository users;
@@ -410,6 +415,173 @@ class AdminCourseIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON).content("""
                         {"courseId":%d,"registration":"%s","civilName":"Nome atualizado"}
                         """.formatted(course.getId(), student.getRegistration()))).andExpect(status().isOk());
+    }
+
+    @Test
+    void subjectCrudKeepsIdentityAndExposesSyllabusOnlyToAdmin() throws Exception {
+        var admin = user(ADMIN_EMAIL).roles("ADMIN");
+        var component = subject(course, "ALVO", true);
+        var link = assignment(student(course, StudentStatus.ARCHIVED), component, false);
+        String endpoint = "/api/v1/admin/subjects/" + component.getId();
+
+        mvc.perform(put(endpoint).with(admin).contentType(MediaType.APPLICATION_JSON)
+                .content(subjectBody(course.getId(), " REVISADO ", "Ementa revisada")))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.detail", containsString("histórico")));
+        mvc.perform(put(endpoint).with(admin).contentType(MediaType.APPLICATION_JSON)
+                .content(subjectBody(course.getId(), " ALVO ", "Ementa revisada")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(component.getId()))
+                .andExpect(jsonPath("$.syllabus").value("Ementa revisada"));
+        mvc.perform(put(endpoint).with(admin).contentType(MediaType.APPLICATION_JSON)
+                .content(subjectBody(course.getId(), " ALVO ", "Ementa revisada", 1)))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SUBJECT_UNCHANGED"));
+        mvc.perform(put(endpoint).with(admin).contentType(MediaType.APPLICATION_JSON)
+                .content(subjectBody(course.getId(), "ALVO", "Gravação a partir de uma versão anterior")))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SUBJECT_CONCURRENT_EDIT"));
+        mvc.perform(get("/api/v1/admin/subjects").with(admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == " + component.getId() + ")].syllabus", contains("Ementa revisada")));
+        mvc.perform(get("/api/v1/admin/subjects").with(user("napne@example.test").roles("NAPNE")))
+                .andExpect(status().isForbidden());
+        mvc.perform(patch(endpoint + "/archive").with(admin))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.active").value(false));
+        mvc.perform(patch(endpoint + "/reactivate").with(admin))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.active").value(true));
+        assertThat(assignments.existsById(link.getId())).isTrue();
+    }
+
+    @Test
+    void subjectRejectsDuplicateTransferAndArchiveWithActiveAssignment() throws Exception {
+        var admin = user(ADMIN_EMAIL).roles("ADMIN");
+        var component = subject(course, "ALVO", true);
+        subject(course, "DUPLICADO", false);
+        var otherCourse = courses.saveAndFlush(Course.builder().campus(destination).name("Destino").code("OUTRO").build());
+        String endpoint = "/api/v1/admin/subjects/" + component.getId();
+        mvc.perform(put(endpoint).with(admin).contentType(MediaType.APPLICATION_JSON)
+                .content(subjectBody(otherCourse.getId(), "ALVO", "Ementa")))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.detail", containsString("curso")));
+        mvc.perform(put(endpoint).with(admin).contentType(MediaType.APPLICATION_JSON)
+                .content(subjectBody(course.getId(), " duplicado ", "Ementa")))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.detail", containsString("código")));
+        assignment(student(course, StudentStatus.ACTIVE), component, true);
+        mvc.perform(patch(endpoint + "/archive").with(admin))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.detail", containsString("vínculos ativos")));
+        assertThat(subjects.findById(component.getId()).orElseThrow().isActive()).isTrue();
+    }
+
+    @Test
+    void archivesSubjectOnlyAfterAcademicDependenciesEndAndKeepsHistoricalRows() throws Exception {
+        var component = subject(course, "ALVO", true);
+        var learner = student(course, StudentStatus.ACTIVE);
+        var teacher = napneAccount();
+        var period = references.saveAndFlush(ReferenceEntry.builder().kind(ReferenceEntry.Kind.ACADEMIC_TERM)
+                .code(UUID.randomUUID().toString()).label("Período de teste").build());
+        sql.update("insert into academic_offering (subject_id, period_id, group_code, active) values (?, ?, 'A', true)",
+                component.getId(), period.getId());
+        Long offering = sql.queryForObject("select id from academic_offering where subject_id = ?", Long.class, component.getId());
+        var admin = user(ADMIN_EMAIL).roles("ADMIN");
+        String archive = "/api/v1/admin/subjects/{id}/archive";
+        mvc.perform(patch(archive, component.getId()).with(admin)).andExpect(status().isConflict());
+        sql.update("update academic_offering set active = false where id = ?", offering);
+        sql.update("insert into academic_enrollment (student_id, offering_id, active) values (?, ?, true)", learner.getId(), offering);
+        mvc.perform(patch(archive, component.getId()).with(admin)).andExpect(status().isConflict());
+        sql.update("update academic_enrollment set active = false where offering_id = ?", offering);
+        sql.update("insert into teaching_assignment (teacher_id, offering_id, active, version) values (?, ?, true, 0)", teacher.getId(), offering);
+        mvc.perform(patch(archive, component.getId()).with(admin)).andExpect(status().isConflict());
+        sql.update("update teaching_assignment set active = false where offering_id = ?", offering);
+        mvc.perform(patch(archive, component.getId()).with(admin))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.active").value(false));
+        assertThat(sql.queryForObject("select count(*) from academic_enrollment where offering_id = ?", Integer.class, offering))
+                .isEqualTo(1);
+        assertThat(sql.queryForObject("select count(*) from teaching_assignment where offering_id = ?", Integer.class, offering))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void rejectsSubjectSaveQueuedBehindAnotherUpdate() throws Exception {
+        var component = subject(course, "ALVO", true);
+        var transaction = new TransactionTemplate(transactionManager);
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var result = transaction.execute(ignored -> {
+                sql.queryForObject("select id from course where id = ? for update", Long.class, course.getId());
+                sql.update("update subject set syllabus = ?, version = version + 1 where id = ?", "Primeira gravação", component.getId());
+                var request = executor.submit(() -> mvc.perform(put("/api/v1/admin/subjects/{id}", component.getId())
+                        .with(user(ADMIN_EMAIL).roles("ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                        .content(subjectBody(course.getId(), "ALVO", "Segunda gravação")))
+                        .andReturn().getResponse());
+                awaitRowLock();
+                return request;
+            });
+            var response = result.get(10, TimeUnit.SECONDS);
+            assertThat(response.getStatus()).isEqualTo(409);
+            assertThat(response.getContentAsString()).contains("SUBJECT_CONCURRENT_EDIT");
+            assertThat(subjects.findById(component.getId()).orElseThrow().getSyllabus()).isEqualTo("Primeira gravação");
+        }
+    }
+
+    @Test
+    void cannotReactivateSubjectOfArchivedCourse() throws Exception {
+        var component = subject(course, "ALVO", false);
+        sql.update("update course set active = false where id = ?", course.getId());
+        mvc.perform(patch("/api/v1/admin/subjects/{id}/reactivate", component.getId())
+                .with(user(ADMIN_EMAIL).roles("ADMIN")))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.detail", containsString("curso")));
+    }
+
+    @Test
+    void cannotReactivateSubjectOfArchivedCampus() throws Exception {
+        var component = subject(course, "ALVO", false);
+        sql.update("update campus set active = false where id = ?", original.getId());
+        mvc.perform(patch("/api/v1/admin/subjects/{id}/reactivate", component.getId())
+                .with(user(ADMIN_EMAIL).roles("ADMIN")))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SUBJECT_CAMPUS_ARCHIVED"));
+    }
+
+    @Test
+    void createsComponentAndCanChangeAnUnusedCodeWhileKeepingPublicCatalogShape() throws Exception {
+        var admin = user(ADMIN_EMAIL).roles("ADMIN");
+        mvc.perform(post("/api/v1/admin/subjects").with(admin).contentType(MediaType.APPLICATION_JSON)
+                .content(subjectBody(course.getId(), " novo ", "Ementa original")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.code").value("NOVO"))
+                .andExpect(jsonPath("$.syllabus").value("Ementa original"));
+        Long id = sql.queryForObject("select id from subject where course_id = ? and code = 'NOVO'", Long.class,
+                course.getId());
+        mvc.perform(put("/api/v1/admin/subjects/{id}", id).with(admin).contentType(MediaType.APPLICATION_JSON)
+                .content(subjectBody(course.getId(), " alterado ", "Ementa revisada")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(id))
+                .andExpect(jsonPath("$.code").value("ALTERADO"));
+        mvc.perform(get("/api/v1/catalog/subjects").param("courseId", course.getId().toString())
+                .with(user("napne@example.test").roles("NAPNE")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].code").value("ALTERADO"))
+                .andExpect(jsonPath("$[0].syllabus").doesNotHaveJsonPath());
+    }
+
+    @Test
+    void paginatesAssignmentsAfterCombiningStudentScopeAndEffectiveStatus() throws Exception {
+        var subject = subject(course, "ATIVIDADE", true);
+        var student = student(course, StudentStatus.ACTIVE);
+        assignment(student, subject, true);
+        var revoked = assignment(student, subject, false);
+        assignment(student, null, false);
+
+        mvc.perform(get("/api/v1/admin/assignments/page")
+                        .param("size", "1").param("campus", original.getId().toString())
+                        .param("subject", subject.getId().toString()).param("active", "false")
+                        .param("registration", student.getRegistration())
+                        .with(user(ADMIN_EMAIL).roles("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(revoked.getId()))
+                .andExpect(jsonPath("$.content[0].active").value(false));
+    }
+
+    private String subjectBody(Long courseId, String code, String syllabus) {
+        return subjectBody(courseId, code, syllabus, 0);
+    }
+
+    private String subjectBody(Long courseId, String code, String syllabus, long version) {
+        return """
+                {"courseId":%d,"name":"Nome revisado","code":"%s","workloadHours":60,"syllabus":"%s","version":%d}
+                """.formatted(courseId, code, syllabus, version);
     }
 
     private StudentAssignment assignment(Student student, Subject subject, boolean active) {

@@ -1,6 +1,8 @@
 package br.edu.ifac.napne360.student;
 
 import br.edu.ifac.napne360.academic.AcademicRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -8,6 +10,8 @@ import org.springframework.data.jpa.repository.Lock;
 import jakarta.persistence.LockModeType;
 
 import java.util.Optional;
+import java.util.List;
+import java.util.Set;
 
 public interface StudentAssignmentRepository extends JpaRepository<StudentAssignment, Long> {
     String EFFECTIVE = AcademicRepository.EFFECTIVE;
@@ -32,6 +36,37 @@ public interface StudentAssignmentRepository extends JpaRepository<StudentAssign
     @Query("select a.id from StudentAssignment a where " + EFFECTIVE)
     java.util.Set<Long> effectiveAssignmentIds();
 
+    String ADMIN_FILTERS = """
+            from StudentAssignment a join a.student student join a.user professional
+            left join a.period period left join a.subject subject
+            where (:campus is null or student.campus.id = :campus)
+              and (:course is null or student.course.id = :course)
+              and (:subjectId is null or subject.id = :subjectId)
+              and (:general = false or subject.id is null)
+              and (:type is null or a.assignmentType = :type)
+              and (:origin is null or a.origin = :origin)
+              and (:periodCode is null or lower(period.code) = :periodCode)
+              and (:actor is null or lower(professional.name) like :actor escape '!')
+              and (:registration is null or lower(student.registration) like :registration escape '!')
+              and (:query is null
+                   or lower(student.civilName) like :query escape '!'
+                   or lower(coalesce(student.socialName, '')) like :query escape '!'
+                   or lower(student.registration) like :query escape '!'
+                   or lower(professional.name) like :query escape '!'
+                   or lower(subject.name) like :query escape '!'
+                   or lower(period.code) like :query escape '!')
+              and (:active is null or :active = case when (
+            """ + EFFECTIVE + ") then true else false end)";
+
+    @EntityGraph(attributePaths = {"user", "student", "subject", "period"})
+    @Query(value = "select a " + ADMIN_FILTERS + " order by a.id desc", countQuery = "select count(a) " + ADMIN_FILTERS)
+    Page<StudentAssignment> adminPage(String query, String registration, String actor, Long campus,
+                                     Long course, Long subjectId, boolean general, AssignmentType type,
+                                     AssignmentOrigin origin, String periodCode, Boolean active, Pageable pageable);
+
+    @Query("select a.id from StudentAssignment a where a.id in :ids and " + EFFECTIVE)
+    Set<Long> effectiveAssignmentIdsFor(List<Long> ids);
+
     @Query(EXISTING + """
             where a.active = true and a.student.id = :student and a.user.id = :user and a.assignmentType = :type
               and ((:subject is null and a.subject is null) or a.subject.id = :subject)
@@ -39,6 +74,8 @@ public interface StudentAssignmentRepository extends JpaRepository<StudentAssign
     boolean existsManualAssignment(Long student, Long user, Long subject, AssignmentType type);
 
     boolean existsBySubjectCourseId(Long courseId);
+    boolean existsBySubjectId(Long subjectId);
+    boolean existsBySubjectIdAndActiveTrue(Long subjectId);
     boolean existsByStudentCampusIdAndActiveTrue(Long campusId);
 
     @org.springframework.data.jpa.repository.Query(

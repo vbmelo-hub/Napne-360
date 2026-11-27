@@ -58,7 +58,7 @@ describe('Etapas dos casos na administração técnica', () => {
     root = fixture.nativeElement;
     http = TestBed.inject(HttpTestingController);
     fixture.detectChanges();
-    http.expectOne('/api/v1/admin/users').flush([]);
+    http.expectOne('/api/v1/admin/users/page').flush({ content: [], number: 0, size: 10, totalElements: 0, totalPages: 0 });
     http.expectOne('/api/v1/admin/campuses').flush([]);
     http.expectNone(url);
     fixture.detectChanges();

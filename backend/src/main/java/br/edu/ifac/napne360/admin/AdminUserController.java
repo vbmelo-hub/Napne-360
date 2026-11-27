@@ -10,16 +10,20 @@ import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.identity.UserAccountRepository;
 import br.edu.ifac.napne360.identity.UserEmailHistoryService;
 import br.edu.ifac.napne360.security.CurrentUserService;
+import jakarta.persistence.criteria.Predicate;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -29,8 +33,10 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
@@ -39,6 +45,7 @@ import java.util.Set;
 @PreAuthorize("hasRole('ADMIN')")
 @RequiredArgsConstructor
 public class AdminUserController {
+    private static final int CANDIDATE_PAGE_SIZE = 30;
     private final UserAccountRepository users;
     private final CampusRepository campuses;
     private final UserEmailHistoryService emailHistory;
@@ -51,6 +58,122 @@ public class AdminUserController {
     public List<UserView> list() {
         return users.findAll(Sort.by("name", "id")).stream().map(UserView::of).toList();
     }
+
+    @PostMapping("/page")
+    @Transactional(readOnly = true)
+    public ResponseEntity<UserPage> page(@Valid @RequestBody UserPageRequest request) {
+        int page = request.page();
+        int size = request.size();
+        if (page < 0 || size < 1 || size > 100 || (long) page * size > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Paginação inválida.");
+        }
+        var result = users.findAll(userFilters(request.query(), request.campus(), request.role(), request.status()),
+                PageRequest.of(page, size, Sort.by("name", "id")));
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new UserPage(
+                result.getContent().stream().map(UserView::of).toList(), result.getTotalElements(),
+                result.getTotalPages(), result.getNumber(), result.getSize()));
+    }
+
+    @PostMapping("/candidates")
+    @Transactional(readOnly = true)
+    public ResponseEntity<UserCandidates> candidates(@Valid @RequestBody CandidateRequest request) {
+        if (request.page() < 0 || (long) request.page() * CANDIDATE_PAGE_SIZE > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Paginação inválida.");
+        }
+        Specification<UserAccount> scope = accountScope(request.campusId(), false, request.roles(), UserStatus.ACTIVE);
+        if (request.excludedId() != null) {
+            scope = scope.and((user, criteria, cb) -> cb.notEqual(user.get("id"), request.excludedId()));
+        }
+        var result = users.findAll(scope.and(accountSearch(request.query())),
+                PageRequest.of(request.page(), CANDIDATE_PAGE_SIZE, Sort.by("name", "id")));
+        UserView selected = request.selectedId() == null ? null
+                : users.findOne(scope.and((user, criteria, cb) -> cb.equal(user.get("id"), request.selectedId())))
+                        .map(UserView::of).orElse(null);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(new UserCandidates(
+                result.getContent().stream().map(UserView::of).toList(), result.getTotalElements(), selected));
+    }
+
+    public record CandidateRequest(@Positive Long campusId, @NotEmpty Set<@NotNull RoleName> roles,
+                                   @Size(max = 200) String query, @Positive Long selectedId, @Positive Long excludedId,
+                                   int page) {}
+
+    public record UserCandidates(List<UserView> content, long totalElements, UserView selected) {}
+
+    private Specification<UserAccount> userFilters(String query, String campus, RoleName role, UserStatus status) {
+        boolean withoutCampus = "none".equals(campus);
+        Long campusId = campus == null || withoutCampus ? null : numericId(campus);
+        if (campus != null && !withoutCampus && campusId == null) {
+            throw new IllegalArgumentException("Campus inválido.");
+        }
+        return accountScope(campusId, withoutCampus, role == null ? Set.of() : Set.of(role), status)
+                .and(accountSearch(query));
+    }
+
+    private Specification<UserAccount> accountScope(Long campusId, boolean withoutCampus, Set<RoleName> roles,
+                                                    UserStatus status) {
+        return (user, criteria, cb) -> {
+            var filters = new ArrayList<Predicate>();
+            if (withoutCampus) filters.add(cb.isNull(user.get("campus")));
+            if (campusId != null) filters.add(cb.equal(user.get("campus").get("id"), campusId));
+            if (!roles.isEmpty()) {
+                var memberships = roles.stream().map(role -> cb.isMember(role, user.<Set<RoleName>>get("roles")));
+                filters.add(cb.or(memberships.toArray(Predicate[]::new)));
+            }
+            if (status != null) {
+                filters.add(cb.equal(user.get("active"), status == UserStatus.ACTIVE));
+                if (status != UserStatus.ACTIVE) {
+                    filters.add(cb.equal(user.get("securityBlocked"), status == UserStatus.BLOCKED));
+                }
+            }
+            return cb.and(filters.toArray(Predicate[]::new));
+        };
+    }
+
+    private Specification<UserAccount> accountSearch(String query) {
+        String[] terms = (query == null ? "" : query).strip().toLowerCase(Locale.ROOT).split("\\s+");
+        return (user, criteria, cb) -> {
+            var filters = new ArrayList<Predicate>();
+            for (String term : terms) {
+                if (term.isEmpty()) continue;
+                String pattern = "%" + term.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%";
+                var matches = new ArrayList<>(List.of(
+                        cb.like(cb.lower(user.get("name")), pattern, '!'),
+                        cb.like(cb.lower(user.get("email")), pattern, '!'),
+                        cb.like(cb.lower(user.get("institutionalRegistration")), pattern, '!')));
+                Long id = numericId(term);
+                if (id != null) matches.add(cb.equal(user.get("id"), id));
+                String cpf = validSearchCpf(term);
+                if (cpf != null) matches.add(cb.equal(user.get("cpf"), cpf));
+                filters.add(cb.or(matches.toArray(Predicate[]::new)));
+            }
+            return cb.and(filters.toArray(Predicate[]::new));
+        };
+    }
+
+    private static String validSearchCpf(String term) {
+        if (!term.matches("[0-9]{11}|[0-9]{3}\\.[0-9]{3}\\.[0-9]{3}-[0-9]{2}")) return null;
+        try {
+            return Cpf.parse(term);
+        } catch (ApiOperationException invalid) {
+            return null;
+        }
+    }
+
+    private static Long numericId(String value) {
+        try {
+            long id = Long.parseLong(value);
+            return id > 0 ? id : null;
+        } catch (NumberFormatException invalid) {
+            return null;
+        }
+    }
+
+    public enum UserStatus { ACTIVE, INACTIVE, BLOCKED }
+
+    public record UserPageRequest(@Size(max = 200) String query, String campus, RoleName role, UserStatus status,
+                                  int page, int size) {}
+
+    public record UserPage(List<UserView> content, long totalElements, int totalPages, int number, int size) {}
 
     @GetMapping("/{id}")
     @Transactional(readOnly = true)

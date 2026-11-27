@@ -23,3 +23,6 @@ table{width:100%;border-collapse:collapse}th,td{padding:.85rem 1rem;text-align:l
 .grid :is(label, .field) > :is(select, input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="color"])) {
   min-height: calc(1lh + 1.44rem + 2px);
 }
+
+label.checkbox-row { display: flex; flex-direction: row; align-items: center; gap: .5rem; margin: .5rem 0; }
+label.checkbox-row input[type="checkbox"] { width: 1rem; min-height: 0; height: 1rem; margin: 0; }

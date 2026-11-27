@@ -57,13 +57,26 @@ public class CareRecordService {
         boolean napne = user.getRoles().contains(RoleName.NAPNE);
         var authorEmails = napne ? Set.<String>of() : emailHistory.previouslyOwnedAddresses(user);
         if (!napne) {
-            values = values.stream().filter(value -> PEDAGOGICAL_VISIBLE.contains(value.getType()))
-                    .filter(value -> value.getSubjectId() == null || access.canViewSubject(studentId, value.getSubjectId()))
-                    .filter(value -> value.getStatus() != RecordStatus.DRAFT || authoredBy(value, authorEmails)).toList();
+            values = values.stream().filter(value -> visibleToPedagogicalTeam(studentId, value, authorEmails)).toList();
         }
         boolean writable = !values.isEmpty() && access.canWritePedagogical(studentId);
         return values.stream().map(value -> project(value, napne, writable && allowsType(user.getRoles(), value.getType())
                 && (napne || authoredBy(value, authorEmails)))).toList();
+    }
+
+    public boolean canViewTimelineRecord(Long studentId, String recordId) {
+        UserAccount user = currentUser.require();
+        return records.findById(recordId)
+                .filter(record -> studentId.equals(record.getStudentId()))
+                .filter(record -> user.getRoles().contains(RoleName.NAPNE)
+                        || visibleToPedagogicalTeam(studentId, record, emailHistory.previouslyOwnedAddresses(user)))
+                .isPresent();
+    }
+
+    private boolean visibleToPedagogicalTeam(Long studentId, CareRecordDocument value, Set<String> authorEmails) {
+        return PEDAGOGICAL_VISIBLE.contains(value.getType())
+                && (value.getSubjectId() == null || access.canViewSubject(studentId, value.getSubjectId()))
+                && (value.getStatus() != RecordStatus.DRAFT || authoredBy(value, authorEmails));
     }
 
     public CareRecordDocument create(Long studentId, CareRecordRequest request, Authentication auth, HttpServletRequest http) {

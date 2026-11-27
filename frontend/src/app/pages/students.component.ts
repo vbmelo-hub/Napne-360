@@ -10,15 +10,39 @@ import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 import { ModalShellComponent } from '../shared/modal-shell.component';
 import { PaginationComponent } from '../shared/pagination.component';
+import { SearchableSelectComponent } from '../shared/searchable-select.component';
 
-@Component({standalone:true,imports:[ReactiveFormsModule,RouterLink,ModalShellComponent,PaginationComponent,ConfirmDialogComponent],template:`
+import { reconcileRequiredSelection } from '../core/required-selection';
+
+@Component({standalone:true,imports:[ReactiveFormsModule,RouterLink,ModalShellComponent,PaginationComponent,ConfirmDialogComponent,SearchableSelectComponent],template:`
   <header class="page-header"><div><span class="eyebrow">Área de trabalho</span><h1>Estudantes</h1><p>A lista respeita seu campus e os vínculos atribuídos ao seu perfil.</p></div>@if(auth.hasRole('NAPNE')){<button type="button" (click)="showForm.set(true)">Novo estudante</button>}</header>
   <section class="card students-list" aria-labelledby="students-title"><div class="list-toolbar"><div><h2 id="students-title">{{showArchived() ? 'Estudantes arquivados' : 'Estudantes acompanhados'}}</h2>@if(!loading()&&!error()){<p>{{totalElements()}} {{totalElements()===1?'resultado':'resultados'}}</p>}</div><form class="search" (submit)="$event.preventDefault(); searchStudents()"><label class="sr-only" for="search">Buscar estudante</label><input id="search" type="search" [formControl]="search" placeholder="Buscar por nome ou matrícula">
     @if(auth.hasRole('TEACHER') && !auth.hasRole('NAPNE')) {
       <label class="sr-only" for="academic-search">Buscar por componente, turma ou período</label>
       <input id="academic-search" type="search" [formControl]="academicSearch" placeholder="Componente, turma ou período">
     }
-    <button type="submit" class="secondary">Buscar</button>
+    @if (filterCourses().length) {
+      <label>Curso
+        <select [formControl]="courseFilter" (change)="searchStudents()">
+          <option value="">Todos</option>
+          @for (course of filterCourses(); track course.id) {
+            <option [value]="course.id">{{course.name}} · {{course.code}}</option>
+          }
+        </select>
+      </label>
+    }
+    @if (!showArchived()) {
+      <label>Situação
+        <select [formControl]="statusFilter" (change)="searchStudents()">
+          <option value="">Todas</option>
+          @for (status of studentStatuses; track status) {<option [value]="status">{{label(status)}}</option>}
+        </select>
+      </label>
+    }
+    <button type="submit" class="secondary compact">Buscar</button>
+    @if (hasFilters()) {
+      <button type="button" class="secondary compact" (click)="clearSearch()">Limpar filtros</button>
+    }
     @if(auth.hasRole('NAPNE')) {
       <button type="button" class="secondary" [attr.aria-pressed]="showArchived()" (click)="toggleArchived()">
         {{showArchived() ? 'Ver acompanhados' : 'Ver arquivados'}}
@@ -26,7 +50,7 @@ import { PaginationComponent } from '../shared/pagination.component';
     }</form></div>
     @if(error()){<div class="error-state" role="alert"><strong>Não foi possível carregar os estudantes.</strong><p>{{error()}}</p><button class="secondary" (click)="retry()">Tentar novamente</button></div>}
     @if(loading()){<div class="loading-grid" aria-label="Carregando estudantes"><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-card"></span><span class="skeleton skeleton-card"></span></div>}
-    @if(!loading()&&!error()&&students().length===0){<div class="empty-state"><span class="empty-state-mark" aria-hidden="true">0</span><h3>Nenhum estudante disponível</h3><p>{{(appliedSearch() || appliedAcademicSearch()) ? 'Nenhum estudante corresponde à busca informada.' : showArchived() ? 'Não há estudantes arquivados neste campus.' : 'Não há estudantes vinculados ao seu perfil neste momento.'}}</p>@if(appliedSearch() || appliedAcademicSearch()){<button class="secondary" (click)="clearSearch()">Limpar busca</button>}</div>}
+    @if(!loading()&&!error()&&students().length===0){<div class="empty-state"><span class="empty-state-mark" aria-hidden="true">0</span><h3>Nenhum estudante disponível</h3><p>{{(hasFilters()) ? 'Nenhum estudante corresponde à busca informada.' : showArchived() ? 'Não há estudantes arquivados neste campus.' : 'Não há estudantes vinculados ao seu perfil neste momento.'}}</p></div>}
     @if(!loading()&&!error()&&students().length>0){<div class="table-wrap table-borderless"><table class="mobile-cards"><thead><tr><th>Estudante</th><th>Matrícula</th><th>Curso e campus</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead><tbody>@for(student of students();track student.id){<tr><td data-label="Estudante"><div class="student-cell"><span class="avatar avatar--small" aria-hidden="true">{{initials(student.displayName)}}</span><strong>{{student.displayName}}</strong></div></td><td data-label="Matrícula">{{student.registration}}</td><td data-label="Curso e campus"><strong>{{student.course}}</strong><small>{{student.campus}}</small></td><td data-label="Situação"><span [class]="'badge badge--'+tone(student.status)">{{label(student.status)}}</span></td><td><a class="button secondary compact" [routerLink]="['/estudantes',student.id]">Abrir acompanhamento</a>
     @if(auth.hasRole('NAPNE')) {
       <button type="button" class="secondary compact" [disabled]="busy()" (click)="pending.set(student)">
@@ -41,16 +65,45 @@ import { PaginationComponent } from '../shared/pagination.component';
   <app-confirm-dialog [open]="pending() !== null" [title]="pending()?.status === 'ARCHIVED' ? 'Reativar estudante?' : 'Arquivar estudante?'"
     [description]="statusDescription()" [danger]="pending()?.status !== 'ARCHIVED'"
     (confirmed)="confirmStatus()" (cancelled)="pending.set(null)" />
-  <app-modal-shell [open]="showForm()" eyebrow="Novo cadastro" title="Cadastrar estudante" description="Informe os dados usados para identificação e vínculo acadêmico." (closed)="closeForm()"><form class="stack" [formGroup]="form" (ngSubmit)="create()" novalidate><fieldset><legend>Identificação</legend><div class="grid two"><label><span>Nome civil&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="civilName" aria-required="true" autocomplete="off"></label><label>Nome social<input formControlName="socialName" autocomplete="off"></label><label><span>Matrícula&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="registration" aria-required="true"></label><label>Data de nascimento<input type="date" formControlName="birthDate"></label></div></fieldset><fieldset><legend>Vínculo acadêmico</legend><label><span>Curso&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="courseId" aria-required="true"><option value="">Selecione</option>@for(course of courses();track course.id){<option [value]="course.id">{{course.name}} · {{course.campus}}</option>}</select></label></fieldset><fieldset><legend>Contato</legend><div class="grid two"><label>E-mail institucional<input type="email" formControlName="institutionalEmail"></label><label>Telefone<input formControlName="phone"></label></div></fieldset><div class="dialog-actions"><button class="secondary" type="button" (click)="closeForm()">Cancelar</button><button type="submit" [disabled]="form.invalid||saving()">@if(saving()){<span class="spinner"></span>}Salvar estudante</button></div></form></app-modal-shell>
-`,styles:[`.students-list{padding:0;overflow:hidden}.list-toolbar{display:flex;align-items:end;justify-content:space-between;gap:1rem;padding:1.25rem 1.5rem}.list-toolbar h2{margin:0}.list-toolbar p{margin:0;color:var(--ink-600);font-size:.86rem}.search{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:.5rem}.search input{width:auto;min-width:12rem;flex:1}.table-borderless{border-left:0;border-right:0;border-radius:0}.student-cell{display:flex;align-items:center;gap:.7rem}.table-wrap td small,.table-wrap td strong{display:block}.table-wrap td small{color:var(--ink-600)}.students-pagination{display:block;padding:0 1.5rem 1.25rem}.loading-grid,.empty-state,.error-state{margin:0 1.5rem 1.5rem}.error-state{padding:1.2rem;background:var(--danger-soft);border-radius:var(--radius-md);color:var(--danger)}.error-state p{margin:.25rem 0 1rem}@media(max-width:700px){.list-toolbar{align-items:stretch;flex-direction:column;padding:1rem}.search{justify-content:stretch}.table-wrap{overflow:visible;border:0;padding:0 1rem}.students-pagination{padding:0 1rem 1rem}.loading-grid,.empty-state,.error-state{margin:0 1rem 1rem}}` ]})
+  <app-modal-shell [open]="showForm()" eyebrow="Novo cadastro" title="Cadastrar estudante" description="Informe os dados usados para identificação e vínculo acadêmico." (closed)="closeForm()"><form class="stack" [formGroup]="form" (ngSubmit)="create()" novalidate><fieldset><legend>Identificação</legend><div class="grid two"><label><span>Nome civil&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="civilName" aria-required="true" autocomplete="off"></label><label>Nome social<input formControlName="socialName" autocomplete="off"></label><label><span>Matrícula&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="registration" aria-required="true"></label><label>Data de nascimento<input type="date" formControlName="birthDate"></label></div></fieldset><fieldset><legend>Vínculo acadêmico</legend><app-searchable-select label="Curso" formControlName="courseId" [required]="true"
+      [options]="courseOptions()" [readonly]="saving()" placeholder="Nome, código ou campus" /></fieldset><fieldset><legend>Contato</legend><div class="grid two"><label>E-mail institucional<input type="email" formControlName="institutionalEmail"></label><label>Telefone<input formControlName="phone"></label></div></fieldset><div class="dialog-actions"><button class="secondary" type="button" (click)="closeForm()">Cancelar</button><button type="submit" [disabled]="form.invalid||saving()">@if(saving()){<span class="spinner"></span>}Salvar estudante</button></div></form></app-modal-shell>
+`,styles:[`.students-list{padding:0;overflow:hidden}.list-toolbar{display:flex;align-items:end;justify-content:space-between;gap:1rem;padding:1.25rem 1.5rem}.list-toolbar h2{margin:0}.list-toolbar p{margin:0;color:var(--ink-600);font-size:.86rem}.search{display:flex;align-items:end;flex-wrap:wrap;justify-content:flex-end;gap:.5rem;background:var(--surface-soft);padding:.65rem;border-radius:var(--radius-sm)}.search label{min-width:7rem;flex:1;font-size:.82rem;gap:.2rem}.search input,.search select{font-size:.875rem;min-height:2.25rem;padding:.32rem .55rem}.search input{width:auto;min-width:12rem;flex:1}.table-borderless{border-left:0;border-right:0;border-radius:0}.student-cell{display:flex;align-items:center;gap:.7rem}.table-wrap td small,.table-wrap td strong{display:block}.table-wrap td small{color:var(--ink-600)}.students-pagination{display:block;padding:0 1.5rem 1.25rem}.loading-grid,.empty-state,.error-state{margin:0 1.5rem 1.5rem}.error-state{padding:1.2rem;background:var(--danger-soft);border-radius:var(--radius-md);color:var(--danger)}.error-state p{margin:.25rem 0 1rem}@media(max-width:700px){.list-toolbar{align-items:stretch;flex-direction:column;padding:1rem}.search{justify-content:stretch}.table-wrap{overflow:visible;border:0;padding:0 1rem}.students-pagination{padding:0 1rem 1rem}.loading-grid,.empty-state,.error-state{margin:0 1rem 1rem}}` ]})
 export class StudentsComponent implements OnInit{
   private readonly api=inject(ApiService);private readonly fb=inject(FormBuilder);private readonly toast=inject(ToastService);readonly auth=inject(AuthService);
   readonly result=signal<Page<StudentSummary>|null>(null);readonly students=computed(()=>this.result()?.content??[]);readonly totalElements=computed(()=>this.result()?.totalElements??0);readonly totalPages=computed(()=>Math.max(this.result()?.totalPages??1,1));readonly pageNumber=computed(()=>this.result()?.number??0);readonly courses=signal<Course[]>([]);readonly loading=signal(false);readonly saving=signal(false);readonly showForm=signal(false);readonly error=signal('');readonly search=this.fb.nonNullable.control('');readonly label=labelFor;readonly tone=toneFor;
-  readonly form=this.fb.group({registration:['',Validators.required],courseId:['',Validators.required],civilName:['',Validators.required],socialName:[''],birthDate:[''],institutionalEmail:['',Validators.email],phone:['']});
-  ngOnInit(){this.load(0);if(this.auth.hasRole('NAPNE'))this.api.courses().subscribe({next:v=>this.courses.set(v),error:()=>this.toast.show('Não foi possível carregar os cursos.','error')});}
+  readonly form=this.fb.nonNullable.group({registration:['',Validators.required],courseId:['',Validators.required],civilName:['',Validators.required],socialName:[''],birthDate:[''],institutionalEmail:['',Validators.email],phone:['']});
+  readonly courseOptions = computed(() => this.courses().map(course => ({
+    id: String(course.id), label: course.name, detail: `${course.code} · ${course.campus}`,
+  })));
+  ngOnInit() {
+    this.load(0);
+    this.api.studentFilterCourses().subscribe({
+      next: courses => this.filterCourses.set(courses),
+      error: () => this.toast.show('Não foi possível carregar os cursos para filtragem.', 'error'),
+    });
+    if (this.auth.hasRole('NAPNE')) this.api.courses().subscribe({
+      next: courses => {
+        this.courses.set(courses);
+        this.selectRequiredCourse();
+      },
+      error: () => this.toast.show('Não foi possível carregar os cursos.', 'error'),
+    });
+  }
+
+  private selectRequiredCourse(): void {
+    reconcileRequiredSelection(this.form.controls.courseId, this.courses().map(course => String(course.id)));
+  }
   readonly appliedSearch = signal('');
   readonly academicSearch = this.fb.nonNullable.control('');
   readonly appliedAcademicSearch = signal('');
+  readonly filterCourses = signal<Pick<Course, 'id' | 'name' | 'code'>[]>([]);
+  readonly courseFilter = this.fb.nonNullable.control('');
+  readonly statusFilter = this.fb.nonNullable.control('');
+  readonly studentStatuses = ['ACTIVE', 'INACTIVE', 'COMPLETED', 'TRANSFERRED'];
+  private readonly appliedCourse = signal('');
+  private readonly appliedStatus = signal('');
+  readonly hasFilters = computed(() => !!(this.appliedSearch() || this.appliedAcademicSearch()
+    || this.appliedCourse() || this.appliedStatus()));
   readonly showArchived = signal(false);
   readonly busy = signal(false);
   readonly pending = signal<StudentSummary | null>(null);
@@ -65,7 +118,7 @@ export class StudentsComponent implements OnInit{
     this.requestedPage = page;
     this.loading.set(true);
     this.error.set('');
-    this.api.students(this.appliedSearch(), page, this.appliedAcademicSearch(), this.showArchived()).subscribe({
+    this.api.students(this.appliedSearch(), page, this.appliedAcademicSearch(), this.showArchived(), this.appliedCourse(), this.appliedStatus()).subscribe({
       next: result => {
         if (request !== this.studentsRequest) return;
         this.result.set(result);
@@ -81,17 +134,23 @@ export class StudentsComponent implements OnInit{
   searchStudents() {
     this.appliedSearch.set(this.search.value.trim());
     this.appliedAcademicSearch.set(this.academicSearch.value.trim());
+    this.appliedCourse.set(this.courseFilter.value);
+    this.appliedStatus.set(this.statusFilter.value);
     this.load(0);
   }
 
   clearSearch() {
     this.search.setValue('');
-    this.academicSearch.setValue('');
+    this.academicSearch.reset();
+    this.courseFilter.reset();
+    this.statusFilter.reset();
     this.searchStudents();
   }
 
   toggleArchived() {
     this.showArchived.set(!this.showArchived());
+    this.statusFilter.reset();
+    this.appliedStatus.set('');
     this.load(0);
   }
 
@@ -117,6 +176,6 @@ export class StudentsComponent implements OnInit{
 
   retry() { this.load(this.requestedPage); }
   closeForm(){if(!this.saving())this.showForm.set(false)}
-  create(){this.form.markAllAsTouched();if(this.form.invalid)return;this.saving.set(true);const raw=this.form.getRawValue();this.api.createStudent({...raw,courseId:Number(raw.courseId),birthDate:raw.birthDate||null}).subscribe({next:()=>{this.form.reset();this.saving.set(false);this.showForm.set(false);this.toast.show('Estudante cadastrado com sucesso.','success');this.load(0);},error:e=>{this.saving.set(false);this.toast.show(errorMessage(e,'salvar o estudante'),'error');}})}
+  create(){this.form.markAllAsTouched();if(this.form.invalid)return;this.saving.set(true);const raw=this.form.getRawValue();this.api.createStudent({...raw,courseId:Number(raw.courseId),birthDate:raw.birthDate||null}).subscribe({next:()=>{this.form.reset();this.selectRequiredCourse();this.saving.set(false);this.showForm.set(false);this.toast.show('Estudante cadastrado com sucesso.','success');this.load(0);},error:e=>{this.saving.set(false);this.toast.show(errorMessage(e,'salvar o estudante'),'error');}})}
   initials(name:string){return name.split(' ').filter(Boolean).slice(0,2).map(v=>v[0]).join('').toUpperCase()}
 }

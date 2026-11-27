@@ -28,8 +28,8 @@ public class AcademicController {
 
     @GetMapping("/admin/academic/offerings") @PreAuthorize("hasRole('ADMIN')")
     public Page<AcademicService.OfferingView> offerings(@RequestParam(defaultValue = "") String query,
-                            @RequestParam(defaultValue = "false") boolean onlyActive, Pageable page) {
-        return academic.offerings(query, onlyActive, page);
+                            @RequestParam(defaultValue = "false") boolean onlyActive, AcademicListFilters filters, Pageable page) {
+        return academic.offerings(query, onlyActive, filters, page);
     }
 
     @PostMapping("/admin/academic/offerings") @PreAuthorize("hasRole('ADMIN')")
@@ -43,8 +43,8 @@ public class AcademicController {
     }
 
     @GetMapping("/admin/academic/teaching") @PreAuthorize("hasRole('ADMIN')")
-    public Page<AcademicService.TeachingView> teaching(@RequestParam(defaultValue = "") String query, Pageable page) {
-        return academic.teaching(query, page);
+    public Page<AcademicService.TeachingView> teaching(@RequestParam(defaultValue = "") String query, AcademicListFilters filters, Pageable page) {
+        return academic.teaching(query, filters, page);
     }
 
     @PostMapping("/admin/academic/teaching") @PreAuthorize("hasRole('ADMIN')")
@@ -68,8 +68,8 @@ public class AcademicController {
     }
 
     @GetMapping("/students/{studentId}/academic/enrollments") @PreAuthorize("hasRole('NAPNE')")
-    public Page<AcademicService.EnrollmentView> enrollments(@PathVariable Long studentId, @RequestParam(defaultValue = "") String query, Pageable page) {
-        return academic.enrollments(studentId, query, page);
+    public Page<AcademicService.EnrollmentView> enrollments(@PathVariable Long studentId, @RequestParam(defaultValue = "") String query, AcademicListFilters filters, Pageable page) {
+        return academic.enrollments(studentId, query, filters, page);
     }
 
     @PostMapping("/students/{studentId}/academic/enrollments") @PreAuthorize("hasRole('NAPNE')")

@@ -17,6 +17,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.HashMap;
 
 @Repository
 @RequiredArgsConstructor
@@ -76,25 +77,66 @@ public class AcademicRepository {
                 """, "lower(concat(r.code, ' ', r.label))", query, "r.code desc, r.id", Map.of(), page);
     }
 
-    Page<AcademicOffering> offerings(String query, boolean activeOnly, Long courseId, Pageable page) {
+    Page<AcademicOffering> offerings(String query, boolean activeOnly, Long courseId, AcademicListFilters filters,
+                                    Pageable page) {
         String from = "from AcademicOffering o where " + (activeOnly ? ACTIVE_OFFER : "1 = 1 ");
-        Map<String, ?> params = courseId == null ? Map.of() : Map.of("course", courseId);
-        if (courseId != null) from += " and o.subject.course.id = :course ";
+        Map<String, Object> params = new HashMap<>();
+        if (courseId != null) {
+            from += " and o.subject.course.id = :course ";
+            params.put("course", courseId);
+        }
+        from += offeringCriteria(filters, "o.active", params);
+        if (filters.teacherId() != null) {
+            from += """
+                    and exists (select 1 from TeachingAssignment teacherLink where teacherLink.offering.id = o.id
+                        and teacherLink.teacher.id = :teacherId)
+                    """;
+            params.put("teacherId", filters.teacherId());
+        }
         return page(AcademicOffering.class, "o", from, OFFER_SEARCH, query,
                 "o.period.code desc, o.subject.name, o.groupCode, o.id", params, page);
     }
 
-    Page<TeachingAssignment> teaching(String query, Pageable page) {
-        return page(TeachingAssignment.class, "t", "from TeachingAssignment t join t.offering o where 1 = 1 ",
-                "concat(lower(t.teacher.name), ' ', " + OFFER_SEARCH + ")", query,
-                "o.period.code desc, o.subject.name, o.groupCode, t.teacher.name, t.id", Map.of(), page);
+    Page<TeachingAssignment> teaching(String query, AcademicListFilters filters, Pageable page) {
+        Map<String, Object> params = new HashMap<>();
+        String from = "from TeachingAssignment t join t.offering o where 1 = 1 "
+                + offeringCriteria(filters, "t.active", params);
+        if (filters.teacherId() != null) {
+            from += " and t.teacher.id = :teacherId ";
+            params.put("teacherId", filters.teacherId());
+        }
+        return page(TeachingAssignment.class, "t", from, "concat(lower(t.teacher.name), ' ', " + OFFER_SEARCH + ")",
+                query, "o.period.code desc, o.subject.name, o.groupCode, t.teacher.name, t.id", params, page);
     }
 
-    Page<AcademicEnrollment> enrollments(Long studentId, String query, Pageable page) {
-        return page(AcademicEnrollment.class, "e", """
-                from AcademicEnrollment e join e.offering o where e.student.id = :student
-                """, OFFER_SEARCH, query, "o.period.code desc, o.subject.name, o.groupCode, e.id",
-                Map.of("student", studentId), page);
+    Page<AcademicEnrollment> enrollments(Long studentId, String query, AcademicListFilters filters, Pageable page) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("student", studentId);
+        String from = "from AcademicEnrollment e join e.offering o where e.student.id = :student "
+                + offeringCriteria(filters, "e.active", params);
+        return page(AcademicEnrollment.class, "e", from, OFFER_SEARCH, query,
+                "o.period.code desc, o.subject.name, o.groupCode, e.id", params, page);
+    }
+
+    private String offeringCriteria(AcademicListFilters filters, String activeField, Map<String, Object> params) {
+        var criteria = new StringBuilder();
+        filter(criteria, params, "courseId", filters.courseId(), "o.subject.course.id = :courseId");
+        filter(criteria, params, "subjectId", filters.subjectId(), "o.subject.id = :subjectId");
+        filter(criteria, params, "subject", normalized(filters.subject()), "(lower(o.subject.name) = :subject or lower(o.subject.code) = :subject)");
+        filter(criteria, params, "groupCode", normalized(filters.groupCode()), "lower(o.groupCode) = :groupCode");
+        filter(criteria, params, "periodCode", normalized(filters.periodCode()), "lower(o.period.code) = :periodCode");
+        filter(criteria, params, "active", filters.active(), activeField + " = :active");
+        return criteria.toString();
+    }
+
+    private static void filter(StringBuilder criteria, Map<String, Object> params, String key, Object value, String clause) {
+        if (value == null) return;
+        criteria.append(" and ").append(clause).append(' ');
+        params.put(key, value);
+    }
+
+    private static String normalized(String value) {
+        return value == null || value.isBlank() ? null : value.strip().toLowerCase(Locale.ROOT);
     }
 
     List<AcademicOffering> peiOffers(Long studentId, Long teacherId) {
@@ -185,6 +227,19 @@ public class AcademicRepository {
                 select count(*) from academic_offering o join subject s on s.id = o.subject_id
                 where s.course_id = ? and (? = false or o.active = true)
                 """, courseId, activeOnly);
+    }
+
+    public boolean hasSubjectOfferings(Long subjectId) {
+        return exists("select count(*) from academic_offering where subject_id = ?", subjectId);
+    }
+
+    public boolean hasActiveSubjectDependencies(Long subjectId) {
+        return exists("""
+                select count(*) from academic_offering o where o.subject_id = ? and (
+                    o.active = true
+                    or exists (select 1 from academic_enrollment e where e.offering_id = o.id and e.active = true)
+                    or exists (select 1 from teaching_assignment t where t.offering_id = o.id and t.active = true))
+                """, subjectId);
     }
 
     AcademicOffering findOffering(Long subjectId, Long periodId, String groupCode) {

@@ -14,6 +14,7 @@ import br.edu.ifac.napne360.student.Student;
 import br.edu.ifac.napne360.student.StudentAssignment;
 import br.edu.ifac.napne360.student.StudentAssignmentRepository;
 import br.edu.ifac.napne360.student.StudentRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -24,6 +25,9 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -33,6 +37,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -44,6 +49,7 @@ class AdminIdentityIntegrationTest {
     private static final String CAMPUSES = "/api/v1/admin/campuses";
     private static final String PASSWORD = "SenhaTemporaria!94";
     @Autowired MockMvc mvc;
+    @Autowired ObjectMapper json;
     @Autowired CampusRepository campuses;
     @Autowired CourseRepository courses;
     @Autowired UserAccountRepository users;
@@ -68,6 +74,22 @@ class AdminIdentityIntegrationTest {
         mvc.perform(admin(post(USERS + "/cpf-search")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"cpf\":\"52998224725\"}")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(id));
+        mvc.perform(admin(pageRequest(Map.of("query", "529.982.247-25 SIAPE-42"))))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(id))
+                .andExpect(jsonPath("$.content[0].cpfMasked").value("***.***.***-25"))
+                .andExpect(jsonPath("$.content[0].cpf").doesNotExist());
+        mvc.perform(admin(candidateRequest(Map.of("roles", List.of("ADMIN"), "query", "529.982.247-25"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].id").value(id))
+                .andExpect(jsonPath("$.content[0].cpfMasked").value("***.***.***-25"))
+                .andExpect(jsonPath("$.content[0].cpf").doesNotExist());
+        mvc.perform(admin(pageRequest(Map.of("query", "529.982"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
+        mvc.perform(post(USERS + "/cpf-search").with(user("napne@example.test").roles("NAPNE"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"cpf\":\"52998224725\"}"))
+                .andExpect(status().isForbidden());
         mvc.perform(create(email, "11144477735")).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("USER_EMAIL_DUPLICATE"));
         mvc.perform(create(email(), "52998224725")).andExpect(status().isConflict())
@@ -76,6 +98,112 @@ class AdminIdentityIntegrationTest {
                 .andExpect(jsonPath("$.code").value("USER_CPF_INVALID"));
         mvc.perform(get(USERS + "/{id}", id).with(user("napne@example.test").roles("NAPNE")))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void paginatesAfterCombiningFiltersAndCountsEachMultiRoleAccountOnce() throws Exception {
+        var campus = campuses.saveAndFlush(Campus.builder().name("Campus dos filtros").code(UUID.randomUUID().toString()).build());
+        String prefix = "Pesquisa " + UUID.randomUUID();
+        var multi = listedUser(prefix, "REG-100", campus, true, false, RoleName.NAPNE, RoleName.TUTOR);
+        var second = listedUser(prefix, "REG-200", campus, true, false, RoleName.TUTOR);
+        var blocked = listedUser(prefix, "REG-300", campus, false, true, RoleName.TUTOR);
+        var inactive = listedUser(prefix, "REG-400", campus, false, false, RoleName.TUTOR);
+        var technical = listedUser(prefix, "REG-500", null, true, false, RoleName.ADMIN);
+
+        mvc.perform(admin(pageRequest(Map.of("query", prefix, "campus", campus.getId().toString(),
+                        "role", "TUTOR", "status", "ACTIVE", "size", 1, "page", 1))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.totalPages").value(2)).andExpect(jsonPath("$.content[0].id").value(second.getId()));
+        mvc.perform(admin(pageRequest(Map.of("query", "reg-100", "role", "NAPNE"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(multi.getId()))
+                .andExpect(jsonPath("$.content[0].cpf").doesNotExist());
+        mvc.perform(admin(pageRequest(Map.of("query", multi.getId().toString(), "role", "TUTOR"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].id").value(multi.getId()));
+        mvc.perform(admin(pageRequest(Map.of("query", prefix, "status", "BLOCKED"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(blocked.getId()));
+        mvc.perform(admin(pageRequest(Map.of("query", prefix, "status", "INACTIVE"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(inactive.getId()));
+        mvc.perform(admin(pageRequest(Map.of("query", prefix, "campus", "none"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(technical.getId()));
+        mvc.perform(admin(pageRequest(Map.of("query", "%")))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(0));
+        mvc.perform(admin(pageRequest(Map.of("size", 101)))).andExpect(status().isBadRequest());
+        mvc.perform(pageRequest(Map.of()).with(user("napne@example.test").roles("NAPNE")))
+                .andExpect(status().isForbidden());
+        mvc.perform(admin(get(USERS))).andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+    }
+
+    @Test
+    void anElevenDigitRegistrationRemainsSearchableEvenWhenItIsNotAValidCpf() throws Exception {
+        var account = listedUser("Conta com matrícula numérica", "12345678901", null, true, false, RoleName.ADMIN);
+        mvc.perform(admin(pageRequest(Map.of("query", "12345678901 " + account.getEmail().toUpperCase(java.util.Locale.ROOT)))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(account.getId()));
+    }
+
+    @Test
+    void candidateSearchPagesActiveMultiRoleMatchesAndReturnsTheEligibleSelectionSeparately() throws Exception {
+        var campus = campuses.saveAndFlush(Campus.builder().name("Campus de candidatos").code(UUID.randomUUID().toString()).build());
+        var other = campuses.saveAndFlush(Campus.builder().name("Outro campus").code(UUID.randomUUID().toString()).build());
+        String prefix = "Candidatos " + UUID.randomUUID();
+        var matching = new java.util.ArrayList<UserAccount>();
+        for (int index = 0; index < 32; index++) {
+            var roles = index % 2 == 0 ? new RoleName[]{RoleName.TEACHER, RoleName.TUTOR}
+                    : new RoleName[]{RoleName.TUTOR};
+            matching.add(listedUser(prefix, null, campus, true, false, roles));
+        }
+        var inactive = listedUser(prefix, null, campus, false, false, RoleName.TEACHER);
+        var wrongRole = listedUser(prefix, null, campus, true, false, RoleName.NAPNE);
+        var outside = listedUser(prefix, null, other, true, false, RoleName.TEACHER);
+        var selected = listedUser("Seleção prévia", null, campus, true, false, RoleName.TEACHER);
+        var filters = new HashMap<String, Object>(Map.of("campusId", campus.getId(), "roles", List.of("TEACHER", "TUTOR"),
+                "query", prefix, "selectedId", selected.getId(), "excludedId", matching.getFirst().getId()));
+
+        mvc.perform(admin(candidateRequest(filters))).andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.totalElements").value(31))
+                .andExpect(jsonPath("$.content.length()").value(30))
+                .andExpect(jsonPath("$.content[0].id").value(matching.get(1).getId()))
+                .andExpect(jsonPath("$.selected.id").value(selected.getId()));
+
+        filters.put("page", 1);
+        for (var ineligible : List.of(inactive, outside, wrongRole, matching.getFirst())) {
+            filters.put("selectedId", ineligible.getId());
+            mvc.perform(admin(candidateRequest(filters))).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalElements").value(31))
+                    .andExpect(jsonPath("$.content.length()").value(1))
+                    .andExpect(jsonPath("$.content[0].id").value(matching.getLast().getId()))
+                    .andExpect(jsonPath("$.selected").value(org.hamcrest.Matchers.nullValue()));
+        }
+        filters.remove("campusId");
+        filters.put("selectedId", outside.getId());
+        mvc.perform(admin(candidateRequest(filters))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(32))
+                .andExpect(jsonPath("$.selected.id").value(outside.getId()));
+        mvc.perform(admin(candidateRequest(Map.of("roles", List.of())))).andExpect(status().isBadRequest());
+        mvc.perform(candidateRequest(filters).with(user("napne@example.test").roles("NAPNE")))
+                .andExpect(status().isForbidden());
+    }
+
+    private MockHttpServletRequestBuilder candidateRequest(Map<String, Object> filters) throws Exception {
+        return post(USERS + "/candidates").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(filters));
+    }
+
+    private MockHttpServletRequestBuilder pageRequest(Map<String, Object> filters) throws Exception {
+        var request = new HashMap<String, Object>(Map.of("page", 0, "size", 10));
+        request.putAll(filters);
+        return post(USERS + "/page").contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(request));
+    }
+
+    private UserAccount listedUser(String name, String registration, Campus campus, boolean active,
+                                   boolean securityBlocked, RoleName... roles) {
+        return users.saveAndFlush(UserAccount.builder().name(name).institutionalRegistration(registration)
+                .email(email()).campus(campus).active(active).securityBlocked(securityBlocked)
+                .passwordHash("unused").roles(Set.of(roles)).build());
     }
 
     @Test

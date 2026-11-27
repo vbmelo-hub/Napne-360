@@ -78,6 +78,10 @@ describe('Casos no acompanhamento do estudante', () => {
 
   function openCases() {
     click(fixture.nativeElement, 'Casos');
+    for (const request of http.match(studentUrl + '/cases/stages')) {
+      request.flush([{ code: 'RECEIVED', label: 'Recebido' }, { code: 'CUSTOM_TEST', label: 'Etapa configurada' }]);
+    }
+    fixture.detectChanges();
     return [...fixture.nativeElement.querySelectorAll('.case-card')] as HTMLElement[];
   }
 

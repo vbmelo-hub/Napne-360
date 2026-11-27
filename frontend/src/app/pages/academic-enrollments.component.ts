@@ -1,7 +1,7 @@
 import { Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { FormControl, ReactiveFormsModule } from '@angular/forms';
-import { AcademicApi, AcademicEnrollment, AcademicOffering } from '../core/academic-api.service';
+import { FormBuilder, FormControl, ReactiveFormsModule } from '@angular/forms';
+import { AcademicApi, AcademicEnrollment, AcademicListFilters, AcademicOffering } from '../core/academic-api.service';
 import { Page } from '../core/models';
 import { errorMessage } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
@@ -21,9 +21,26 @@ import { PaginationComponent } from '../shared/pagination.component';
         </div>
         <button type="button" (click)="openOptions()" [disabled]="busy()">Registrar matrícula</button>
       </div>
-      <form class="row" (submit)="$event.preventDefault(); load(0)">
-        <label>Buscar matrículas <input type="search" [formControl]="search" placeholder="Componente, turma ou período"></label>
-        <button class="secondary" type="submit">Buscar</button>
+      <form class="server-list-toolbar" (submit)="$event.preventDefault(); applyFilters()">
+        <label class="toolbar-search">Buscar matrículas <input type="search" [formControl]="search" placeholder="Componente, turma ou período"></label>
+        <details>
+          <summary>Filtros{{filteredCount() ? ' (' + filteredCount() + ')' : ''}}</summary>
+          <div class="server-list-toolbar" [formGroup]="filters">
+            <label>Componente <input formControlName="subject" placeholder="Nome ou código exato"></label>
+            <label>Turma <input formControlName="groupCode" placeholder="Código da turma"></label>
+            <label>Período letivo <input formControlName="periodCode" placeholder="Ex.: 2026.2"></label>
+            <label>Situação<select formControlName="active"><option value="">Todas</option>
+              <option value="true">Ativa</option><option value="false">Encerrada</option>
+            </select></label>
+          </div>
+        </details>
+        <button class="secondary compact" type="submit">Buscar</button>
+        @if (filteredCount() || appliedQuery) {
+          <button class="secondary compact" type="button" (click)="clearFilters()">Limpar filtros</button>
+        }
+        @if (enrollments() && !loading() && !error()) {
+          <span class="meta" role="status">{{enrollments()?.totalElements}} resultado(s)</span>
+        }
       </form>
       @if (error()) {<p class="error" role="alert">{{error()}}</p>}
       @if (loading()) {<p class="meta" role="status">Carregando matrículas…</p>}
@@ -84,6 +101,10 @@ export class AcademicEnrollmentsComponent {
   private readonly toast = inject(ToastService);
   readonly studentId = input.required<number>();
   readonly search = new FormControl('', { nonNullable: true });
+  readonly filters = inject(FormBuilder).nonNullable.group({subject: '', groupCode: '', periodCode: '', active: ''});
+  readonly filteredCount = signal(0);
+  protected appliedQuery = '';
+  private appliedFilters: AcademicListFilters = {};
   readonly optionSearch = new FormControl('', { nonNullable: true });
   readonly enrollments = signal<Page<AcademicEnrollment> | null>(null);
   readonly options = signal<Page<AcademicOffering> | null>(null);
@@ -104,13 +125,31 @@ export class AcademicEnrollmentsComponent {
     effect(() => this.load(0));
   }
 
+  applyFilters(): void {
+    this.appliedQuery = this.search.value.trim();
+    this.appliedFilters = this.filters.getRawValue();
+    this.filteredCount.set(Object.values(this.appliedFilters).filter(value => value.trim()).length);
+    this.load(0);
+  }
+
+  clearFilters(): void {
+    this.search.reset();
+    this.filters.reset();
+    this.applyFilters();
+  }
+
   load(page: number) {
     const request = ++this.request;
     this.loading.set(true);
     this.error.set('');
-    this.api.enrollments(this.studentId(), page, this.search.value).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.api.enrollments(this.studentId(), page, this.appliedQuery, this.appliedFilters).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: result => {
         if (request !== this.request) return;
+        const lastPage = Math.max(0, result.totalPages - 1);
+        if (result.number > lastPage) {
+          this.load(lastPage);
+          return;
+        }
         this.enrollments.set(result);
         this.loading.set(false);
       },

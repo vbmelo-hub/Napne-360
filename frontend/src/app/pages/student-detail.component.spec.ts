@@ -249,7 +249,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     fixture.detectChanges();
     expect(Array.from(root.querySelectorAll('.record-card h3'), row => row.textContent)).toEqual(['Registro 10']);
 
-    const filter = root.querySelector<HTMLInputElement>('.records-list > label.list-filter input[type="search"]');
+    const filter = root.querySelector<HTMLInputElement>('.records-list app-list-filters input[type="search"]');
     expect(filter).not.toBeNull();
     if (!filter) return;
     filter.value = 'orientacao individual';
@@ -272,7 +272,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     expect(timelineTab).toBeDefined();
     timelineTab?.click();
     fixture.detectChanges();
-    expect(apiService.timeline).toHaveBeenCalledOnceWith(1, '', 0);
+    expect(apiService.timeline).toHaveBeenCalledOnceWith(1, '', 0, { actor: '', from: undefined, to: undefined });
     expect(fixture.nativeElement.querySelector('.timeline')?.textContent).toContain('Nova versão do PEI');
   });
 
@@ -287,6 +287,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     expect(select).not.toBeNull();
     expect(select?.value).toBe('');
     apiService.createRecord.and.returnValue(of({ ...mockRecord, id: 'new-unlinked', caseId: null }));
+    component.recordForm.controls.type.setValue('INITIAL_SCREENING');
     component.recordForm.controls.title.setValue('Registro geral');
     component.saveRecord();
     expect(apiService.createRecord).toHaveBeenCalledWith(1, jasmine.objectContaining({ caseId: null }));
@@ -302,6 +303,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     select.value = '51';
     select.dispatchEvent(new Event('change'));
     apiService.createRecord.and.returnValue(of({ ...mockRecord, id: 'new-linked', caseId: 51, title: 'Visita' }));
+    component.recordForm.controls.type.setValue('INITIAL_SCREENING');
     component.recordForm.controls.title.setValue('Visita');
     component.saveRecord();
     expect(apiService.createRecord).toHaveBeenCalledWith(1, jasmine.objectContaining({ caseId: 51 }));
@@ -334,6 +336,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     if (!select) return;
     select.value = '50';
     select.dispatchEvent(new Event('change'));
+    component.recordForm.controls.type.setValue('INITIAL_SCREENING');
     component.recordForm.controls.title.setValue('Texto a preservar');
     apiService.createRecord.and.returnValue(throwError(() => ({ status: 400 })));
     apiService.cases.and.returnValue(of([careCase(50, { stage: 'CLOSED' })]));
