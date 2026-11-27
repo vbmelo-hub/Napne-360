@@ -1,3 +1,4 @@
+import { academicFixture } from './catalog-fixtures';
 import { expect, test } from '@playwright/test';
 import type { SessionUser, CareRecord } from '../src/app/core/models';
 
@@ -27,20 +28,22 @@ for (const scenario of [
     } });
     expect(createdStudent.status(), await createdStudent.text()).toBe(200);
     const student = await createdStudent.json();
-    if (scenario.role !== 'napne') {
+    if (scenario.role === 'professor') {
+      await academicFixture(request, { studentId: student.id, subjectId: subjects[0].id, teacherIds: [actor.id],
+        adminHeaders: { Authorization: `Bearer ${admin.token}` }, napneHeaders: headers });
+    } else if (scenario.role !== 'napne') {
       const assignment = await request.post('/api/v1/admin/assignments', {
         headers: { Authorization: `Bearer ${admin.token}` }, data: {
           studentId: student.id, userId: actor.id,
-          subjectId: scenario.role === 'professor' ? subjects[0].id : null,
-          assignmentType: scenario.role === 'professor' ? 'TEACHER' : 'TUTOR'
+          assignmentType: 'TUTOR'
         }
       });
       expect(assignment.status(), await assignment.text()).toBe(200);
     }
 
     await page.goto('/login');
-    await page.getByLabel('E-mail institucional', { exact: true }).fill(actor.email);
-    await page.getByLabel('Senha', { exact: true }).fill('Napne360!Demo');
+    await page.getByRole('textbox', { name: 'E-mail institucional', exact: true }).fill(actor.email);
+    await page.getByLabel(/^Senha/).fill('Napne360!Demo');
     const loginResponse = page.waitForResponse(response => response.url().endsWith('/api/v1/auth/login') && response.request().method() === 'POST');
     await page.getByRole('button', { name: 'Entrar', exact: true }).click();
     expect((await loginResponse).status()).toBe(200);

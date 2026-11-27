@@ -16,12 +16,18 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 
 @Service
@@ -84,6 +90,33 @@ class AttachmentService {
         return attachments.findById(id)
                 .filter(a -> studentId.equals(a.getStudentId()) && !a.isUploadPending())
                 .orElseThrow(() -> new NotFoundException("Documento não encontrado."));
+    }
+
+    List<AttachmentDocument> versions(Long studentId, String id) {
+        var confirmed = attachments.findConfirmedByStudentId(studentId);
+        var byId = confirmed.stream().collect(Collectors.toMap(AttachmentDocument::getId, Function.identity()));
+        var current = byId.get(id);
+        if (current == null) throw new NotFoundException("Documento não encontrado.");
+
+        var children = confirmed.stream()
+                .filter(document -> document.getPreviousVersionId() != null)
+                .collect(Collectors.groupingBy(AttachmentDocument::getPreviousVersionId));
+        var pending = new ArrayDeque<AttachmentDocument>();
+        var visited = new HashSet<String>();
+        var history = new ArrayList<AttachmentDocument>();
+        pending.add(current);
+        while (!pending.isEmpty()) {
+            var version = pending.removeFirst();
+            if (!visited.add(version.getId())) continue;
+            history.add(version);
+            var previous = byId.get(version.getPreviousVersionId());
+            if (previous != null) pending.add(previous);
+            pending.addAll(children.getOrDefault(version.getId(), List.of()));
+        }
+        history.sort(Comparator.comparingInt(AttachmentDocument::getRevision).reversed()
+                .thenComparing(AttachmentDocument::getUploadedAt, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(AttachmentDocument::getId));
+        return history;
     }
 
     private AttachmentDocument newUpload(Long studentId, String id, String category, String previousVersionId,

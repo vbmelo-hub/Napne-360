@@ -6,6 +6,7 @@ import br.edu.ifac.napne360.student.AssignmentType;
 import br.edu.ifac.napne360.student.Student;
 import br.edu.ifac.napne360.student.StudentAssignmentRepository;
 import br.edu.ifac.napne360.student.StudentRepository;
+import br.edu.ifac.napne360.student.StudentStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Component;
@@ -26,7 +27,8 @@ public class AccessGuard {
         Student student = students.findById(studentId).orElse(null);
         if (student == null || user.getCampus() == null || !user.getCampus().getId().equals(student.getCampus().getId())) return false;
         if (user.getRoles().stream().anyMatch(CAMPUS_PEDAGOGICAL::contains)) return true;
-        return user.getRoles().stream().anyMatch(Set.of(RoleName.TEACHER, RoleName.TUTOR, RoleName.COTEP, RoleName.COURSE_COORDINATOR, RoleName.MANAGEMENT)::contains)
+        return student.getStatus() != StudentStatus.ARCHIVED
+                && user.getRoles().stream().anyMatch(Set.of(RoleName.TEACHER, RoleName.TUTOR, RoleName.COTEP, RoleName.COURSE_COORDINATOR, RoleName.MANAGEMENT)::contains)
                 && assignments.existsByStudentIdAndUserIdAndActiveTrue(studentId, user.getId());
     }
 
@@ -38,7 +40,7 @@ public class AccessGuard {
     public boolean canWritePedagogical(Long studentId) {
         UserAccount user = currentUser.require();
         Student student = requireStudent(studentId);
-        if (!sameCampus(user, student)) return false;
+        if (!sameCampus(user, student) || student.getStatus() == StudentStatus.ARCHIVED) return false;
         if (user.getRoles().contains(RoleName.NAPNE)) return true;
         return user.getRoles().stream().anyMatch(Set.of(RoleName.COTEP, RoleName.COURSE_COORDINATOR, RoleName.TEACHER, RoleName.TUTOR)::contains)
                 && assignments.existsByStudentIdAndUserIdAndActiveTrue(studentId, user.getId());
@@ -58,6 +60,28 @@ public class AccessGuard {
         return (user.getRoles().contains(RoleName.COTEP) || user.getRoles().contains(RoleName.COURSE_COORDINATOR))
                 && assignments.existsByStudentIdAndUserIdAndAssignmentTypeAndActiveTrue(
                         studentId, user.getId(), AssignmentType.COORDINATOR);
+    }
+
+    public boolean canTeachPei(Long studentId, Long subjectId, String periodCode, Long offeringId) {
+        UserAccount user = currentUser.require();
+        Student student = students.findById(studentId).orElse(null);
+        return student != null && sameCampus(user, student)
+                && hasTeachingScope(user, studentId, subjectId, periodCode, offeringId);
+    }
+
+    public boolean canViewPei(Long studentId, Long subjectId, String periodCode, Long offeringId) {
+        UserAccount user = currentUser.require();
+        Student student = students.findById(studentId).orElse(null);
+        if (student == null || !sameCampus(user, student)) return false;
+        if (user.getRoles().contains(RoleName.NAPNE) || hasTeachingScope(user, studentId, subjectId, periodCode, offeringId)) return true;
+        return (user.getRoles().contains(RoleName.COTEP) || user.getRoles().contains(RoleName.COURSE_COORDINATOR))
+                && assignments.existsByStudentIdAndUserIdAndAssignmentTypeAndActiveTrue(studentId, user.getId(), AssignmentType.COORDINATOR);
+    }
+
+    private boolean hasTeachingScope(UserAccount user, Long studentId, Long subjectId, String periodCode, Long offeringId) {
+        if (subjectId == null || !user.getRoles().contains(RoleName.TEACHER)) return false;
+        return offeringId == null ? assignments.existsEffectiveTeaching(studentId, user.getId(), subjectId, periodCode, true)
+                : assignments.canTeachOffering(studentId, user.getId(), offeringId);
     }
 
     private boolean hasPeiTeachingAssignment(UserAccount user, Long studentId, Long subjectId) {

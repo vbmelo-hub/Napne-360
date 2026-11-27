@@ -1,5 +1,6 @@
 package br.edu.ifac.napne360.pei;
 
+import br.edu.ifac.napne360.academic.AcademicService;
 import br.edu.ifac.napne360.audit.AuditService;
 import br.edu.ifac.napne360.common.ApiExceptionHandler;
 import br.edu.ifac.napne360.document.*;
@@ -34,6 +35,7 @@ class PeiCatalogTest {
     final AccessGuard access = mock(AccessGuard.class);
     final DocumentTemplateRepository templates = mock(DocumentTemplateRepository.class);
     final ReferenceEntryRepository entries = mock(ReferenceEntryRepository.class);
+    final AcademicService academic = mock(AcademicService.class);
     final ObjectMapper json = Jackson2ObjectMapperBuilder.json().build();
     PeiService service;
     MockMvc mvc;
@@ -42,16 +44,20 @@ class PeiCatalogTest {
     @BeforeEach void setup() {
         service = new PeiService(new ReferenceCatalogService(entries), mongo.store, careRecords, subjects, current,
                 new PeiProjectionService(mongo.store, timeline, audit, Runnable::run), access, templates,
-                mock(StudentAssignmentRepository.class));
+                mock(StudentAssignmentRepository.class), academic);
         mvc = MockMvcBuilders.standaloneSetup(new PeiController(service,access), new PeiAnnexController()).setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(json)).build();
         var course = Course.builder().id(2L).name("Curso fictício").build();
         var student = Student.builder().id(1L).civilName("Estudante fictício").course(course).build();
         when(access.requireView(1L)).thenReturn(student);
-        when(access.canTeachPei(1L,3L)).thenReturn(true);
+        when(access.canTeachPei(1L, 3L, "2026-2", 15L)).thenReturn(true);
         when(subjects.findByIdForUpdate(3L)).thenReturn(Optional.of(Subject.builder().id(3L).course(course).name("Componente fictício").workloadHours(60).build()));
         when(current.require()).thenReturn(UserAccount.builder().id(12L).name("Docente").email("docente@example.test").roles(Set.of(RoleName.TEACHER)).build());
         term = ReferenceEntry.builder().id(9L).kind(ReferenceEntry.Kind.ACADEMIC_TERM).code("2026-2").label("Segundo semestre").build();
+        var offer = new AcademicService.OfferingView(15L, 3L, "Componente fictício", "A", 2L,
+                "Curso fictício", 4L, "Campus", 9L, "2026-2", "Segundo semestre", true);
+        when(academic.requirePeiOffering(1L, null, 3L, 9L, "2026-2")).thenReturn(offer);
+        when(academic.requirePeiOffering(1L, 15L, null, null, null)).thenReturn(offer);
         when(entries.findById(9L)).thenReturn(Optional.of(term));
         when(entries.findByKindAndCode(ReferenceEntry.Kind.ACADEMIC_TERM,"2026-2")).thenReturn(Optional.of(term));
     }
@@ -104,7 +110,7 @@ class PeiCatalogTest {
     @Test void officialDraftUsesServerIdentificationAndPreparesOnlyAnswerableIndicators() throws Exception {
         mvc.perform(post("/api/v1/students/1/peis").contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"subjectId":3,"academicTermId":9,"formVersion":"forjado",
+                        {"offeringId":15,"formVersion":"forjado",
                          "content":{"student":"forjado","teacherName":"forjado"}}
                         """))
                 .andExpect(status().isOk())
@@ -250,7 +256,8 @@ class PeiCatalogTest {
         node.put("teacherId",12);
         if(scenario.equals("historic")) node.put("academicTermId",9).put("academicTermLabel","Nome histórico");
         PeiDocument previous=json.treeToValue(node,PeiDocument.class);
-        when(peis.findById("p1")).thenReturn(Optional.of(previous)); when(access.canViewSubject(1L,3L)).thenReturn(true);
+        when(peis.findById("p1")).thenReturn(Optional.of(previous));
+        when(access.canTeachPei(1L, 3L, "código antigo", null)).thenReturn(true);
         when(peis.findByStudentIdAndSubjectIdAndAcademicTermOrderByRevisionDesc(1L,3L,"código antigo"))
                 .thenReturn(List.of(previous));
         clearInvocations(entries);

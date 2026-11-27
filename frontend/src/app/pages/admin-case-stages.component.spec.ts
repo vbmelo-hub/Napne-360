@@ -59,7 +59,7 @@ describe('Etapas dos casos na administração técnica', () => {
     http = TestBed.inject(HttpTestingController);
     fixture.detectChanges();
     http.expectOne('/api/v1/admin/users').flush([]);
-    http.expectOne('/api/v1/catalog/campuses').flush([]);
+    http.expectOne('/api/v1/admin/campuses').flush([]);
     http.expectNone(url);
     fixture.detectChanges();
   });

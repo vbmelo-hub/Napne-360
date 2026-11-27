@@ -46,12 +46,11 @@ describe('Casos no acompanhamento do estudante', () => {
       http.expectOne(studentUrl + '/' + resource).flush([]);
     }
     http.expectOne('/api/v1/catalog/student-subjects?studentId=1').flush([]);
-    http.expectOne('/api/v1/catalog/student-teachers?studentId=1').flush([]);
     if (role === 'NAPNE') {
       http.expectOne('/api/v1/catalog/references?kind=NEED_CATEGORY').flush([]);
       http.expectOne('/api/v1/catalog/courses').flush([]);
     }
-    if (role === 'TEACHER') http.expectOne('/api/v1/catalog/references?kind=ACADEMIC_TERM').flush([]);
+    if (role === 'TEACHER') http.expectOne('/api/v1/students/1/academic/pei-offers').flush([]);
     fixture.detectChanges();
   }
 
@@ -343,6 +342,24 @@ describe('Casos no acompanhamento do estudante', () => {
     expect(root.querySelector('.timeline')?.textContent).not.toContain('Mudança de caso');
   });
 
+  it('edita a origem e o resumo em modal e desabilita o envio sem mudanças', () => {
+    setup();
+    const [card] = openCases();
+    click(card, 'Editar caso');
+    const dialog = card.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(button(dialog, 'Salvar alterações').disabled).toBeTrue();
+    field(dialog, '[formcontrolname="source"]', 'Encaminhamento revisto');
+    field(dialog, '[formcontrolname="summary"]', 'Resumo revisto');
+    click(dialog, 'Salvar alterações');
+    const request = http.expectOne(caseUrl);
+    expect(request.request.method).toBe('PATCH');
+    expect(request.request.body).toEqual({ source: 'Encaminhamento revisto', summary: 'Resumo revisto', version: 0 });
+    request.flush({ ...currentCase, source: 'Encaminhamento revisto', summary: 'Resumo revisto', version: 1 });
+    fixture.detectChanges();
+    expect(card.querySelector('[role="dialog"]')).toBeNull();
+    expect(card.textContent).toContain('Encaminhamento revisto');
+  });
+
   it('permite repetir a consulta de candidatos e impede escolher o próprio responsável', () => {
     setup();
     const [card] = openCases();
@@ -353,9 +370,9 @@ describe('Casos no acompanhamento do estudante', () => {
     click(card, 'Tentar novamente');
     http.expectOne(caseUrl + '/responsible-candidates').flush([{ id: 2, name: 'Pessoa inicial' }]);
     fixture.detectChanges();
-    expect(card.textContent).toContain('Nenhum outro responsável elegível');
-    expect(card.querySelector<HTMLOptionElement>('option[value="2"]')?.disabled).toBeTrue();
-    expect(button(card, 'Confirmar transferência').disabled).toBeTrue();
+    expect(card.textContent).toContain('não existem outros profissionais ativos da equipe NAPNE neste campus');
+    expect(card.querySelector('select[name="responsibleId"]')).toBeNull();
+    expect(Array.from(card.querySelectorAll('button')).some(item => item.textContent?.trim() === 'Confirmar transferência')).toBeFalse();
   });
 
   for (const role of ['ADMIN', 'TUTOR']) {

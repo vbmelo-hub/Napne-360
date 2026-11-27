@@ -11,6 +11,8 @@ import java.util.Optional;
 
 public interface NapneCaseRepository extends JpaRepository<NapneCase, Long> {
     List<NapneCase> findByStudentIdOrderByOpenedAtDesc(Long studentId);
+    boolean existsByResponsibleIdAndStageNotIn(Long responsibleId, List<CaseStage> stages);
+    boolean existsByStudentCampusIdAndStageNotIn(Long campusId, List<CaseStage> stages);
     Optional<NapneCase> findFirstByStudentIdAndStageNotInOrderByOpenedAtDesc(Long studentId, List<CaseStage> stages);
 
     @Lock(LockModeType.PESSIMISTIC_READ)

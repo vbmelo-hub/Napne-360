@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { expect, test } from '@playwright/test';
 import { apiJson, caseFixture } from './case-fixtures';
+import { academicFixture } from './catalog-fixtures';
 
 type Revision = { id: string; revision: number; storageVersion: number; status: string; content: Record<string, unknown> };
 type TimelineEvent = { eventType: string; data: { peiId?: string } };
@@ -28,17 +29,13 @@ test('CA26 recupera a auditoria após falha sem gerar outra revisão ou evento d
   });
   const subject = subjects[0];
   if (!subject) throw new Error('Componente fictício não encontrado.');
-  await apiJson(request, '/admin/assignments', {
-    method: 'POST', headers: admin.headers,
-    data: { studentId: student.id, userId: teacher.id, subjectId: subject.id, assignmentType: 'TEACHER' }
-  });
-  const term = await apiJson<{ id: number }>(request, '/admin/references', {
-    method: 'POST', headers: admin.headers,
-    data: { kind: 'ACADEMIC_TERM', code: 'TEST-CA26-' + key, label: 'Período fictício CA26 ' + key }
+  const { offering } = await academicFixture(request, {
+    studentId: student.id, subjectId: subject.id, teacherIds: [teacher.id],
+    adminHeaders: admin.headers, napneHeaders: napne.headers
   });
   const plans = path + '/peis';
   const draft = await apiJson<Revision>(request, plans, {
-    method: 'POST', headers: session.headers, data: { subjectId: subject.id, academicTermId: term.id }
+    method: 'POST', headers: session.headers, data: { offeringId: offering.id }
   });
   const content = { ...draft.content, generalObjectives: 'Objetivo fictício para recuperação do CA26' };
   const save = () => request.put('/api/v1' + plans + '/' + draft.id, {

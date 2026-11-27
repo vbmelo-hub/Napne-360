@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { apiJson, caseFixture, renameCaseFixtureAccount, type CaseView } from './case-fixtures';
+import { apiJson, caseFixture, type CaseView } from './case-fixtures';
 
 type Candidate = { id: number; name: string };
 type Revision = {
@@ -157,7 +157,7 @@ test('API de casos restringe transferências e registra revisões concorrentes e
     expect(await stage(current, current.stage)).toEqual(current);
     expect(await snapshot(casePath, opened.id)).toEqual(beforeNoOp);
 
-    const renamed = renameCaseFixtureAccount(recipient, fixture.key);
+    const renamed = await fixture.renameResponsible(recipient);
     expect((await fetchCase()).responsible).toBe(renamed);
     const saved = (await history()).content.find(revision => revision.type === 'RESPONSIBLE_CHANGED');
     expect(saved).toMatchObject({

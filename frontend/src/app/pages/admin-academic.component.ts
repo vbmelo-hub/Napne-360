@@ -6,6 +6,8 @@ import { forkJoin } from 'rxjs';
 import { ApiService } from '../core/api.service';
 import { createListView } from '../core/list-view';
 import { AdminCourse, AdminSubject, Campus, UserView } from '../core/models';
+import { createProfessionalSearch } from '../core/professional-search';
+import { AdminAcademicOfferingsComponent } from './admin-academic-offerings.component';
 import { errorMessage, labelFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
@@ -17,11 +19,17 @@ interface AssignmentView {
   studentId: number;
   userId: number;
   subjectId: number | null;
+  studentName?: string;
+  registration?: string;
+  userName?: string;
+  subjectName?: string | null;
+  origin?: 'MANUAL' | 'AUTOMATIC';
+  periodCode?: string | null;
   assignmentType: string;
   active: boolean;
 }
 
-@Component({selector:'app-admin-academic',standalone:true,imports:[ReactiveFormsModule,ConfirmDialogComponent,ModalShellComponent,PaginationComponent],template:`
+@Component({selector:'app-admin-academic',standalone:true,imports:[ReactiveFormsModule,ConfirmDialogComponent,ModalShellComponent,PaginationComponent,AdminAcademicOfferingsComponent],template:`
   <header class="module-head"><span class="eyebrow">Organização acadêmica</span><h2>Estrutura acadêmica e vínculos</h2><p>Cadastre cursos e componentes e defina quem acompanha cada estudante.</p></header>
 
   @if(loading()){
@@ -30,17 +38,17 @@ interface AssignmentView {
     <div class="admin-academic-grid">
       <form class="card stack" [formGroup]="courseForm" (ngSubmit)="createCourse()">
         <div class="section-header"><div><h3>Novo curso</h3><p>Associe o curso a um campus ativo.</p></div></div>
-        <label class="required">Campus<select formControlName="campusId"><option value="">Selecione</option>@for(c of campuses();track c.id){<option [value]="c.id">{{c.name}}</option>}</select></label>
-        <label class="required">Nome do curso<input formControlName="name"></label>
-        <label class="required">Código do curso<input formControlName="code"></label>
+        <label><span>Campus&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="campusId"><option value="">Selecione</option>@for(c of campuses();track c.id){<option [value]="c.id">{{c.name}}</option>}</select></label>
+        <label><span>Nome do curso&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="name"></label>
+        <label><span>Código do curso&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="code"></label>
         <button [disabled]="courseForm.invalid||busy()">@if(busy()){<span class="spinner"></span>}Criar curso</button>
       </form>
 
       <form class="card stack" [formGroup]="subjectForm" (ngSubmit)="createSubject()">
         <div class="section-header"><div><h3>Novo componente curricular</h3><p>Cadastre a disciplina dentro de um curso existente.</p></div></div>
-        <label class="required">Curso<select formControlName="courseId"><option value="">Selecione</option>@for(c of activeCourses();track c.id){<option [value]="c.id">{{c.name}} · {{c.campus}}</option>}</select></label>
-        <div class="grid two"><label class="required">Nome do componente<input formControlName="name"></label><label class="required">Código<input formControlName="code"></label></div>
-        <label class="required">Carga horária<input type="number" min="1" formControlName="workloadHours"></label>
+        <label><span>Curso&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="courseId"><option value="">Selecione</option>@for(c of activeCourses();track c.id){<option [value]="c.id">{{c.name}} · {{c.campus}}</option>}</select></label>
+        <div class="grid two"><label><span>Nome do componente&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="name"></label><label><span>Código&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="code"></label></div>
+        <label><span>Carga horária&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input type="number" min="1" formControlName="workloadHours"></label>
         <label>Ementa<textarea formControlName="syllabus"></textarea></label>
         <button [disabled]="subjectForm.invalid||busy()">@if(busy()){<span class="spinner"></span>}Criar componente</button>
       </form>
@@ -82,12 +90,28 @@ interface AssignmentView {
         (pageChange)="courseList.setPage($event)" />
     </section>
 
+    <section class="card structure-card">
+      <div class="section-header">
+        <div><h3>Períodos, ofertas e atribuições docentes</h3><p>Organize turmas e defina os docentes de cada oferta.</p></div>
+        <button type="button" class="secondary" [attr.aria-expanded]="showAcademicOffers()" (click)="showAcademicOffers.set(!showAcademicOffers())">
+          {{showAcademicOffers() ? 'Recolher' : 'Gerenciar'}}
+        </button>
+      </div>
+      @if (showAcademicOffers()) {
+        <app-admin-academic-offerings [courses]="activeCourses()" [subjects]="subjects()" [users]="users()" (changed)="refreshAssignments()" />
+      }
+    </section>
+
     <form class="card stack assignment-form" [formGroup]="assignmentForm" (ngSubmit)="createAssignment()">
-      <div class="section-header"><div><h3>Conceder vínculo de acompanhamento</h3><p>Defina a pessoa autorizada, o papel no acompanhamento e, quando aplicável, o componente.</p></div></div>
+      <div class="section-header"><div><h3>Conceder vínculo de acompanhamento</h3><p>Conceda designações de tutoria, coordenação ou NAPNE. Os vínculos docentes são gerados pelas ofertas curriculares.</p></div></div>
       <div class="grid two">
-        <label class="required">Estudante (matrícula)<select formControlName="studentId" (change)="assignmentForm.controls.subjectId.setValue('')"><option value="">Selecione</option>@for(s of assignableRegistrations();track s.id){<option [value]="s.id">{{s.registration}}</option>}</select></label>
-        <label class="required">Usuário<select formControlName="userId"><option value="">Selecione</option>@for(u of users();track u.id){@if(u.active){<option [value]="u.id">{{u.name}} · {{u.email}}</option>}}</select></label>
-        <label class="required">Tipo de vínculo<select formControlName="assignmentType"><option value="TEACHER">Professor</option><option value="TUTOR">Monitor/tutor</option><option value="COORDINATOR">Coordenação/supervisão</option><option value="NAPNE">NAPNE</option></select></label>
+        <label><span>Estudante (matrícula)&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="studentId" (change)="resetAssignmentSelection()"><option value="">Selecione</option>@for(s of assignableRegistrations();track s.id){<option [value]="s.id">{{s.registration}}</option>}</select></label>
+        <label><span>Tipo de vínculo&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="assignmentType" (change)="assignmentForm.controls.userId.reset()"><option value="TUTOR">Monitor/tutor</option><option value="COORDINATOR">Coordenação/supervisão</option><option value="NAPNE">NAPNE</option></select></label>
+        <label>Buscar profissional <input #professionalSearch type="search" placeholder="Nome, matrícula ou CPF"
+          [value]="professionalQuery()" (input)="searchProfessional(professionalSearch.value)"></label>
+        <label><span>Usuário&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="userId"><option value="">Selecione</option>
+          @for (u of assignableUsers(); track u.id) {<option [value]="u.id">{{u.name}} · {{u.email}}</option>}
+        </select></label>
         <label>Componente do vínculo<select formControlName="subjectId"><option value="">Sem componente específico</option>@for(s of assignmentSubjects();track s.id){<option [value]="s.id">{{s.name}}</option>}</select><span class="field-hint">A lista considera o curso do estudante selecionado.</span></label>
       </div>
       <div><button [disabled]="assignmentForm.invalid||busy()">@if(busy()){<span class="spinner"></span>}Conceder vínculo</button></div>
@@ -96,7 +120,7 @@ interface AssignmentView {
     <section class="card assignments">
       <div class="section-header"><div><h3>Vínculos registrados</h3><p>O histórico permanece disponível mesmo após a revogação.</p></div><span class="badge">{{assignmentList.totalElements()}} registro(s)</span></div>
       <label class="list-filter">Buscar vínculos
-        <input #assignmentSearch type="search" placeholder="Matrícula, usuário, tipo, componente ou situação"
+        <input #assignmentSearch type="search" placeholder="Estudante, matrícula, usuário, tipo, componente, origem, período ou situação"
           [value]="assignmentList.query()" (input)="assignmentList.setQuery(assignmentSearch.value)">
       </label>
       @if (assignments().length === 0) {
@@ -106,16 +130,26 @@ interface AssignmentView {
       } @else {
         <div class="table-wrap">
           <table class="mobile-cards">
-            <thead><tr><th>Matrícula</th><th>Usuário</th><th>Tipo</th><th>Componente</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead>
+            <thead><tr><th>Estudante</th><th>Matrícula</th><th>Usuário</th><th>Tipo</th><th>Componente</th><th>Origem</th><th>Período</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead>
             <tbody>
               @for (a of assignmentList.items(); track a.id) {
                 <tr>
-                  <td data-label="Matrícula">{{registrationLabel(a.studentId)}}</td>
-                  <td data-label="Usuário">{{userLabel(a.userId)}}</td>
+                  <td data-label="Estudante">{{a.studentName ?? '—'}}</td>
+                  <td data-label="Matrícula">{{a.registration ?? registrationLabel(a.studentId)}}</td>
+                  <td data-label="Usuário">{{a.userName ?? userLabel(a.userId)}}</td>
                   <td data-label="Tipo">{{label(a.assignmentType)}}</td>
-                  <td data-label="Componente">{{subjectLabel(a.subjectId)}}</td>
+                  <td data-label="Componente">{{a.subjectName ?? subjectLabel(a.subjectId)}}</td>
+                  <td data-label="Origem">{{originLabel(a)}}</td>
+                  <td data-label="Período">{{a.periodCode ?? '—'}}</td>
                   <td data-label="Situação"><span [class]="a.active ? 'badge badge--success' : 'badge'">{{a.active ? 'Ativo' : 'Revogado'}}</span></td>
-                  <td>@if (a.active) {<button type="button" class="secondary compact" [disabled]="busy()" (click)="pendingRevocation.set(a)">Revogar</button>}</td>
+                  <td><div class="row">
+                    @if (a.active && a.origin !== 'AUTOMATIC') {
+                      <button type="button" class="secondary compact" [disabled]="busy()" (click)="pendingRevocation.set(a)">Revogar</button>
+                      @if (a.assignmentType === 'TEACHER' && a.subjectId !== null) {
+                        <button type="button" class="secondary compact" [disabled]="busy()" (click)="pendingRegularization.set(a)">Regularizar</button>
+                      }
+                    }
+                  </div></td>
                 </tr>
               }
             </tbody>
@@ -161,15 +195,14 @@ interface AssignmentView {
     <form class="stack course-editor" [formGroup]="editCourseForm" (ngSubmit)="saveCourse()">
       <fieldset class="stack" [disabled]="busy()">
         <legend class="sr-only">Dados do curso</legend>
-        <label class="required">Campus
-          <select formControlName="campusId" required>
+        <label><span>Campus&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="campusId" required>
             <option value="">Selecione</option>
             @if (missingEditCampus(); as campus) {<option [value]="campus.campusId">{{campus.campus}}</option>}
             @for (c of campuses(); track c.id) {<option [value]="c.id">{{c.name}}</option>}
           </select>
         </label>
-        <label class="required">Nome do curso<input formControlName="name" maxlength="180" required></label>
-        <label class="required">Código do curso<input formControlName="code" maxlength="60" required></label>
+        <label><span>Nome do curso&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="name" maxlength="180" required></label>
+        <label><span>Código do curso&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="code" maxlength="60" required></label>
       </fieldset>
       @if (editCourseError()) {<p class="error" role="alert">{{editCourseError()}}</p>}
       <div class="row">
@@ -183,6 +216,9 @@ interface AssignmentView {
     confirmLabel="Arquivar curso" [danger]="true" [busy]="busy()" (confirmed)="confirmCourseArchive()" (cancelled)="pendingCourseArchive.set(null)">
     @if (archiveCourseError()) {<p class="error" role="alert">{{archiveCourseError()}}</p>}
   </app-confirm-dialog>
+  <app-confirm-dialog [open]="pendingRegularization() !== null" title="Regularizar vínculo docente?"
+    description="O vínculo manual ficará no histórico e o acesso passará a seguir as ofertas acadêmicas válidas."
+    confirmLabel="Regularizar vínculo" (confirmed)="confirmRegularization()" (cancelled)="pendingRegularization.set(null)" />
   <app-confirm-dialog [open]="pendingRevocation()!==null" title="Revogar este vínculo?" [description]="revocationDescription()" confirmLabel="Revogar vínculo" [danger]="true" (confirmed)="confirmRevocation()" (cancelled)="pendingRevocation.set(null)" />
 `,styles:[`
   .module-head { margin-bottom: 1rem; }
@@ -213,14 +249,18 @@ export class AdminAcademicComponent implements OnInit {
   private readonly courseSearch = viewChild<ElementRef<HTMLInputElement>>('courseSearch');
 
   readonly users=signal<UserView[]>([]);
+  readonly showAcademicOffers = signal(false);
+  readonly professionalQuery = signal('');
+  private readonly matchesProfessional = createProfessionalSearch(this.professionalQuery);
   readonly campuses=signal<Campus[]>([]);
   readonly courses=signal<AdminCourse[]>([]);
   readonly subjects=signal<AdminSubject[]>([]);
-  readonly registrations=signal<{id:number,registration:string,campusId:number,courseId:number}[]>([]);
+  readonly registrations=signal<{id:number,registration:string,campusId:number,courseId:number,status?:string}[]>([]);
   readonly assignments=signal<AssignmentView[]>([]);
   readonly loading=signal(true);
   readonly busy=signal(false);
   readonly pendingRevocation=signal<AssignmentView|null>(null);
+  readonly pendingRegularization = signal<AssignmentView | null>(null);
   readonly componentCourse = signal<AdminCourse | null>(null);
   readonly editingCourse = signal<AdminCourse | null>(null);
   readonly pendingCourseArchive = signal<AdminCourse | null>(null);
@@ -229,7 +269,7 @@ export class AdminAcademicComponent implements OnInit {
   readonly activeCourses = computed(() => this.courses().filter(course => course.active));
   readonly assignableRegistrations = computed(() => {
     const activeCourseIds = new Set(this.activeCourses().map(course => course.id));
-    return this.registrations().filter(registration => activeCourseIds.has(registration.courseId));
+    return this.registrations().filter(registration => activeCourseIds.has(registration.courseId) && registration.status !== 'ARCHIVED');
   });
   readonly missingEditCampus = computed(() => {
     const course = this.editingCourse();
@@ -242,8 +282,9 @@ export class AdminAcademicComponent implements OnInit {
   readonly courseList = createListView(this.courses, course => [course.name, course.code, course.campus]);
   readonly subjectList = createListView(this.selectedCourseSubjects, subject => [subject.name, subject.code]);
   readonly assignmentList = createListView(this.assignments, item => [
-    this.registrationLabel(item.studentId), this.userLabel(item.userId), this.usersById().get(item.userId)?.email,
-    labelFor(item.assignmentType), this.subjectLabel(item.subjectId), item.active ? 'Ativo' : 'Revogado'
+    item.studentName, item.registration ?? this.registrationLabel(item.studentId), item.userName ?? this.userLabel(item.userId),
+    this.usersById().get(item.userId)?.email, labelFor(item.assignmentType), item.subjectName ?? this.subjectLabel(item.subjectId),
+    this.originLabel(item), item.periodCode, item.active ? 'Ativo' : 'Revogado'
   ]);
   readonly archiveDescription = computed(() => {
     const course = this.pendingCourseArchive();
@@ -265,7 +306,7 @@ export class AdminAcademicComponent implements OnInit {
     campusId: ['', Validators.required]
   });
   readonly subjectForm=this.fb.nonNullable.group({name:['',Validators.required],code:['',Validators.required],courseId:['',Validators.required],workloadHours:[60,[Validators.required,Validators.min(1)]],syllabus:['']});
-  readonly assignmentForm=this.fb.nonNullable.group({studentId:['',Validators.required],userId:['',Validators.required],subjectId:[''],assignmentType:['TEACHER',Validators.required]});
+  readonly assignmentForm=this.fb.nonNullable.group({studentId:['',Validators.required],userId:['',Validators.required],subjectId:[''],assignmentType:['TUTOR',Validators.required]});
 
   ngOnInit():void{this.load();}
   load():void{
@@ -312,10 +353,22 @@ export class AdminAcademicComponent implements OnInit {
       assignmentType, userId: Number(userId), studentId: Number(studentId), subjectId: subjectId ? Number(subjectId) : null
     }).subscribe({
       next: () => {
-        this.assignmentForm.reset({ assignmentType: 'TEACHER' });
+        this.assignmentForm.reset({ assignmentType: 'TUTOR' });
+        this.professionalQuery.set('');
         this.done('Vínculo concedido com sucesso.');
       },
-      error: response => this.fail(response.status, 'conceder o vínculo')
+      error: response => this.failAssignment(response, 'conceder o vínculo')
+    });
+  }
+
+  confirmRegularization(): void {
+    const item = this.pendingRegularization();
+    if (!item || this.busy()) return;
+    this.pendingRegularization.set(null);
+    this.busy.set(true);
+    this.api.regularizeAssignment(item.id).subscribe({
+      next: () => this.done('Vínculo docente regularizado.'),
+      error: response => this.failAssignment(response, 'regularizar o vínculo'),
     });
   }
 
@@ -326,7 +379,7 @@ export class AdminAcademicComponent implements OnInit {
     this.busy.set(true);
     this.api.revokeAssignment(item.id).subscribe({
       next: () => this.done('Vínculo revogado. O histórico foi preservado.'),
-      error: response => this.fail(response.status, 'revogar o vínculo')
+      error: response => this.failAssignment(response, 'revogar o vínculo')
     });
   }
 
@@ -394,6 +447,38 @@ export class AdminAcademicComponent implements OnInit {
         this.archiveCourseError.set(this.courseError(response, 'arquivar o curso'));
       }
     });
+  }
+
+  refreshAssignments() {
+    this.api.assignments().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: assignments => this.assignments.set(assignments),
+      error: failure => this.toast.show(errorMessage(failure, 'atualizar os vínculos'), 'error'),
+    });
+  }
+
+  resetAssignmentSelection() {
+    this.assignmentForm.controls.subjectId.reset();
+    this.assignmentForm.controls.userId.reset();
+  }
+
+  assignableUsers() {
+    const { studentId, assignmentType } = this.assignmentForm.getRawValue();
+    const campusId = this.registrationsById().get(Number(studentId))?.campusId;
+    const roles = assignmentType === 'COORDINATOR' ? ['COTEP', 'COURSE_COORDINATOR', 'MANAGEMENT'] : [assignmentType];
+    return this.users().filter(user => user.active && user.campusId === campusId
+      && user.roles.some(role => roles.includes(role)) && this.matchesProfessional(user));
+  }
+
+  originLabel(assignment: AssignmentView) { return assignment.origin === 'AUTOMATIC' ? 'Automática' : 'Manual'; }
+
+  searchProfessional(value: string) {
+    this.professionalQuery.set(value);
+    this.assignmentForm.controls.userId.reset();
+  }
+
+  private failAssignment(response: HttpErrorResponse, action: string) {
+    this.busy.set(false);
+    this.toast.show(errorMessage(response, action), 'error');
   }
 
   assignmentSubjects() {

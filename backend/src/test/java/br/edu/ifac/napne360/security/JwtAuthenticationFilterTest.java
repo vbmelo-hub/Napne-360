@@ -2,29 +2,56 @@ package br.edu.ifac.napne360.security;
 
 import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.identity.UserAccountRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.User;
+
+import java.time.Clock;
 import java.util.Optional;
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.Mockito.*;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class JwtAuthenticationFilterTest {
-    @Test void disabledAccountCannotUseExistingJwt() throws Exception {
-        var jwt = mock(JwtService.class);
-        var details = mock(NapneUserDetailsService.class);
-        var users = mock(UserAccountRepository.class);
-        when(jwt.subject("old-token")).thenReturn("user@test.local");
-        when(details.loadUserByUsername("user@test.local")).thenReturn(User.withUsername("user@test.local")
-                .password("ignored").roles("TEACHER").disabled(true).build());
-        when(users.findByEmailIgnoreCase("user@test.local")).thenReturn(Optional.of(UserAccount.builder().active(false).build()));
-        var request = new MockHttpServletRequest();
-        request.addHeader("Authorization","Bearer old-token");
+    private final JwtService jwt = new JwtService(JwtServiceTest.TEST_SECRET, 60, 30, 5, 480, Clock.systemUTC());
+    private final UserAccountRepository users = mock(UserAccountRepository.class);
+    private final UserAccount account = UserAccount.builder().id(1L).email("user@test.local").passwordHash("ignored").build();
+
+    @AfterEach
+    void clearContext() {
         SecurityContextHolder.clearContext();
-        new JwtAuthenticationFilter(jwt,details,users).doFilter(request,new MockHttpServletResponse(),(req,res)->
+    }
+
+    @Test
+    void disabledAccountCannotUseExistingJwt() throws Exception {
+        var request = authenticatedRequest();
+        account.setActive(false);
+        account.setSessionVersion(1L);
+        var response = new MockHttpServletResponse();
+
+        new JwtAuthenticationFilter(jwt, users).doFilter(request, response, (req, res) ->
                 assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull());
-        SecurityContextHolder.clearContext();
+        assertThat(response.getHeader(JwtService.STATUS_HEADER)).isEqualTo("ACCOUNT_INACTIVE");
+    }
+
+    @Test
+    void revokedAccountVersionRejectsExistingJwt() throws Exception {
+        var request = authenticatedRequest();
+        account.setSessionVersion(1L);
+        var response = new MockHttpServletResponse();
+
+        new JwtAuthenticationFilter(jwt, users).doFilter(request, response, (req, res) ->
+                assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull());
+        assertThat(response.getHeader(JwtService.STATUS_HEADER)).isEqualTo("REVOKED");
+    }
+
+    private MockHttpServletRequest authenticatedRequest() {
+        var request = new MockHttpServletRequest();
+        request.addHeader("Authorization", "Bearer " + jwt.create(account).token());
+        when(users.findByEmailIgnoreCase(account.getEmail())).thenReturn(Optional.of(account));
+        return request;
     }
 }

@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { expect, type APIRequestContext } from '@playwright/test';
 
@@ -61,7 +60,7 @@ export async function caseFixture(request: APIRequestContext) {
   const account = (label: string, role: string, campusId = napne.campusId) => adminPost<Account>('/users', {
     name: 'Teste ' + label + ' ' + key,
     email: 'test-case-' + key + '-' + label + '@napne.local',
-    campusId, roles: [role], password: 'Napne360!Demo'
+    campusId, cpf: fictitiousCpf(), roles: [role], password: 'Napne360!Demo'
   });
 
   const openCase = (source: string) => apiJson<CaseView>(request, path + '/cases', {
@@ -71,36 +70,36 @@ export async function caseFixture(request: APIRequestContext) {
   const alternateCampus = () => adminPost<Campus>('/campuses', {
     name: 'Campus Fictício Casos ' + key, code: 'CASE-' + key
   });
-  const disable = (user: Account) => apiJson<Account & { active: boolean }>(request, '/admin/users/' + user.id + '/active', {
-    method: 'PATCH', headers: admin.headers, data: { active: false }
+  const disable = (user: Account) => apiJson<Account & { active: boolean }>(request, '/admin/users/' + user.id + '/block', {
+    method: 'POST', headers: admin.headers
   });
   const assignCoordinator = (user: Account) => adminPost('/assignments', {
     studentId: student.id, userId: user.id, assignmentType: 'COORDINATOR'
   });
 
+  const renameResponsible = async (account: Account) => {
+    const name = 'Teste responsavel-renomeado ' + key;
+    if (account.email !== 'test-case-' + key + '-responsavel@napne.local' || account.name !== 'Teste responsavel ' + key) {
+      throw new Error('Renomeação exige a conta fictícia de responsável desta execução.');
+    }
+    const updated = await apiJson<Account>(request, '/admin/users/' + account.id, {
+      method: 'PUT', headers: admin.headers, data: { name, email: account.email, campusId: account.campusId },
+    });
+    expect(updated.id).toBe(account.id);
+    expect(updated.name).toBe(name);
+    return name;
+  };
+
   return { key, napne, admin, student, path, account, openCase, alternateCampus, disable, assignCoordinator,
-    login: (user: Account) => signIn(request, user.email) };
+    renameResponsible, login: (user: Account) => signIn(request, user.email) };
 }
 
-/** Account rename has no API. Change only the fictitious account created by this test. */
-export function renameCaseFixtureAccount(account: Account, key: string): string {
-  const nextName = 'Teste responsavel-renomeado ' + key;
-  if (!/^[a-f0-9]{8}$/.test(key) || !Number.isSafeInteger(account.id) || account.id <= 0 ||
-      account.email !== 'test-case-' + key + '-responsavel@napne.local' ||
-      account.name !== 'Teste responsavel ' + key) {
-    throw new Error('Renomeação de fixture exige a conta fictícia de responsável criada pelo teste.');
+function fictitiousCpf(): string {
+  const digits = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
+  if (digits.every(digit => digit === digits[0])) digits[0] = (digits[0] + 1) % 10;
+  for (const length of [9, 10]) {
+    const sum = digits.reduce((total, digit, index) => total + digit * (length + 1 - index), 0);
+    digits.push(sum * 10 % 11 % 10);
   }
-
-  const docker = process.env['NAPNE_E2E_DOCKER'] || 'docker';
-  const compose = ['compose'];
-  if (process.env['NAPNE_E2E_COMPOSE_FILE']) compose.push('-f', process.env['NAPNE_E2E_COMPOSE_FILE']);
-  if (process.env['NAPNE_E2E_COMPOSE_PROJECT']) compose.push('-p', process.env['NAPNE_E2E_COMPOSE_PROJECT']);
-  const mysql = 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql --user="$MYSQL_USER" --database="$MYSQL_DATABASE" --batch --skip-column-names';
-  const sql = "UPDATE app_user SET name = '" + nextName + "' WHERE id = " + account.id +
-    " AND email = '" + account.email + "' AND name = '" + account.name + "';\nSELECT ROW_COUNT();\n";
-  const rows = execFileSync(docker, [...compose, 'exec', '-T', 'mysql', 'sh', '-c', mysql], {
-    input: sql, encoding: 'utf8', timeout: 30_000
-  }).trim();
-  expect(rows, 'uma conta fictícia renomeada').toBe('1');
-  return nextName;
+  return digits.join('');
 }

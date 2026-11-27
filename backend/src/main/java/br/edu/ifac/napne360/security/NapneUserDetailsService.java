@@ -19,10 +19,26 @@ public class NapneUserDetailsService implements UserDetailsService {
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
         UserAccount account = users.findByEmailIgnoreCase(username)
                 .orElseThrow(() -> new UsernameNotFoundException("Invalid credentials"));
-        return User.withUsername(account.getEmail())
-                .password(account.getPasswordHash())
-                .disabled(!account.isActive())
-                .authorities(account.getRoles().stream().map(r -> new SimpleGrantedAuthority("ROLE_" + r.name())).toList())
-                .build();
+        return detailsFor(account);
+    }
+
+    static AccountDetails detailsFor(UserAccount account) {
+        return new AccountDetails(account);
+    }
+
+    public static final class AccountDetails extends User {
+        private final long accountId;
+        private final long sessionVersion;
+
+        private AccountDetails(UserAccount account) {
+            super(account.getEmail(), account.getPasswordHash(), account.isActive(), true, true, true,
+                    account.getRoles().stream().map(role -> new SimpleGrantedAuthority("ROLE_" + role.name())).toList());
+            this.accountId = account.getId();
+            this.sessionVersion = account.getSessionVersion();
+        }
+
+        public boolean matches(UserAccount account) {
+            return account.getId() == accountId && account.getSessionVersion() == sessionVersion && account.isActive();
+        }
     }
 }

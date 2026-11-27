@@ -33,17 +33,18 @@ public class CatalogController {
     public List<TeacherView> studentTeachers(@RequestParam Long studentId) {
         access.requireView(studentId);
         return assignments.findByStudentIdAndActiveTrue(studentId).stream()
+                .filter(a -> a.getAssignmentType() == br.edu.ifac.napne360.student.AssignmentType.TEACHER)
                 .filter(a -> a.getSubject() != null && a.getUser().isActive() && a.getUser().getRoles().contains(RoleName.TEACHER))
                 .filter(a -> access.canViewSubject(studentId, a.getSubject().getId()))
-                .map(a -> new TeacherView(a.getUser().getId(), a.getUser().getName(), a.getSubject().getId())).toList();
+                .map(a -> new TeacherView(a.getUser().getId(), a.getUser().getName(), a.getSubject().getId())).distinct().toList();
     }
 
     public record TeacherView(Long id, String name, Long subjectId) {}
 
     @GetMapping("/campuses")
-    public List<AdminController.CampusView> campuses() {
+    public List<AdminCampusController.CampusView> campuses() {
         return campuses.findAll().stream().filter(Campus::isActive)
-                .map(c -> new AdminController.CampusView(c.getId(), c.getName(), c.getCode(), c.isActive())).toList();
+                .map(AdminCampusController.CampusView::of).toList();
     }
 
     @GetMapping("/courses")

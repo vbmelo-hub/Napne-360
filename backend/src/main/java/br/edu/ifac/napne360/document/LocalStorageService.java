@@ -1,6 +1,8 @@
 package br.edu.ifac.napne360.document;
 
+import br.edu.ifac.napne360.common.ApiOperationException;
 import br.edu.ifac.napne360.common.NotFoundException;
+import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -34,15 +36,18 @@ public class LocalStorageService implements DocumentStorage {
 
     @Override
     public PreparedFile prepare(Long studentId, String operationId, MultipartFile file) throws IOException {
-        if (file.isEmpty() || file.getSize() > 10L * 1024 * 1024) throw new IllegalArgumentException("O arquivo deve ter entre 1 byte e 10 MB.");
+        if (file.isEmpty())
+            throw new ApiOperationException(HttpStatus.BAD_REQUEST, "ATTACHMENT_EMPTY", "O arquivo está vazio.");
+        if (file.getSize() > 10L * 1024 * 1024) throw tooLarge();
         if (file.getContentType() == null || !ALLOWED_TYPES.contains(file.getContentType())) {
-            throw new IllegalArgumentException("Tipo de arquivo não permitido.");
+            throw new ApiOperationException(HttpStatus.BAD_REQUEST, "ATTACHMENT_UNSUPPORTED",
+                    "Selecione um arquivo PDF, PNG, JPEG ou DOCX.");
         }
         byte[] bytes;
         try (InputStream input = file.getInputStream()) {
             bytes = input.readNBytes(10 * 1024 * 1024 + 1);
         }
-        if (bytes.length > 10 * 1024 * 1024) throw new IllegalArgumentException("Arquivo muito grande.");
+        if (bytes.length > 10 * 1024 * 1024) throw tooLarge();
         String extension = validatedExtension(file.getContentType(), bytes);
         String storedName = studentId + "-" + operationId + extension;
         return new PreparedFile(storedName, HexFormat.of().formatHex(sha256().digest(bytes)), bytes);
@@ -112,22 +117,32 @@ public class LocalStorageService implements DocumentStorage {
                 while ((entry = zip.getNextEntry()) != null) {
                     if (++entries > 2000 || entry.getName().contains("..") || entry.getName().startsWith("/")
                             || entry.getName().toLowerCase(java.util.Locale.ROOT).contains("vbaproject"))
-                        throw new IllegalArgumentException("Documento inválido.");
+                        throw invalid();
                     contentTypes |= entry.getName().equals("[Content_Types].xml");
                     document |= entry.getName().equals("word/document.xml");
                     int count;
                     while ((count = zip.read(buffer)) != -1) {
                         expanded += count;
-                        if (expanded > 50L * 1024 * 1024) throw new IllegalArgumentException("Documento expandido excede o limite.");
+                        if (expanded > 50L * 1024 * 1024) throw invalid();
                     }
                 }
             }
             if (contentTypes && document) return ".docx";
         }
-        throw new IllegalArgumentException("O conteúdo não corresponde ao tipo de arquivo informado.");
+        throw invalid();
     }
 
     private boolean startsWith(byte[] bytes, byte[] prefix) {
         return bytes.length >= prefix.length && java.util.Arrays.equals(java.util.Arrays.copyOf(bytes, prefix.length), prefix);
     }
+    private static ApiOperationException tooLarge() {
+        return new ApiOperationException(HttpStatus.PAYLOAD_TOO_LARGE, "ATTACHMENT_TOO_LARGE",
+                "O arquivo ultrapassa o limite permitido de 10 MB.");
+    }
+
+    private static ApiOperationException invalid() {
+        return new ApiOperationException(HttpStatus.BAD_REQUEST, "ATTACHMENT_INVALID",
+                "O conteúdo do arquivo não corresponde ao formato informado ou o documento está danificado.");
+    }
+
 }

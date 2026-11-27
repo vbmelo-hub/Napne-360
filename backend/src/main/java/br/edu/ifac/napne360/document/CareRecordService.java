@@ -6,6 +6,8 @@ import br.edu.ifac.napne360.identity.ReferenceIdDeserializer;
 import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.SubjectRepository;
 import br.edu.ifac.napne360.identity.UserAccount;
+import br.edu.ifac.napne360.identity.UserAccountRepository;
+import br.edu.ifac.napne360.identity.UserEmailHistoryService;
 import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.timeline.MutationProjection;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
@@ -44,24 +46,32 @@ public class CareRecordService {
     private final DocumentTemplateRepository templates;
     private final SubjectRepository subjects;
     private final TransactionTemplate transactions;
+    private final UserEmailHistoryService emailHistory;
+    private final UserAccountRepository users;
 
     public List<CareRecordDocument> list(Long studentId, CareRecordType type) {
         UserAccount user = currentUser.require();
         List<CareRecordDocument> values = type == null
                 ? records.findByStudentIdOrderByCreatedAtDesc(studentId)
                 : records.findByStudentIdAndTypeOrderByCreatedAtDesc(studentId, type);
-        if (!user.getRoles().contains(RoleName.NAPNE)) {
+        boolean napne = user.getRoles().contains(RoleName.NAPNE);
+        var authorEmails = napne ? Set.<String>of() : emailHistory.previouslyOwnedAddresses(user);
+        if (!napne) {
             values = values.stream().filter(value -> PEDAGOGICAL_VISIBLE.contains(value.getType()))
                     .filter(value -> value.getSubjectId() == null || access.canViewSubject(studentId, value.getSubjectId()))
-                    .filter(value -> value.getStatus() != RecordStatus.DRAFT || user.getEmail().equals(value.getCreatedBy())).toList();
+                    .filter(value -> value.getStatus() != RecordStatus.DRAFT || authoredBy(value, authorEmails)).toList();
         }
-        return values.stream().map(value -> projectCaseLink(value, user)).toList();
+        boolean writable = !values.isEmpty() && access.canWritePedagogical(studentId);
+        return values.stream().map(value -> project(value, napne, writable && allowsType(user.getRoles(), value.getType())
+                && (napne || authoredBy(value, authorEmails)))).toList();
     }
 
     public CareRecordDocument create(Long studentId, CareRecordRequest request, Authentication auth, HttpServletRequest http) {
         UserAccount user = currentUser.require();
         validateType(user, request.type());
-        validateScope(studentId, request);
+        if (request.status() == RecordStatus.ARCHIVED || request.status() == RecordStatus.SUPERSEDED)
+            throw new IllegalArgumentException("Selecione Rascunho ou Finalizado ao criar um acompanhamento.");
+        validateScope(studentId, request, user);
         if (request.caseId() != null && !user.getRoles().contains(RoleName.NAPNE)) {
             throw new AccessDeniedException("Somente o NAPNE pode vincular um caso ao criar o registro.");
         }
@@ -75,15 +85,16 @@ public class CareRecordService {
                 .createdBy(user.getEmail()).updatedBy(user.getEmail()).build();
         var event = mutation(draft, 0L, "CREATE", "CARE_RECORD_CREATED", "Registro de acompanhamento criado", user, auth, http);
         draft.setPendingProjections(List.of(event));
-        CareRecordDocument value = withLinkLocks(draft.getCaseId(), studentId, draft.getSubjectId(),
+        UserAccount draftAuthor = draft.getStatus() == RecordStatus.DRAFT ? user : null;
+        CareRecordDocument value = withLinkLocks(draft.getCaseId(), studentId, draft.getSubjectId(), draftAuthor,
                 () -> records.save(draft));
         projections.enqueue(value.getId(), CareRecordDocument.class, event);
         return value;
     }
 
     private CareRecordDocument withLinkLocks(Long caseId, Long studentId, Long subjectId,
-                                             Supplier<CareRecordDocument> mutation) {
-        if (caseId == null && subjectId == null) return mutation.get();
+                                             UserAccount draftAuthor, Supplier<CareRecordDocument> mutation) {
+        if (caseId == null && subjectId == null && draftAuthor == null) return mutation.get();
 
         var saved = new AtomicReference<CareRecordDocument>();
         try {
@@ -98,6 +109,13 @@ public class CareRecordService {
                             .orElseThrow(() -> new NotFoundException("Componente não encontrado."));
                     if (!subject.isActive() || !subject.getCourse().isActive()) {
                         throw new ConflictException("O componente está arquivado.");
+                    }
+                }
+                if (draftAuthor != null) {
+                    var account = users.findByIdForUpdate(draftAuthor.getId()).orElseThrow(
+                            () -> new AccessDeniedException("Acesso negado."));
+                    if (!account.isActive() || account.getSessionVersion() != draftAuthor.getSessionVersion()) {
+                        throw new AccessDeniedException("A conta não pode mais salvar este rascunho. Entre novamente.");
                     }
                 }
                 var record = mutation.get();
@@ -119,41 +137,55 @@ public class CareRecordService {
         if (!studentId.equals(value.getStudentId())) throw new NotFoundException("Registro não encontrado.");
         validateType(user, value.getType());
         boolean napne = user.getRoles().contains(RoleName.NAPNE);
-        if (!napne && !user.getEmail().equals(value.getCreatedBy()))
+        if (!napne && !authoredBy(value, emailHistory.previouslyOwnedAddresses(user)))
             throw new AccessDeniedException("Somente o autor ou o NAPNE pode revisar este registro.");
         if (request.type() != value.getType() || !java.util.Objects.equals(request.subjectId(), value.getSubjectId()))
             throw new IllegalArgumentException("Vínculos do registro são imutáveis.");
-        validateScope(studentId, request);
+        validateScope(studentId, request, user);
         boolean caseLinkPreserved = java.util.Objects.equals(request.caseId(), value.getCaseId())
                 || (!napne && request.caseId() == null);
         if (!caseLinkPreserved) throw new IllegalArgumentException("Vínculos do registro são imutáveis.");
         if (request.version() == null || !java.util.Objects.equals(request.version(), value.getVersion()))
             throw new ConflictException("O registro foi alterado. Recarregue antes de salvar.");
+        var status = request.status() == null ? value.getStatus() : request.status();
+        var content = request.content() == null ? Map.<String, Object>of() : request.content();
+        if (java.util.Objects.equals(value.getTitle(), request.title()) && value.getStatus() == status
+                && java.util.Objects.equals(value.getContent(), content)) return project(value, napne, true);
+        if (value.getStatus() == RecordStatus.ARCHIVED || value.getStatus() == RecordStatus.SUPERSEDED
+                || status == RecordStatus.SUPERSEDED)
+            throw new ConflictException("O acompanhamento histórico não permite alterações.");
+        boolean archive = status == RecordStatus.ARCHIVED;
+        if (archive && (!java.util.Objects.equals(value.getTitle(), request.title())
+                || !java.util.Objects.equals(value.getContent(), content)))
+            throw new IllegalArgumentException("Arquive o registro sem alterar seu conteúdo.");
         value.getHistory().add(new CareRecordDocument.Revision(value.getVersion(), value.getTitle(), value.getStatus(),
                 new java.util.LinkedHashMap<>(value.getContent()), value.getUpdatedBy(), value.getUpdatedAt()));
         value.setTitle(request.title());
-        value.setStatus(request.status() == null ? value.getStatus() : request.status());
-        value.setContent(request.content() == null ? Map.of() : request.content());
+        value.setStatus(status);
+        value.setContent(content);
         value.setUpdatedBy(user.getEmail());
         value.setUpdatedAt(Instant.now());
         long version = value.getVersion() + 1;
-        var event = mutation(value, version, "UPDATE", "CARE_RECORD_UPDATED", "Registro de acompanhamento atualizado", user, auth, http);
+        var event = archive
+                ? mutation(value, version, "ARCHIVE", "CARE_RECORD_ARCHIVED", "Registro de acompanhamento arquivado", user, auth, http)
+                : mutation(value, version, "UPDATE", "CARE_RECORD_UPDATED", "Registro de acompanhamento atualizado", user, auth, http);
         var changes = new Update().set("title", value.getTitle()).set("status", value.getStatus())
                 .set("content", value.getContent()).set("history", value.getHistory())
                 .set("updatedBy", value.getUpdatedBy()).set("updatedAt", value.getUpdatedAt());
         Long subjectLock = value.getStatus() == RecordStatus.DRAFT ? value.getSubjectId() : null;
-        withLinkLocks(null, studentId, subjectLock, () -> {
+        UserAccount draftAuthor = status == RecordStatus.DRAFT ? user : null;
+        withLinkLocks(null, studentId, subjectLock, draftAuthor, () -> {
             projections.update(value.getId(), value.getVersion(), changes, event, CareRecordDocument.class);
             return value;
         });
         value.setVersion(version);
         projections.enqueue(value.getId(), CareRecordDocument.class, event);
-        return projectCaseLink(value, user);
+        return project(value, napne, true);
     }
 
     private MutationProjection mutation(CareRecordDocument value, long version, String action, String eventType,
                                         String title, UserAccount user, Authentication auth, HttpServletRequest http) {
-        TimelineVisibility visibility = PEDAGOGICAL_VISIBLE.contains(value.getType())
+        TimelineVisibility visibility = value.getStatus() != RecordStatus.ARCHIVED && PEDAGOGICAL_VISIBLE.contains(value.getType())
                 ? TimelineVisibility.PEDAGOGICAL : TimelineVisibility.RESTRICTED;
         Map<String, Object> eventData = new java.util.LinkedHashMap<>();
         eventData.put("recordId", value.getId());
@@ -164,26 +196,38 @@ public class CareRecordService {
                 action, "CARE_RECORD", value.getId(), value.getType().name(), value.getUpdatedAt());
     }
 
-    private void validateType(UserAccount user, CareRecordType type) {
-        if (user.getRoles().contains(RoleName.NAPNE)) return;
-        if (PEDAGOGICAL_VISIBLE.contains(type) && (user.getRoles().contains(RoleName.COTEP)
-                || user.getRoles().contains(RoleName.COURSE_COORDINATOR))) return;
-        if (type == CareRecordType.TEACHER_FEEDBACK && user.getRoles().contains(RoleName.TEACHER)) return;
-        if (type == CareRecordType.TUTOR_OBSERVATION && user.getRoles().contains(RoleName.TUTOR)) return;
-        throw new AccessDeniedException("Record type not permitted for current role");
+    private boolean authoredBy(CareRecordDocument value, Set<String> addresses) {
+        return value.getCreatedBy() != null && addresses.contains(UserEmailHistoryService.normalize(value.getCreatedBy()));
     }
 
-    private void validateScope(Long studentId, CareRecordRequest request) {
+    public static boolean allowsType(Set<RoleName> roles, CareRecordType type) {
+        return roles.contains(RoleName.NAPNE)
+                || PEDAGOGICAL_VISIBLE.contains(type) && (roles.contains(RoleName.COTEP) || roles.contains(RoleName.COURSE_COORDINATOR))
+                || type == CareRecordType.TEACHER_FEEDBACK && roles.contains(RoleName.TEACHER)
+                || type == CareRecordType.TUTOR_OBSERVATION && roles.contains(RoleName.TUTOR);
+    }
+
+    private void validateType(UserAccount user, CareRecordType type) {
+        if (!allowsType(user.getRoles(), type)) throw new AccessDeniedException("Tipo de acompanhamento fora do perfil autorizado.");
+    }
+
+    private void validateScope(Long studentId, CareRecordRequest request, UserAccount user) {
         if (!access.canWritePedagogical(studentId)) throw new AccessDeniedException("Access denied");
         if (request.type() == CareRecordType.TEACHER_FEEDBACK && request.subjectId() == null)
             throw new IllegalArgumentException("Selecione o componente curricular da devolutiva.");
+        if (request.type() == CareRecordType.TEACHER_FEEDBACK && user.getRoles().contains(RoleName.TEACHER)
+                && !user.getRoles().contains(RoleName.NAPNE)
+                && !access.canTeachPei(studentId, request.subjectId()))
+            throw new AccessDeniedException("O componente deve estar vinculado a uma atribuição docente válida.");
         if (request.subjectId() != null && !access.canViewSubject(studentId, request.subjectId()))
             throw new AccessDeniedException("Componente fora do vínculo autorizado.");
     }
 
-    private CareRecordDocument projectCaseLink(CareRecordDocument value, UserAccount user) {
-        if (user.getRoles().contains(RoleName.NAPNE)) return value;
-        return value.toBuilder().caseId(null).build();
+    private CareRecordDocument project(CareRecordDocument value, boolean napne, boolean writable) {
+        boolean editable = writable && value.getStatus() != RecordStatus.ARCHIVED && value.getStatus() != RecordStatus.SUPERSEDED;
+        if (!napne) return value.toBuilder().caseId(null).editable(editable).build();
+        value.setEditable(editable);
+        return value;
     }
 
     public record CareRecordRequest(@JsonDeserialize(using = ReferenceIdDeserializer.class) Long caseId,

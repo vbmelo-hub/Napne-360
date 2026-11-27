@@ -9,7 +9,7 @@ import static org.mockito.Mockito.*;
 
 class ReferenceControllerTest {
     final ReferenceEntryRepository entries = mock(ReferenceEntryRepository.class);
-    final ReferenceController controller = new ReferenceController(entries);
+    final ReferenceController controller = new ReferenceController(entries, mock(br.edu.ifac.napne360.academic.AcademicService.class));
     @ParameterizedTest @ValueSource(strings = {"code", "kind"})
     void immutableIdentityIsRejectedBeforeAnyMutation(String field) {
         var entry = ReferenceEntry.builder().id(1L).kind(ReferenceEntry.Kind.ACADEMIC_TERM).code("2026-2").label("Antes").description("Descrição").build();

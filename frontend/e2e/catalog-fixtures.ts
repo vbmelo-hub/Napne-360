@@ -14,14 +14,53 @@ export async function loginUi(page: Page, role: string) {
   // Reset only this browser page's storage, then reload to create a fresh AuthService.
   if (/^https?:/.test(page.url())) await page.evaluate(() => sessionStorage.removeItem('napne360.session'));
   await page.goto('/login');
-  await page.getByLabel('E-mail institucional', { exact: true }).fill(`${role}@napne.local`);
-  await page.getByLabel('Senha', { exact: true }).fill('Napne360!Demo');
+  await page.getByRole('textbox', { name: 'E-mail institucional', exact: true }).fill(`${role}@napne.local`);
+  await page.getByLabel(/^Senha/).fill('Napne360!Demo');
   const response = page.waitForResponse(r => r.url().endsWith('/api/v1/auth/login') && r.request().method() === 'POST');
   await page.getByRole('button', { name: 'Entrar', exact: true }).click();
   expect((await response).status()).toBe(200);
   await expect(page.getByRole('heading', {
     name: role === 'admin' ? 'Estrutura institucional em um só lugar' : 'Acompanhamento NAPNE', exact: true
   })).toBeVisible();
+}
+
+type AcademicFixtureInput = {
+  studentId: number;
+  subjectId: number;
+  teacherIds: readonly number[];
+  adminHeaders: Record<string, string>;
+  napneHeaders: Record<string, string>;
+  semester?: 1 | 2;
+};
+
+export async function academicFixture(request: APIRequestContext, input: AcademicFixtureInput) {
+  const year = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Rio_Branco', year: 'numeric' }).format(new Date());
+  const response = await request.get('/api/v1/catalog/references', {
+    params: { kind: 'ACADEMIC_TERM' }, headers: input.napneHeaders
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  const periods = await response.json() as { id: number; code: string; label: string; kind: string }[];
+  const term = periods.find(period => period.code === `${year}.${input.semester ?? 1}`);
+  expect(term, 'Período letivo gerado pelo backend').toBeTruthy();
+
+  async function create(path: string, data: object, headers: Record<string, string>) {
+    const response = await request.post(`/api/v1${path}`, { data, headers });
+    expect(response.status(), `${path}: ${await response.text()}`).toBe(200);
+    return response.json();
+  }
+
+  const offering = await create('/admin/academic/offerings', {
+    subjectId: input.subjectId, periodId: term!.id,
+    groupCode: `TEST-${input.studentId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  }, input.adminHeaders) as { id: number };
+  const teaching = [];
+  for (const teacherId of input.teacherIds) {
+    teaching.push(await create('/admin/academic/teaching', { teacherId, offeringId: offering.id }, input.adminHeaders) as { id: number });
+  }
+  const enrollment = await create(`/students/${input.studentId}/academic/enrollments`, {
+    offeringId: offering.id
+  }, input.napneHeaders) as { id: number };
+  return { term: term!, offering, teaching, enrollment };
 }
 
 export async function catalogFixture(request: APIRequestContext) {
@@ -42,9 +81,10 @@ export async function catalogFixture(request: APIRequestContext) {
     courseId: courses[0].id, registration: `TEST-CATALOG-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     civilName: 'Pessoa Fictícia Catálogo', socialName: 'Teste de Catálogo'
   });
-  await post('/admin/assignments', {
-    studentId: student.id, userId: teacher.id, subjectId: subjects[0].id, assignmentType: 'TEACHER'
-  }, adminHeaders);
+  const academicForSemester = (semester: 1 | 2) => academicFixture(request, {
+    semester, studentId: student.id, subjectId: subjects[0].id, teacherIds: [teacher.id], adminHeaders, napneHeaders: headers
+  });
+  const academic = await academicForSemester(1);
   const path = `/api/v1/students/${student.id}`;
   const dossier = async () => (await request.get(`${path}/dossier`, { headers })).json();
   const saveDossier = async (data: object) => {
@@ -55,7 +95,7 @@ export async function catalogFixture(request: APIRequestContext) {
   const entry = (kind: string, label: string) => post('/admin/references', {
     kind, code: `TEST-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, label
   }, adminHeaders);
-  return { student, course: courses[0], teacher, subject: subjects[0], headers, adminHeaders, teacherHeaders, path, post, dossier, saveDossier, entry };
+  return { student, course: courses[0], teacher, subject: subjects[0], headers, adminHeaders, teacherHeaders, path, post, dossier, saveDossier, entry, academic, academicForSemester };
 }
 
 export function evaluateMongo(script: string): string {
@@ -78,6 +118,18 @@ export function makeLegacyFixture(student: { id: number; registration: string },
       ![subjectId, teacherId].every(id => Number.isSafeInteger(id) && id > 0)) {
     throw new Error('Fixture de legado exige estudante fictício recém-criado e vínculo válido.');
   }
+  // The independent academic relation uses a current term. This legacy grant preserves access to the historical PEI.
+  const docker = process.env['NAPNE_E2E_DOCKER'] || 'docker';
+  const compose = ['compose'];
+  if (process.env['NAPNE_E2E_COMPOSE_FILE']) compose.push('-f', process.env['NAPNE_E2E_COMPOSE_FILE']);
+  if (process.env['NAPNE_E2E_COMPOSE_PROJECT']) compose.push('-p', process.env['NAPNE_E2E_COMPOSE_PROJECT']);
+  const mysql = 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root --database="$MYSQL_DATABASE" --batch';
+  execFileSync(docker, [...compose, 'exec', '-T', 'mysql', 'sh', '-c', mysql], {
+    input: `insert into student_assignment (student_id, user_id, subject_id, assignment_type, origin)
+      values (${student.id}, ${teacherId}, ${subjectId}, 'TEACHER', 'MANUAL');`,
+    encoding: 'utf8', timeout: 30_000
+  });
+
   // Arguments and JavaScript literals are passed separately; no shell interpolation is used.
   const script = `
     const studentId = NumberLong(${JSON.stringify(String(student.id))});

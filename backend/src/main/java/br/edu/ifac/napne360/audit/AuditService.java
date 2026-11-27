@@ -2,6 +2,7 @@ package br.edu.ifac.napne360.audit;
 
 import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.identity.UserAccountRepository;
+import br.edu.ifac.napne360.identity.UserEmailHistoryRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -16,11 +17,13 @@ import java.time.Instant;
 public class AuditService {
     private final AuditEventRepository repository;
     private final UserAccountRepository users;
+    private final UserEmailHistoryRepository emailHistory;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(Authentication authentication, HttpServletRequest request, String action,
                        String resourceType, Object resourceId, String outcome, String details) {
-        UserAccount actor = authentication == null ? null : users.findByEmailIgnoreCase(authentication.getName()).orElse(null);
+        UserAccount actor = authentication == null ? null : users.findByEmailIgnoreCase(authentication.getName())
+                .or(() -> emailHistory.owner(authentication.getName())).orElse(null);
         repository.save(AuditEvent.builder()
                 .actor(actor)
                 .action(action)
@@ -30,6 +33,13 @@ public class AuditService {
                 .ipAddress(request == null ? null : request.getRemoteAddr())
                 .details(sanitize(details))
                 .build());
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordWithAccountLock(UserAccount actor, HttpServletRequest request, String action, String details) {
+        repository.save(AuditEvent.builder().actor(actor).action(action).resourceType("USER")
+                .resourceId(actor.getId().toString()).outcome("SUCCESS")
+                .ipAddress(request == null ? null : request.getRemoteAddr()).details(sanitize(details)).build());
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 10)

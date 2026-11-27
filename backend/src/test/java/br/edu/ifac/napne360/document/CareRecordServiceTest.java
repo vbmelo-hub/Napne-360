@@ -9,6 +9,8 @@ import br.edu.ifac.napne360.identity.RoleName;
 import br.edu.ifac.napne360.identity.Subject;
 import br.edu.ifac.napne360.identity.SubjectRepository;
 import br.edu.ifac.napne360.identity.UserAccount;
+import br.edu.ifac.napne360.identity.UserAccountRepository;
+import br.edu.ifac.napne360.identity.UserEmailHistoryService;
 import br.edu.ifac.napne360.security.AccessGuard;
 import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.student.Student;
@@ -63,6 +65,8 @@ class CareRecordServiceTest {
     @Mock DocumentTemplateRepository templates;
     @Mock SubjectRepository subjects;
     @Mock PlatformTransactionManager transactionManager;
+    @Mock UserEmailHistoryService emailHistory;
+    @Mock UserAccountRepository users;
     private final ObjectMapper json = Jackson2ObjectMapperBuilder.json().build();
     private CareRecordService service;
     private MockMvc mvc;
@@ -73,13 +77,15 @@ class CareRecordServiceTest {
     void setUp() {
         lenient().when(transactionManager.getTransaction(any())).thenAnswer(call -> new SimpleTransactionStatus());
         service = new CareRecordService(records, currentUser, projections, access, cases,
-                templates, subjects, new TransactionTemplate(transactionManager));
+                templates, subjects, new TransactionTemplate(transactionManager), emailHistory, users);
         mvc = MockMvcBuilders.standaloneSetup(new CareRecordController(service, access))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(json)).build();
-        user = UserAccount.builder().name("Docente de teste").email("autor@example.test")
+        user = UserAccount.builder().id(5L).name("Docente de teste").email("autor@example.test")
                 .roles(Set.of(RoleName.TEACHER)).build();
         lenient().when(currentUser.require()).thenReturn(user);
+        lenient().when(users.findByIdForUpdate(5L)).thenReturn(Optional.of(user));
+        lenient().when(emailHistory.previouslyOwnedAddresses(user)).thenReturn(Set.of("autor@example.test"));
         lenient().when(subjects.findByIdForUpdate(2L)).thenReturn(Optional.of(Subject.builder().id(2L)
                 .course(Course.builder().id(1L).build()).build()));
         record = CareRecordDocument.builder().id("r1").studentId(1L).subjectId(2L)
@@ -225,6 +231,7 @@ class CareRecordServiceTest {
         when(records.findById("r1")).thenReturn(Optional.of(record));
         lenient().when(access.canWritePedagogical(1L)).thenReturn(true);
         lenient().when(access.canViewSubject(1L, 2L)).thenReturn(true);
+        lenient().when(access.canTeachPei(1L, 2L)).thenReturn(true);
         record.setCreatedBy("outro@example.test");
         record.setCaseId(7L);
         var before = json.<JsonNode>valueToTree(record);
@@ -266,6 +273,7 @@ class CareRecordServiceTest {
         lenient().when(records.findById("r1")).thenReturn(Optional.of(record));
         lenient().when(access.canWritePedagogical(1L)).thenReturn(true);
         lenient().when(access.canViewSubject(1L, 2L)).thenReturn(true);
+        lenient().when(access.canTeachPei(1L, 2L)).thenReturn(true);
         var before = json.<JsonNode>valueToTree(record);
 
         mvc.perform(put("/api/v1/students/1/records/r1").contentType(MediaType.APPLICATION_JSON)
@@ -299,6 +307,7 @@ class CareRecordServiceTest {
     void existingCreationPayloadNeedsNoVersionAndKeepsDraftAndTemplateDefaults() throws Exception {
         when(access.canWritePedagogical(1L)).thenReturn(true);
         when(access.canViewSubject(1L, 2L)).thenReturn(true);
+        lenient().when(access.canTeachPei(1L, 2L)).thenReturn(true);
         when(templates.findByDocumentTypeAndActiveTrueOrderByUpdatedAtDesc("TEACHER_FEEDBACK"))
                 .thenReturn(List.of(DocumentTemplate.builder().defaults(Map.of("fromTemplate", true, "notes", "Padrão")).build()));
         when(records.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -389,6 +398,7 @@ class CareRecordServiceTest {
         record.setCaseId(7L);
         when(records.findByStudentIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(record));
         when(access.canViewSubject(1L, 2L)).thenReturn(true);
+        lenient().when(access.canTeachPei(1L, 2L)).thenReturn(true);
 
         List<CareRecordDocument> result = service.list(1L, null);
 
@@ -412,6 +422,22 @@ class CareRecordServiceTest {
     }
 
     @Test
+    void previousEmailKeepsDraftVisibleAndEditableByTheSameAccount() throws Exception {
+        user.setEmail("novo@example.test");
+        when(emailHistory.previouslyOwnedAddresses(user)).thenReturn(Set.of("autor@example.test", "novo@example.test"));
+        when(records.findByStudentIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(record));
+        allowUpdate();
+
+        var drafts = service.list(1L, null);
+        assertThat(drafts).singleElement().satisfies(draft -> assertThat(draft.getEditable()).isTrue());
+
+        var updated = service.update(1L, "r1", request(payload()), null, null);
+        assertThat(updated.getCreatedBy()).isEqualTo("autor@example.test");
+        assertThat(updated.getUpdatedBy()).isEqualTo("novo@example.test");
+        assertThat(updated.getEditable()).isTrue();
+    }
+
+    @Test
     void nonNapneUpdateAcceptsRedactedNullAndReturnsRedactedCopy() throws Exception {
         record.setCaseId(7L);
         allowUpdate();
@@ -431,6 +457,7 @@ class CareRecordServiceTest {
         when(records.findById("r1")).thenReturn(Optional.of(record));
         when(access.canWritePedagogical(1L)).thenReturn(true);
         when(access.canViewSubject(1L, 2L)).thenReturn(true);
+        lenient().when(access.canTeachPei(1L, 2L)).thenReturn(true);
     }
 
     private ObjectNode payload() {

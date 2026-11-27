@@ -1,13 +1,15 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, input, output, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
+import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Observable } from 'rxjs';
 import { ApiService } from '../core/api.service';
+import { trackFormChanges } from '../core/form-changes';
 import { CaseHistoryView, CaseResponsibleCandidate, NapneCase, Page } from '../core/models';
 import { errorMessage, labelFor, toneFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
+import { ModalShellComponent } from '../shared/modal-shell.component';
 import { PaginationComponent } from '../shared/pagination.component';
 
 function availableStages(item: NapneCase) {
@@ -16,13 +18,13 @@ function availableStages(item: NapneCase) {
 
 @Component({
   selector: 'app-case-card',
-  imports: [DatePipe, ReactiveFormsModule, ConfirmDialogComponent, PaginationComponent],
+  imports: [DatePipe, ReactiveFormsModule, ConfirmDialogComponent, ModalShellComponent, PaginationComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <article class="case-card" [attr.aria-labelledby]="'case-' + item().id">
       <div class="case-main">
         <span [class]="'badge badge--' + tone(item().stage)">{{currentStageLabel()}}</span>
-        <h3 [id]="'case-' + item().id">{{item().source}}</h3>
+        <h3 [id]="'case-' + item().id">Caso nº {{item().id}} · {{item().source}}</h3>
         <p>{{item().summary || 'Sem resumo informado.'}}</p>
         <small>
           Aberto em {{item().openedAt | date:'dd/MM/yyyy'}}
@@ -32,6 +34,9 @@ function availableStages(item: NapneCase) {
       </div>
 
       <div class="case-action">
+        @if (canTransfer()) {
+          <button type="button" class="secondary" [disabled]="changesBlocked()" (click)="openEdit()">Editar caso</button>
+        }
         @if (stageOptions().length) {
           <label>
             Próxima etapa
@@ -59,13 +64,13 @@ function availableStages(item: NapneCase) {
           <button type="button" class="secondary" [disabled]="changesBlocked()"
             (click)="openTransfer()">Transferir responsabilidade</button>
         }
-        <button type="button" class="secondary" [disabled]="busy()" [attr.aria-expanded]="historyOpen()"
-          [attr.aria-controls]="historyId()" (click)="toggleHistory()">
-          {{historyOpen() ? 'Ocultar histórico' : 'Consultar histórico'}}
+        <button type="button" class="secondary" [disabled]="busy()" (click)="recordsRequested.emit(item().id)">Ver acompanhamentos</button>
+        <button type="button" class="secondary" [disabled]="busy()" (click)="toggleHistory()">
+          Consultar histórico
         </button>
       </div>
 
-      @if (pending() === 'stage' || pending() === 'transfer') {
+      @if (pending() === 'stage') {
         <p class="case-panel" role="status">Salvando alterações do caso…</p>
       }
       @if (operationError()) {
@@ -79,6 +84,28 @@ function availableStages(item: NapneCase) {
         </div>
       }
 
+    <app-modal-shell [open]="editOpen()" title="Editar caso nº {{item().id}}" (closed)="closeEdit()">
+      <form class="stack" [formGroup]="editForm" (ngSubmit)="saveDetails()">
+        <fieldset class="stack" [disabled]="busy()">
+          <label><span>Origem do encaminhamento&nbsp;<span class="field-required" aria-hidden="true">*</span></span>
+            <input formControlName="source" maxlength="80" required>
+          </label>
+          <label>Resumo<textarea formControlName="summary" maxlength="500"></textarea></label>
+        </fieldset>
+        @if (operationError()) { <p class="error" role="alert">{{operationError()}}</p> }
+        @if (conflict()) {
+          <button type="button" class="secondary compact" [disabled]="busy()" (click)="synchronize()">Sincronizar caso</button>
+        }
+        <div class="case-buttons">
+          <button type="button" class="secondary" [disabled]="busy()" (click)="closeEdit()">Cancelar</button>
+          <button type="submit" [disabled]="!validEdit() || changesBlocked()">
+            {{pending() === 'edit' ? 'Salvando…' : 'Salvar alterações'}}
+          </button>
+        </div>
+      </form>
+    </app-modal-shell>
+
+    <app-modal-shell [open]="transferOpen()" title="Transferir responsabilidade" (closed)="closeTransfer()">
       @if (transferOpen()) {
         <form class="case-panel stack" (submit)="$event.preventDefault(); transfer()">
           @if (pending() === 'candidates') {
@@ -89,25 +116,30 @@ function availableStages(item: NapneCase) {
           } @else if (!canTransfer()) {
             <p>O caso atual não permite transferência de responsabilidade.</p>
           } @else if (eligibleCandidates().length === 0) {
-            <p>Nenhum outro responsável elegível neste campus.</p>
+            <p role="status">Não é possível transferir este caso porque não existem outros profissionais ativos da equipe NAPNE neste campus.</p>
           }
-          @if (candidates()) {
+          @if (eligibleCandidates().length && canTransfer()) {
+            <p class="field-hint">O novo responsável assumirá a gestão do caso. A transferência ficará registrada no histórico.</p>
             <fieldset class="stack" [disabled]="busy() || !canTransfer()">
               <label>
                 Novo responsável
                 <select name="responsibleId" [formControl]="responsibleId">
                   <option value="">Selecione</option>
-                  @for (candidate of candidates(); track candidate.id) {
-                    <option [value]="candidate.id" [disabled]="candidate.id === item().responsibleId">{{candidate.name}}</option>
+                  @for (candidate of eligibleCandidates(); track candidate.id) {
+                    <option [value]="candidate.id">{{candidate.name}}</option>
                   }
                 </select>
               </label>
               <label>Motivo (opcional)<textarea [formControl]="reason" maxlength="500"></textarea></label>
             </fieldset>
           }
+          @if (operationError()) { <p class="error" role="alert">{{operationError()}}</p> }
+          @if (conflict()) {
+            <button type="button" class="secondary compact" [disabled]="busy()" (click)="synchronize()">Sincronizar caso</button>
+          }
           <div class="case-buttons">
             <button type="button" class="secondary" [disabled]="busy()" (click)="closeTransfer()">Cancelar transferência</button>
-            @if (candidates() && canTransfer()) {
+            @if (eligibleCandidates().length && canTransfer()) {
               <button type="submit" [disabled]="changesBlocked() || !validTransfer()">
                 Confirmar transferência
               </button>
@@ -115,9 +147,10 @@ function availableStages(item: NapneCase) {
           </div>
         </form>
       }
+    </app-modal-shell>
 
-      <div class="case-panel" [id]="historyId()" [hidden]="!historyOpen()">
-        <h4>Histórico do caso</h4>
+    <app-modal-shell [open]="historyOpen()" title="Histórico do caso" (closed)="toggleHistory()">
+      <div class="case-panel">
         @if (historyOpen()) {
           <label class="list-filter">
             Tipo de evento
@@ -126,6 +159,7 @@ function availableStages(item: NapneCase) {
               <option value="OPENED">{{historyLabels.OPENED}}</option>
               <option value="STAGE_CHANGED">{{historyLabels.STAGE_CHANGED}}</option>
               <option value="RESPONSIBLE_CHANGED">{{historyLabels.RESPONSIBLE_CHANGED}}</option>
+              <option value="DETAILS_UPDATED">{{historyLabels.DETAILS_UPDATED}}</option>
             </select>
           </label>
         }
@@ -157,6 +191,15 @@ function availableStages(item: NapneCase) {
                     @case ('RESPONSIBLE_CHANGED') {
                       <p>{{entry.fromResponsible}} → {{entry.toResponsible}}</p>
                     }
+                    @case ('DETAILS_UPDATED') {
+                      @if (entry.fromSource !== entry.toSource) {
+                        <p>Origem: {{entry.fromSource}} → {{entry.toSource}}</p>
+                      }
+                      @if (entry.fromSummary !== entry.toSummary) {
+                        <p>Resumo anterior: {{entry.fromSummary || 'Sem resumo'}}</p>
+                        <p>Resumo atualizado: {{entry.toSummary || 'Sem resumo'}}</p>
+                      }
+                    }
                   }
                   @if (entry.reason) { <p class="history-reason">Motivo: {{entry.reason}}</p> }
                 </li>
@@ -169,9 +212,10 @@ function availableStages(item: NapneCase) {
           }
         }
       </div>
-    </article>
+    </app-modal-shell>
 
-    <app-confirm-dialog [open]="confirmStageOpen()" title="Registrar mudança de etapa?"
+    </article>
+    <app-confirm-dialog [open]="confirmStageOpen()" [title]="selectedStage() === 'ARCHIVED' ? 'Arquivar caso?' : 'Registrar mudança de etapa?'"
       [description]="stageDescription()" confirmLabel="Registrar etapa"
       (confirmed)="changeStage()" (cancelled)="confirmStageOpen.set(false)" />
   `,
@@ -187,13 +231,14 @@ function availableStages(item: NapneCase) {
     .case-action { display: grid; align-content: start; gap: .6rem; min-width: 0; }
     .case-panel { grid-column: 1 / -1; min-width: 0; }
     .case-panel h4 { margin: 0 0 .6rem; }
-    .case-panel fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+    fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
     .case-buttons { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
     .revisions { margin: .75rem 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
     .revisions li { padding: .5rem 0; border-top: 1px solid var(--border); }
     .revisions small { display: block; }
     .revisions p { margin: .25rem 0 0; }
     .history-reason { white-space: pre-wrap; }
+    app-modal-shell { display: contents; }
     app-confirm-dialog { overflow-wrap: anywhere; }
     @media (max-width: 700px) { .case-card { grid-template-columns: 1fr; } }
   `]
@@ -205,16 +250,18 @@ export class CaseCardComponent {
 
   readonly item = input.required<NapneCase>();
   readonly caseUpdated = output<{value: NapneCase; mutated: boolean}>();
+  readonly recordsRequested = output<number>();
 
   readonly label = labelFor;
   readonly tone = toneFor;
   readonly historyLabels: Record<CaseHistoryView['type'], string> = {
     OPENED: 'Abertura',
     STAGE_CHANGED: 'Mudança de etapa',
-    RESPONSIBLE_CHANGED: 'Transferência de responsabilidade'
+    RESPONSIBLE_CHANGED: 'Transferência de responsabilidade',
+    DETAILS_UPDATED: 'Edição do caso',
   };
 
-  readonly pending = signal<'candidates' | 'history' | 'stage' | 'transfer' | 'sync' | null>(null);
+  readonly pending = signal<'candidates' | 'history' | 'stage' | 'transfer' | 'edit' | 'sync' | null>(null);
   readonly busy = computed(() => this.pending() !== null);
   readonly operationError = signal('');
   readonly conflict = signal(false);
@@ -234,7 +281,9 @@ export class CaseCardComponent {
     !!this.selectedStage() && (!this.reopening() || (!!this.normalizedReopenReason() && !this.reopenReasonTooLong()))
   );
   readonly stageDescription = computed(() =>
-    `O caso será alterado de ${this.currentStageLabel()} para ${this.selectedOption()?.label ?? ''}. A mudança ficará registrada no histórico.`
+    this.selectedStage() === 'ARCHIVED'
+      ? 'O caso ficará arquivado e disponível para consulta histórica. Os registros associados serão preservados.'
+      : `O caso será alterado de ${this.currentStageLabel()} para ${this.selectedOption()?.label ?? ''}. A mudança ficará registrada no histórico.`
   );
 
   readonly transferOpen = signal(false);
@@ -247,7 +296,42 @@ export class CaseCardComponent {
   readonly responsibleId = new FormControl('', {nonNullable: true});
   readonly reason = new FormControl('', {nonNullable: true, validators: Validators.maxLength(500)});
 
-  readonly historyId = computed(() => `case-history-${this.item().id}`);
+  readonly editOpen = signal(false);
+  readonly editForm = new FormGroup({
+    source: new FormControl('', { nonNullable: true, validators: [Validators.required, Validators.maxLength(80)] }),
+    summary: new FormControl('', { nonNullable: true, validators: Validators.maxLength(500) }),
+  });
+  private readonly editValues = toSignal(this.editForm.valueChanges, { initialValue: this.editForm.getRawValue() });
+  private readonly editChanges = trackFormChanges(this.editValues);
+
+  openEdit(): void {
+    if (this.changesBlocked() || !this.canTransfer()) return;
+    this.editForm.reset({ source: this.item().source, summary: this.item().summary ?? '' });
+    this.editChanges.capture();
+    this.editOpen.set(true);
+  }
+
+  closeEdit(): void {
+    if (this.busy()) return;
+    if (this.editChanges.changed() && !window.confirm('Descartar alterações ainda não salvas neste caso?')) return;
+    this.editOpen.set(false);
+  }
+
+  validEdit(): boolean {
+    if (this.editForm.invalid || !this.editChanges.changed()) return false;
+    const { source, summary } = this.editForm.getRawValue();
+    return !!source.trim() && (source.trim() !== this.item().source || summary.trim() !== (this.item().summary ?? ''));
+  }
+
+  saveDetails(): void {
+    if (!this.editOpen() || !this.canTransfer() || this.changesBlocked() || !this.validEdit()) return;
+    const { id, version } = this.item();
+    const { source, summary } = this.editForm.getRawValue();
+    this.pending.set('edit');
+    this.mutate(this.api.updateCase(id, { source: source.trim(), summary: summary.trim() || null, version }),
+      'editar o caso', 'Dados do caso atualizados.');
+  }
+
   readonly historyOpen = signal(false);
   readonly history = signal<Page<CaseHistoryView> | null>(null);
   readonly historyType = signal('');
@@ -278,6 +362,12 @@ export class CaseCardComponent {
 
   closeTransfer() {
     if (this.busy()) return;
+    if ((this.reason.value.trim() || this.responsibleId.value)
+        && !window.confirm('Descartar a transferência ainda não confirmada?')) return;
+    this.resetTransfer();
+  }
+
+  private resetTransfer(): void {
     this.transferOpen.set(false);
     this.responsibleId.reset();
     this.reason.reset();
@@ -296,7 +386,7 @@ export class CaseCardComponent {
         this.pending.set(null);
       },
       error: error => {
-        this.candidateError.set(errorMessage(error.status, 'carregar os responsáveis'));
+        this.candidateError.set(errorMessage(error, 'carregar os responsáveis'));
         this.pending.set(null);
       }
     });
@@ -333,7 +423,7 @@ export class CaseCardComponent {
       },
       error: error => {
         this.pending.set(null);
-        this.operationError.set(errorMessage(error.status, 'sincronizar o caso'));
+        this.operationError.set(errorMessage(error, 'sincronizar o caso'));
       }
     });
   }
@@ -362,14 +452,14 @@ export class CaseCardComponent {
         this.pending.set(null);
       },
       error: error => {
-        this.historyError.set(errorMessage(error.status, 'carregar o histórico do caso'));
+        this.historyError.set(errorMessage(error, 'carregar o histórico do caso'));
         this.pending.set(null);
       }
     });
   }
 
   private clearUnavailableTransfer(value: NapneCase) {
-    if (this.transferOpen() && ['CLOSED', 'ARCHIVED'].includes(value.stage)) this.closeTransfer();
+    if (this.transferOpen() && ['CLOSED', 'ARCHIVED'].includes(value.stage)) this.resetTransfer();
   }
 
   private mutate(request: Observable<NapneCase>, action: string, success: string) {
@@ -378,7 +468,8 @@ export class CaseCardComponent {
       next: value => {
         const operation = this.pending();
         this.pending.set(null);
-        if (operation === 'transfer') this.closeTransfer();
+        if (operation === 'transfer') this.resetTransfer();
+        if (operation === 'edit') this.editOpen.set(false);
         if (operation === 'stage') this.selectStage('');
         this.clearUnavailableTransfer(value);
         this.caseUpdated.emit({value, mutated: true});
@@ -387,10 +478,12 @@ export class CaseCardComponent {
       },
       error: error => {
         this.pending.set(null);
-        this.conflict.set(error.status === 409);
-        this.operationError.set(error.status === 409
+        const code = error.error?.code;
+        const conflict = error.status === 409 && (!code || code === 'CONFLICT');
+        this.conflict.set(conflict);
+        this.operationError.set(conflict
           ? 'O caso mudou desde a última leitura. Sincronize este caso antes de tentar novamente.'
-          : errorMessage(error.status, action));
+          : errorMessage(error, action));
       }
     });
   }

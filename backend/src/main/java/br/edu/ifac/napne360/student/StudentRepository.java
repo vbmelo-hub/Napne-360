@@ -1,5 +1,6 @@
 package br.edu.ifac.napne360.student;
 
+import br.edu.ifac.napne360.academic.AcademicRepository;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -30,8 +31,19 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
 
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"campus", "course"})
     @Query("""
+            select s from Student s
+            where s.campus.id = :campusId and s.status = br.edu.ifac.napne360.student.StudentStatus.ARCHIVED
+            and (:query = '' or lower(s.civilName) like lower(concat('%', :query, '%'))
+                 or lower(coalesce(s.socialName, '')) like lower(concat('%', :query, '%'))
+                 or lower(s.registration) like lower(concat('%', :query, '%')))
+            """)
+    Page<Student> searchArchivedCampus(Long campusId, String query, Pageable pageable);
+
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"campus", "course"})
+    @Query("""
             select distinct s from Student s join StudentAssignment a on a.student.id = s.id
-            where a.user.id = :userId and a.active = true
+            where a.user.id = :userId and
+            """ + AcademicRepository.EFFECTIVE + """
               and a.user.campus.id = s.campus.id
               and s.status <> br.edu.ifac.napne360.student.StudentStatus.ARCHIVED
               and (:query = '' or lower(s.civilName) like lower(concat('%', :query, '%'))
@@ -39,8 +51,22 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
                    or lower(s.registration) like lower(concat('%', :query, '%')))
             """)
     Page<Student> searchAssigned(@Param("userId") Long userId, @Param("query") String query, Pageable pageable);
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"campus", "course"})
+    @Query("""
+            select s from Student s where exists (select 1
+            """ + AcademicRepository.MATCH_JOIN + AcademicRepository.NOT_BLOCKED + """
+                and e.student.id = s.id and t.teacher.id = :userId
+                and lower(concat(o.subject.name, ' ', o.subject.code, ' ', o.groupCode, ' ', o.period.code))
+                    like lower(concat('%', :academicQuery, '%')))
+            and (:query = '' or lower(s.civilName) like lower(concat('%', :query, '%'))
+                 or lower(coalesce(s.socialName, '')) like lower(concat('%', :query, '%'))
+                 or lower(s.registration) like lower(concat('%', :query, '%')))
+            """)
+    Page<Student> searchTeachingScope(Long userId, String query, String academicQuery, Pageable pageable);
+
     boolean existsByRegistration(String registration);
     boolean existsByCourseId(Long courseId);
+    boolean existsByCampusIdAndStatus(Long campusId, StudentStatus status);
     boolean existsByCourseIdAndStatus(Long courseId, StudentStatus status);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

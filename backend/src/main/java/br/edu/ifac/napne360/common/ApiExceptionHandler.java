@@ -1,6 +1,11 @@
 package br.edu.ifac.napne360.common;
 
+import br.edu.ifac.napne360.security.JwtService;
+import br.edu.ifac.napne360.security.JwtService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -13,7 +18,15 @@ import java.net.URI;
 import java.time.Instant;
 
 @RestControllerAdvice
+@Slf4j
 public class ApiExceptionHandler {
+    @ExceptionHandler(ApiOperationException.class)
+    ProblemDetail knownOperation(ApiOperationException exception, HttpServletRequest request) {
+        var response = problem(exception.status(), "Operação não concluída", exception.getMessage(), request);
+        response.setProperty("code", exception.code());
+        return response;
+    }
+
     @ExceptionHandler(NotFoundException.class)
     ProblemDetail notFound(NotFoundException exception, HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "Recurso não encontrado", exception.getMessage(), request);
@@ -36,8 +49,17 @@ public class ApiExceptionHandler {
         return problem(HttpStatus.FORBIDDEN, "Acesso negado", "Você não possui permissão para esta operação.", request);
     }
 
+    @ExceptionHandler(JwtService.SessionRejected.class)
+    ProblemDetail sessionEnded(JwtService.SessionRejected exception, HttpServletRequest request, HttpServletResponse response) {
+        response.setHeader(JwtService.STATUS_HEADER, exception.reason().name());
+        return problem(HttpStatus.UNAUTHORIZED, "Sessão encerrada", "Entre novamente para continuar.", request);
+    }
+
     @ExceptionHandler(org.springframework.security.core.AuthenticationException.class)
-    ProblemDetail unauthenticated(Exception exception, HttpServletRequest request) {
+    ProblemDetail unauthenticated(Exception exception, HttpServletRequest request, HttpServletResponse response) {
+        if (exception instanceof JwtService.SessionRejected rejected) {
+            response.setHeader(JwtService.STATUS_HEADER, rejected.reason().name());
+        }
         return problem(HttpStatus.UNAUTHORIZED, "Autenticação inválida", "Confira suas credenciais ou entre novamente.", request);
     }
 
@@ -53,6 +75,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     ProblemDetail unexpected(Exception exception, HttpServletRequest request) {
+        log.error("Falha inesperada em requisição {} ({})", request.getMethod(), exception.getClass().getName());
         return problem(HttpStatus.INTERNAL_SERVER_ERROR, "Erro interno", "Não foi possível concluir a operação.", request);
     }
 
@@ -65,6 +88,7 @@ public class ApiExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
         problem.setTitle(title);
         problem.setInstance(URI.create(request.getRequestURI()));
+        problem.setProperty("code", status.name());
         problem.setProperty("timestamp", Instant.now());
         return problem;
     }

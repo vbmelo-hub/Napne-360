@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { LIST_PAGE_SIZE } from './list-view';
-import { AdminCourse, AdminSubject, Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiAnnexI, PeiCreateRequest, PeiTransferCandidate, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserView } from './models';
+import { AdminCourse, AdminSubject, Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiAnnexI, PeiCreateRequest, PeiTransferCandidate, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentSummary, Subject, TimelineEvent, UserDetails, UserView } from './models';
 
 type PeiVersionAction = Exclude<PeiAction, 'EDIT' | 'TRANSFER'>;
 
@@ -10,20 +10,27 @@ export class ApiService {
   private http = inject(HttpClient);
 
 
-  students(query = '', page = 0) {
-    const params = new HttpParams().set('query', query).set('page', page).set('size', LIST_PAGE_SIZE)
+  students(query = '', page = 0, academicQuery = '', archived = false) {
+    let params = new HttpParams().set('query', query).set('page', page).set('size', LIST_PAGE_SIZE)
       .append('sort', 'updatedAt,desc').append('sort', 'id,desc');
+    if (academicQuery) params = params.set('academicQuery', academicQuery);
+    if (archived) params = params.set('archived', true);
     return this.http.get<Page<StudentSummary>>('/api/v1/students', { params });
   }
   student(id: number) { return this.http.get<StudentDetails>(`/api/v1/students/${id}`); }
   createStudent(value: object) { return this.http.post<StudentDetails>('/api/v1/students', value); }
   updateStudent(id: number, value: object) { return this.http.put<StudentDetails>(`/api/v1/students/${id}`, value); }
+  archiveStudent(id: number) { return this.http.delete<void>(`/api/v1/students/${id}`); }
+  reactivateStudent(id: number) { return this.http.patch<StudentDetails>(`/api/v1/students/${id}/reactivate`, {}); }
   dossier(id: number) { return this.http.get<Dossier>(`/api/v1/students/${id}/dossier`); }
   saveDossier(id: number, value: object) { return this.http.put<Dossier>(`/api/v1/students/${id}/dossier`, value); }
   dossierHistory(id:number) { return this.http.get<{version:number,fields:Record<string,unknown>,author:string,occurredAt:string}[]>(`/api/v1/students/${id}/dossier/history`); }
   cases(id: number) { return this.http.get<NapneCase[]>(`/api/v1/students/${id}/cases`); }
   createCase(id: number, value: object) { return this.http.post<NapneCase>(`/api/v1/students/${id}/cases`, value); }
   getCase(id: number) { return this.http.get<NapneCase>(`/api/v1/cases/${id}`); }
+  updateCase(id: number, value: {source: string; summary: string | null; version: number}) {
+    return this.http.patch<NapneCase>(`/api/v1/cases/${id}`, value);
+  }
   changeCaseStage(id: number, stage: string, summary: string | null, version: number, reason?: string) {
     return this.http.patch<NapneCase>(`/api/v1/cases/${id}/stage`, {
       stage, summary, version, ...(reason === undefined ? {} : {reason})
@@ -74,7 +81,10 @@ export class ApiService {
   subjects(courseId: number) { return this.http.get<Subject[]>('/api/v1/catalog/subjects', { params: { courseId } }); }
   studentSubjects(studentId: number) { return this.http.get<Subject[]>('/api/v1/catalog/student-subjects', { params: { studentId } }); }
   studentTeachers(studentId: number) { return this.http.get<{id:number,name:string,subjectId:number}[]>('/api/v1/catalog/student-teachers', { params: { studentId } }); }
-  attachments(studentId: number) { return this.http.get<Attachment[]>(`/api/v1/students/${studentId}/attachments`); }
+  attachments(studentId: number, includeArchived = false) {
+    return this.http.get<Attachment[]>(`/api/v1/students/${studentId}/attachments`,
+      includeArchived ? { params: { includeArchived: true } } : {});
+  }
   uploadAttachment(studentId: number, category: string, file: File, previousVersionId = '', key?: string) {
     const data = new FormData();
     data.append('file', file);
@@ -84,13 +94,31 @@ export class ApiService {
       params, headers: key ? { 'Idempotency-Key': key } : undefined
     });
   }
+  attachmentVersions(studentId: number, id: string) {
+    return this.http.get<Attachment[]>(`/api/v1/students/${studentId}/attachments/${encodeURIComponent(id)}/versions`);
+  }
+  archiveAttachment(studentId: number, id: string) {
+    return this.http.delete<void>(`/api/v1/students/${studentId}/attachments/${encodeURIComponent(id)}`);
+  }
   downloadAttachment(studentId: number, id: string) {
     return this.http.get(`/api/v1/students/${studentId}/attachments/${id}/content`, { responseType: 'blob' });
   }
   campuses() { return this.http.get<Campus[]>('/api/v1/catalog/campuses'); }
   users() { return this.http.get<UserView[]>('/api/v1/admin/users'); }
+  userDetails(id: number) { return this.http.get<UserDetails>(`/api/v1/admin/users/${id}`); }
+  searchUserCpf(cpf: string) { return this.http.post<{ id: number | null }>('/api/v1/admin/users/cpf-search', { cpf }); }
+  updateUser(id: number, value: Omit<UserDetails, 'id'>) { return this.http.put<UserView>(`/api/v1/admin/users/${id}`, value); }
+  revokeUserSessions(id: number) { return this.http.post<void>(`/api/v1/admin/users/${id}/sessions/revoke`, null); }
+  blockUserAccess(id: number) { return this.http.post<UserView>(`/api/v1/admin/users/${id}/block`, null); }
   createUser(value: object) { return this.http.post<UserView>('/api/v1/admin/users', value); }
+  adminCampuses() { return this.http.get<Campus[]>('/api/v1/admin/campuses'); }
   createCampus(value: object) { return this.http.post<Campus>('/api/v1/admin/campuses', value); }
+  updateCampus(id: number, value: { name: string; code: string }) {
+    return this.http.put<Campus>(`/api/v1/admin/campuses/${id}`, value);
+  }
+  setCampusActive(id: number, active: boolean) {
+    return this.http.patch<Campus>(`/api/v1/admin/campuses/${id}/active`, { active });
+  }
   adminCourses() { return this.http.get<AdminCourse[]>('/api/v1/admin/courses'); }
   adminSubjects() { return this.http.get<AdminSubject[]>('/api/v1/admin/subjects'); }
   createCourse(value:object) { return this.http.post<AdminCourse>('/api/v1/admin/courses',value); }
@@ -105,6 +133,7 @@ export class ApiService {
   assignments() { return this.http.get<{id:number,studentId:number,userId:number,subjectId:number|null,assignmentType:string,active:boolean}[]>('/api/v1/admin/assignments'); }
   createAssignment(value:object) { return this.http.post('/api/v1/admin/assignments',value); }
   revokeAssignment(id:number) { return this.http.patch(`/api/v1/admin/assignments/${id}/active`,{active:false}); }
+  regularizeAssignment(id: number) { return this.http.patch(`/api/v1/admin/assignments/${id}/regularize`, {}); }
   setUserActive(id:number,active:boolean) { return this.http.patch<UserView>(`/api/v1/admin/users/${id}/active`,{active}); }
   setUserRoles(id:number,roles:string[]) { return this.http.put<UserView>(`/api/v1/admin/users/${id}/roles`,{roles}); }
   resetPassword(id:number,password:string) { return this.http.post(`/api/v1/admin/users/${id}/password`,{password}); }

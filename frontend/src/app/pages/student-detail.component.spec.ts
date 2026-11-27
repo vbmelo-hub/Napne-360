@@ -145,6 +145,50 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     fixture.detectChanges();
   });
 
+  it('abre a seção do dossiê sem navegar e preserva o texto digitado', () => {
+    const root: HTMLElement = fixture.nativeElement;
+    const section = root.querySelector<HTMLDetailsElement>('#dossier-educationalNeeds')!;
+    const notes = root.querySelector<HTMLTextAreaElement>('#dossier-identification .details-content > label > textarea')!;
+    notes.value = 'Alteração em andamento';
+    notes.dispatchEvent(new Event('input'));
+    spyOn(section, 'scrollIntoView');
+    const link = root.querySelectorAll<HTMLAnchorElement>('.section-index a')[1];
+    const click = new MouseEvent('click', { button: 0, bubbles: true, cancelable: true });
+    expect(link.dispatchEvent(click)).toBeFalse();
+    expect(section.open).toBeTrue();
+    expect(section.scrollIntoView).toHaveBeenCalled();
+    expect(notes.value).toBe('Alteração em andamento');
+  });
+
+  it('só habilita o salvamento do dossiê enquanto houver mudança real', () => {
+    const root: HTMLElement = fixture.nativeElement;
+    const save = root.querySelector<HTMLButtonElement>('.sticky-actions button')!;
+    const notes = root.querySelector<HTMLTextAreaElement>('#dossier-identification .details-content > label > textarea')!;
+    expect(save.disabled).toBeTrue();
+    notes.value = 'Alteração em andamento';
+    notes.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(save.disabled).toBeFalse();
+    notes.value = '';
+    notes.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(save.disabled).toBeTrue();
+  });
+
+  it('intercepta o submit dos documentos e inicia somente um envio', () => {
+    const file = new File(['imagem fictícia'], 'teste.png', { type: 'image/png' });
+    apiService.uploadAttachment.and.returnValue(new Subject());
+    component.tab.set('documents');
+    component.selectedFile.set(file);
+    fixture.detectChanges();
+    const form = fixture.nativeElement.querySelector('.upload-card') as HTMLFormElement;
+    const submit = () => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    expect(submit()).toBeFalse();
+    expect(submit()).toBeFalse();
+    expect(apiService.uploadAttachment).toHaveBeenCalledOnceWith(1, 'Laudo ou documento', file, '', jasmine.any(String));
+    expect(component.tab()).toBe('documents');
+  });
+
   it('reutiliza a chave do anexo após uma falha e exibe a revisão uma única vez', () => {
     const file = new File(['%PDF-1.7'], 'ficticio.pdf', { type: 'application/pdf' });
     const attachment = {
@@ -692,6 +736,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     const statusSelect = compiled.querySelector('select[formControlName="status"]') as HTMLSelectElement;
     statusSelect.value = 'ACTIVE';
     statusSelect.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
 
     const finalizedRecord: CareRecord = {
       ...newCreatedRecord,

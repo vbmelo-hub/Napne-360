@@ -1,7 +1,12 @@
 package br.edu.ifac.napne360.student;
 
+import br.edu.ifac.napne360.academic.AcademicRepository;
 import br.edu.ifac.napne360.audit.AuditService;
+import br.edu.ifac.napne360.casework.CaseStage;
+import br.edu.ifac.napne360.casework.NapneCaseRepository;
+import br.edu.ifac.napne360.pei.PeiSeriesStore;
 import br.edu.ifac.napne360.common.ConflictException;
+import br.edu.ifac.napne360.common.ApiOperationException;
 import br.edu.ifac.napne360.common.NotFoundException;
 import br.edu.ifac.napne360.identity.Course;
 import br.edu.ifac.napne360.identity.CourseRepository;
@@ -15,12 +20,14 @@ import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Set;
 
 @Service
@@ -31,14 +38,23 @@ public class StudentService {
     private final CourseRepository courses;
     private final CurrentUserService currentUser;
     private final AuditService audit;
+    private final AcademicRepository academic;
+    private final NapneCaseRepository cases;
+    private final PeiSeriesStore peis;
 
     @Transactional(readOnly = true)
-    public Page<StudentSummary> list(String query, Pageable pageable) {
+    public Page<StudentSummary> list(String query, String academicQuery, boolean archived, Pageable pageable) {
         UserAccount user = currentUser.require();
-        Page<Student> page = user.getRoles().stream().anyMatch(CAMPUS_WIDE::contains)
-                ? students.searchCampus(user.getCampus().getId(), clean(query), pageable)
-                : students.searchAssigned(user.getId(), clean(query), pageable);
-        return page.map(StudentService::summary);
+        if (user.getRoles().stream().anyMatch(CAMPUS_WIDE::contains)) {
+            var campusId = user.getCampus().getId();
+            var rows = archived ? students.searchArchivedCampus(campusId, clean(query), pageable)
+                    : students.searchCampus(campusId, clean(query), pageable);
+            return rows.map(StudentService::summary);
+        }
+        if (archived) return Page.empty(pageable);
+        if (user.getRoles().contains(RoleName.TEACHER) && !clean(academicQuery).isEmpty())
+            return students.searchTeachingScope(user.getId(), clean(query), clean(academicQuery), pageable).map(StudentService::summary);
+        return students.searchAssigned(user.getId(), clean(query), pageable).map(StudentService::summary);
     }
 
     @Transactional(readOnly = true)
@@ -78,6 +94,8 @@ public class StudentService {
         if (!course.isActive() && !course.getId().equals(student.getCourse().getId())) {
             throw new ConflictException("O curso está arquivado.");
         }
+        if (!course.getId().equals(student.getCourse().getId()) && academic.hasActiveStudentEnrollments(student.getId()))
+            throw new ApiOperationException(HttpStatus.CONFLICT, "STUDENT_COURSE_HAS_ENROLLMENTS", "Encerre as matrículas em componentes antes de trocar o curso do estudante.");
         student.setCourse(course);
         student.setCivilName(request.civilName().trim());
         student.setSocialName(blankToNull(request.socialName()));
@@ -89,11 +107,32 @@ public class StudentService {
     }
 
     @Transactional
-    public void archive(Student student, Authentication auth, HttpServletRequest http) {
+    public void archive(Student snapshot, Authentication auth, HttpServletRequest http) {
+        Student student = students.findByIdForUpdate(snapshot.getId()).orElseThrow(() -> new NotFoundException("Estudante não encontrado."));
+        if (student.getStatus() == StudentStatus.ARCHIVED) return;
+        if (academic.hasActiveStudentEnrollments(student.getId()))
+            throw new ApiOperationException(HttpStatus.CONFLICT, "STUDENT_HAS_ENROLLMENTS", "Encerre primeiro as matrículas ativas em componentes.");
+        if (cases.findFirstByStudentIdAndStageNotInOrderByOpenedAtDesc(student.getId(), List.of(CaseStage.CLOSED, CaseStage.ARCHIVED)).isPresent())
+            throw new ApiOperationException(HttpStatus.CONFLICT, "STUDENT_HAS_CASES", "Encerre primeiro os casos de acompanhamento ativos.");
+        if (peis.hasOpenWorkForStudent(student.getId()))
+            throw new ApiOperationException(HttpStatus.CONFLICT, "STUDENT_HAS_PEIS", "Resolva primeiro os PEIs em andamento.");
         student.setStatus(StudentStatus.ARCHIVED);
         student.setArchivedAt(Instant.now());
-        students.save(student);
         audit.record(auth, http, "ARCHIVE", "STUDENT", student.getId(), "SUCCESS", "Cadastro arquivado");
+    }
+
+    @Transactional
+    public StudentDetails reactivate(Student snapshot, Authentication auth, HttpServletRequest http) {
+        Student student = students.findByIdForUpdate(snapshot.getId()).orElseThrow(() -> new NotFoundException("Estudante não encontrado."));
+        if (student.getStatus() != StudentStatus.ARCHIVED) return details(student);
+        Course course = courses.findByIdForUpdate(student.getCourse().getId()).orElseThrow(() -> new NotFoundException("Curso não encontrado."));
+        if (!course.isActive() || !course.getCampus().isActive())
+            throw new ApiOperationException(HttpStatus.CONFLICT, "STUDENT_COURSE_INACTIVE", "O curso e o campus devem estar ativos para reativar o estudante.");
+        student.setStatus(StudentStatus.ACTIVE);
+        student.setArchivedAt(null);
+        students.flush();
+        audit.record(auth, http, "REACTIVATE", "STUDENT", student.getId(), "SUCCESS", "Cadastro reativado");
+        return details(student);
     }
 
     private static StudentSummary summary(Student student) {

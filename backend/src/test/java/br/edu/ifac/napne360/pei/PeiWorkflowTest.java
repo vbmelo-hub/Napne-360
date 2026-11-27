@@ -1,5 +1,6 @@
 package br.edu.ifac.napne360.pei;
 
+import br.edu.ifac.napne360.academic.AcademicService;
 import br.edu.ifac.napne360.audit.AuditService;
 import br.edu.ifac.napne360.common.ApiExceptionHandler;
 import br.edu.ifac.napne360.document.DocumentTemplateRepository;
@@ -61,6 +62,7 @@ class PeiWorkflowTest {
     final StudentRepository students = mock(StudentRepository.class);
     final StudentAssignmentRepository assignments = mock(StudentAssignmentRepository.class);
     final ReferenceCatalogService catalog = mock(ReferenceCatalogService.class);
+    final AcademicService academic = mock(AcademicService.class);
     final SubjectRepository subjects = mock(SubjectRepository.class);
     final TimelineService timeline = mock(TimelineService.class);
     final AuditService audit = mock(AuditService.class);
@@ -78,8 +80,8 @@ class PeiWorkflowTest {
         when(legacy.findByStudentIdAndSubjectIdAndAcademicTermOrderByRevisionDesc(1L, 2L, "2026-2"))
                 .thenReturn(List.of(draft, approved));
         when(legacy.findByStudentIdOrderByUpdatedAtDesc(1L)).thenReturn(List.of(draft, approved));
-        when(access.canViewPei(1L, 2L)).thenReturn(true);
-        when(access.canTeachPei(1L, 2L)).thenReturn(true);
+        when(access.canViewPei(1L, 2L, "2026-2", null)).thenReturn(true);
+        when(access.canTeachPei(1L, 2L, "2026-2", null)).thenReturn(true);
         when(access.canEditDossier(1L)).thenReturn(true);
         actor(RoleName.TEACHER);
     }
@@ -91,7 +93,7 @@ class PeiWorkflowTest {
     private void setUpController(AccessGuard guard, Executor executor) {
         projections = new PeiProjectionService(mongo.store, timeline, audit, executor);
         var service = new PeiService(catalog, mongo.store, mock(CareRecordService.class),
-                subjects, current, projections, guard, mock(DocumentTemplateRepository.class), assignments);
+                subjects, current, projections, guard, mock(DocumentTemplateRepository.class), assignments, academic);
         mvc = MockMvcBuilders.standaloneSetup(new PeiController(service, guard))
                 .setControllerAdvice(new ApiExceptionHandler()).build();
     }
@@ -346,7 +348,7 @@ class PeiWorkflowTest {
         assertThat(previous.getContent()).isEqualTo(draft.getContent());
         assertThat(saved.find(id).orElseThrow().getContent()).isEqualTo(draft.getContent());
         verify(timeline).appendOnce(eq("pei:" + id + ":0"), eq(1L), eq("PEI_TRANSFERRED"), anyString(), anyString(),
-                eq(TimelineVisibility.RESTRICTED), eq(Map.of("peiId", id, "subjectId", 2L, "revision", 8)), any());
+                eq(TimelineVisibility.RESTRICTED), eq(Map.of("peiId", id, "subjectId", 2L, "revision", 8, "academicTerm", "2026-2")), any());
         verify(audit).recordPeiMutation(eq("pei:" + id + ":0"), any(), any(), eq("TRANSFER"), eq(id), eq(8), any());
 
         transfer(TRANSFER).andExpect(status().isConflict());
@@ -412,8 +414,7 @@ class PeiWorkflowTest {
     @Test void activePriorTeachingAssignmentWithdrawsTransfer() throws Exception {
         transferFixture();
         candidates().andExpect(status().isOk());
-        when(assignments.existsByStudentIdAndUserIdAndSubjectIdAndAssignmentTypeAndActiveTrue(
-                1L, 9L, 2L, AssignmentType.TEACHER)).thenReturn(true);
+        when(assignments.existsEffectiveTeaching(1L, 9L, 2L, "2026-2", true)).thenReturn(true);
 
         mvc.perform(get(PATH + "/draft")).andExpect(status().isOk()).andExpect(jsonPath("$.allowedActions").isEmpty());
         candidates().andExpect(status().isConflict());
@@ -608,6 +609,8 @@ class PeiWorkflowTest {
         when(subjects.findByIdForUpdate(2L)).thenReturn(Optional.of(Subject.builder().id(2L).course(course).build()));
         when(catalog.academicTerm(5L, null)).thenReturn(ReferenceEntry.builder().id(5L).code("2026-1").label("Primeiro").build());
 
+        when(academic.requirePeiOffering(1L, null, 2L, 5L, "2026-1")).thenReturn(new AcademicService.OfferingView(
+                6L, 2L, "Componente", "A", 4L, "Curso fictício", 4L, "Campus", 5L, "2026-1", "Primeiro", true));
         race(() -> mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"subjectId\":2,\"academicTermId\":5}")).andReturn().getResponse().getStatus());
 
@@ -710,8 +713,7 @@ class PeiWorkflowTest {
         var eligible = transferTeacher(12L, CAMPUS, true, RoleName.TEACHER);
         when(assignments.findByStudentIdAndActiveTrue(1L)).thenReturn(List.of(link(eligible, 2L, AssignmentType.TEACHER)));
         when(assignments.existsByStudentIdAndUserIdAndActiveTrue(1L, 12L)).thenReturn(true);
-        when(assignments.existsByStudentIdAndUserIdAndSubjectIdAndAssignmentTypeAndActiveTrue(
-                1L, 12L, 2L, AssignmentType.TEACHER)).thenReturn(true);
+        when(assignments.existsEffectiveTeaching(1L, 12L, 2L, "2026-2", true)).thenReturn(true);
         return eligible;
     }
 

@@ -3,13 +3,14 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import { filter } from 'rxjs';
 import { AuthService } from './core/auth.service';
 import { labelFor } from './core/presentation';
+import { PageFragmentDirective } from './shared/page-fragment.directive';
 import { ToastOutletComponent } from './shared/toast-outlet.component';
 
 @Component({
   selector: 'app-root', standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, ToastOutletComponent],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ToastOutletComponent, PageFragmentDirective],
   template: `
-    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+    <a class="skip-link" appPageFragment="conteudo">Pular para o conteúdo</a>
     @if (auth.authenticated()) {
       <div class="app-shell">
         <aside class="sidebar" [class.sidebar--open]="menuOpen()" aria-label="Navegação principal">
@@ -29,12 +30,18 @@ import { ToastOutletComponent } from './shared/toast-outlet.component';
             <a class="user-summary" routerLink="/conta"><span class="avatar avatar--small" aria-hidden="true">{{ initials(auth.user()?.name ?? '') }}</span><span><strong>{{ auth.user()?.name }}</strong><small>{{ primaryRole() }}</small></span></a>
             <button class="secondary compact" type="button" (click)="auth.logout()">Sair</button>
           </header>
-          <main id="conteudo" tabindex="-1"><router-outlet /></main>
+          <main id="conteudo" tabindex="-1">
+            @if (auth.sessionWarning(); as warning) {
+              <p class="session-warning" role="status">{{ warning }}</p>
+            }
+            <router-outlet />
+          </main>
         </div>
       </div>
     } @else {<main id="conteudo" class="public-main" tabindex="-1"><router-outlet /></main>}
     <app-toast-outlet />
-  `
+  `,
+  styles: [`.session-warning{border:1px solid var(--border);border-left:.25rem solid var(--primary-700);border-radius:.5rem;margin:0 0 1rem;padding:.75rem 1rem;background:var(--primary-50);color:var(--ink-800)}`]
 })
 export class AppComponent {
   readonly auth = inject(AuthService);

@@ -15,9 +15,15 @@ import { AuthService } from '../core/auth.service';
       <div class="login-panel">
         <form class="login-form" [formGroup]="form" (ngSubmit)="submit()" novalidate>
           <div><span class="eyebrow">Acesso institucional</span><h2>Acessar o sistema</h2><p>Entre com a conta fornecida pela sua instituição.</p></div>
-          <label for="email" class="required">E-mail institucional<input id="email" type="email" formControlName="email" autocomplete="username" placeholder="nome@instituicao.edu.br" [attr.aria-describedby]="form.controls.email.touched && form.controls.email.invalid ? 'email-error' : null"></label>
+          @if (auth.sessionNotice()) {
+            <div class="error" role="alert">
+              {{ auth.sessionNotice() }}
+              @if (auth.lostUnsavedChanges()) {<p>As alterações que estavam em edição e ainda não foram salvas precisam ser refeitas.</p>}
+            </div>
+          }
+          <label for="email"><span>E-mail institucional&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input id="email" type="email" formControlName="email" aria-required="true" autocomplete="username" placeholder="nome@instituicao.edu.br" [attr.aria-describedby]="form.controls.email.touched && form.controls.email.invalid ? 'email-error' : null"></label>
           @if (form.controls.email.touched && form.controls.email.invalid) {<small id="email-error" class="field-error">Informe um e-mail válido.</small>}
-          <div class="password-control"><label for="password" class="required">Senha</label><span class="password-field"><input id="password" [type]="showPassword() ? 'text' : 'password'" formControlName="password" autocomplete="current-password"><button class="password-toggle" type="button" (click)="showPassword.set(!showPassword())" [attr.aria-label]="showPassword() ? 'Ocultar senha' : 'Mostrar senha'">{{ showPassword() ? 'Ocultar' : 'Mostrar' }}</button></span></div>
+          <div class="password-control"><label for="password"><span>Senha&nbsp;<span class="field-required" aria-hidden="true">*</span></span></label><span class="password-field"><input id="password" [type]="showPassword() ? 'text' : 'password'" formControlName="password" aria-required="true" autocomplete="current-password"><button class="password-toggle" type="button" (click)="showPassword.set(!showPassword())" [attr.aria-label]="showPassword() ? 'Ocultar senha' : 'Mostrar senha'">{{ showPassword() ? 'Ocultar' : 'Mostrar' }}</button></span></div>
           @if (error()) {<div class="error" role="alert">{{ error() }}</div>}
           <button class="login-submit" type="submit" [disabled]="form.invalid || loading()">@if (loading()) {<span class="spinner" aria-hidden="true"></span>}{{ loading() ? 'Entrando…' : 'Entrar' }}</button>
           <p class="login-help"><strong>Não consegue acessar?</strong><br>Solicite a recuperação da conta ao administrador autorizado do seu campus.</p>
@@ -31,7 +37,7 @@ import { AuthService } from '../core/auth.service';
   `]
 })
 export class LoginComponent {
-  private readonly fb = inject(FormBuilder); private readonly auth = inject(AuthService); private readonly router = inject(Router);
+  private readonly fb = inject(FormBuilder); protected readonly auth = inject(AuthService); private readonly router = inject(Router);
   readonly loading = signal(false); readonly error = signal(''); readonly showPassword = signal(false);
   readonly form = this.fb.nonNullable.group({email:['',[Validators.required,Validators.email]],password:['',Validators.required]});
   constructor(){if(this.auth.authenticated())void this.router.navigate(['/']);}

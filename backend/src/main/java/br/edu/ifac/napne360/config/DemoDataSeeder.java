@@ -1,5 +1,7 @@
 package br.edu.ifac.napne360.config;
 
+import br.edu.ifac.napne360.academic.AcademicPeriods;
+import br.edu.ifac.napne360.academic.AcademicService;
 import br.edu.ifac.napne360.casework.*;
 import br.edu.ifac.napne360.document.DossierDocument;
 import br.edu.ifac.napne360.document.DossierRepository;
@@ -10,7 +12,6 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.Map;
@@ -24,11 +25,15 @@ public class DemoDataSeeder implements CommandLineRunner {
     private final CourseRepository courses;
     private final SubjectRepository subjects;
     private final UserAccountRepository users;
+    private final UserEmailHistoryRepository emailHistory;
     private final StudentRepository students;
     private final StudentAssignmentRepository assignments;
     private final NapneCaseRepository cases;
     private final DossierRepository dossiers;
     private final PasswordEncoder passwords;
+    private final AcademicPeriods periods;
+    private final ReferenceEntryRepository references;
+    private final AcademicService academic;
 
     @Override
     public void run(String... args) {
@@ -55,7 +60,9 @@ public class DemoDataSeeder implements CommandLineRunner {
             cases.save(NapneCase.builder().student(student).source("Matrícula - dados fictícios").responsible(napne)
                     .stage(CaseStage.SCREENING).summary("Caso criado exclusivamente para demonstração.").build());
         }
-        assign(student, teacher, subject, AssignmentType.TEACHER);
+        periods.ensureCurrentYear();
+        references.findByKindAndCode(ReferenceEntry.Kind.ACADEMIC_TERM, AcademicPeriods.currentPeriodCode(1))
+                .ifPresent(period -> academic.seedDemo(subject.getId(), period.getId(), student.getId(), teacher.getId(), admin));
         assign(student, tutor, null, AssignmentType.TUTOR);
         assign(student, cotep, null, AssignmentType.COORDINATOR);
         assign(student, coordinator, null, AssignmentType.COORDINATOR);
@@ -77,7 +84,9 @@ public class DemoDataSeeder implements CommandLineRunner {
     }
 
     private UserAccount user(String name, String email, Campus campus, Set<RoleName> roles) {
-        return users.findByEmailIgnoreCase(email).orElseGet(() -> users.save(UserAccount.builder().name(name).email(email)
-                .passwordHash(passwords.encode("Napne360!Demo")).campus(campus).roles(roles).build()));
+        return users.findByEmailIgnoreCase(email).or(() -> emailHistory.owner(email))
+                .orElseGet(() -> users.save(UserAccount.builder().name(name).email(email)
+                        .institutionalRegistration("DEMO-" + email.substring(0, email.indexOf('@')).toUpperCase(java.util.Locale.ROOT))
+                        .passwordHash(passwords.encode("Napne360!Demo")).campus(campus).roles(roles).build()));
     }
 }

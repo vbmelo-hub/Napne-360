@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -42,9 +43,19 @@ public class DossierService {
         UserAccount user = currentUser.require();
         DossierDocument document = dossiers.findByStudentId(studentId)
                 .orElseGet(() -> DossierDocument.builder().studentId(studentId).build());
-        if (!java.util.Objects.equals(request.version(), document.getVersion()))
+        if (!Objects.equals(request.version(), document.getVersion()))
             throw new br.edu.ifac.napne360.common.ConflictException("O dossiê foi alterado. Recarregue antes de salvar.");
         Map<String, Object> educationalNeeds = catalog.category(request.educationalNeeds(), document.getEducationalNeeds());
+        if (document.getId() != null && Objects.equals(document.getIdentification(), request.identification())
+                && Objects.equals(document.getEducationalNeeds(), educationalNeeds)
+                && Objects.equals(document.getHealthAndSupport(), request.healthAndSupport())
+                && Objects.equals(document.getFamilyContext(), request.familyContext())
+                && Objects.equals(document.getSchoolHistory(), request.schoolHistory())
+                && Objects.equals(document.getStrengths(), request.strengths())
+                && Objects.equals(document.getDifficulties(), request.difficulties())
+                && Objects.equals(document.getInitialInterventions(), request.initialInterventions())) {
+            return view(document, true);
+        }
         if (document.getId() != null) document.getHistory().add(new DossierDocument.Revision(document.getVersion(),
                 Map.of("identification", copy(document.getIdentification()), "educationalNeeds", copy(document.getEducationalNeeds()),
                         "healthAndSupport", copy(document.getHealthAndSupport()), "familyContext", copy(document.getFamilyContext()),

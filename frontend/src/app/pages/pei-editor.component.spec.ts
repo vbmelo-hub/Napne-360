@@ -66,6 +66,18 @@ describe('PeiEditorComponent — ações D04', () => {
     expect(document.activeElement).toBe(section.querySelector('h2, h3'));
   }
 
+  it('ignora salvamento sem alteração e ao restaurar o valor carregado', () => {
+    open();
+    const component = fixture.componentInstance;
+    const objective = component.form.controls.generalObjectives;
+    const original = objective.value;
+    component.save();
+    objective.setValue('Objetivo alterado');
+    objective.setValue(original);
+    component.save();
+    expect(api.revisePei).not.toHaveBeenCalled();
+  });
+
   it('salva DRAFT por ação EDIT com content e storageVersion, e exige envio explícito', () => {
     const dom = open();
     const objective = dom.querySelector<HTMLTextAreaElement>('[formControlName="generalObjectives"]')!;
@@ -88,7 +100,7 @@ describe('PeiEditorComponent — ações D04', () => {
     expect(api.revisePei).toHaveBeenCalledWith(1, 'pei-1', jasmine.objectContaining({
       version: 7, content: jasmine.objectContaining({ generalObjectives: '' })
     }));
-    expect(dom.querySelector('label.required')?.textContent).toContain('necessário para aprovação');
+    expect(dom.querySelector('[formControlName="generalObjectives"]')?.closest('label')?.textContent).toContain('necessário para aprovação');
   });
 
   it('preserva a edição iniciada durante a navegação para a revisão recém-salva', () => {
@@ -100,6 +112,7 @@ describe('PeiEditorComponent — ações D04', () => {
     api.revisePei.and.returnValue(of(saved));
     api.pei.and.returnValue(laterResponse);
 
+    component.form.controls.generalObjectives.setValue('Objetivo salvo na revisão');
     component.save();
     routeParams.next(convertToParamMap({ studentId: '1', peiId: 'pei-2' }));
     const objective = component.form.controls.generalObjectives;
@@ -307,6 +320,10 @@ describe('PeiEditorComponent — ações D04', () => {
       expect(specificObjectives(dom).map(field => field.value)).toEqual(objectives);
       expect(button(dom, 'Adicionar objetivo específico')?.disabled).toBeTrue();
 
+      const objective = dom.querySelector<HTMLTextAreaElement>('#generalObjectives')!;
+      objective.value = 'Objetivo geral revisado';
+      objective.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
       button(dom, 'Salvar rascunho').click();
       const preserved = http.expectOne({ url: peiUrl, method: 'PUT' });
       expect(preserved.request.body.content.specificObjectives).toEqual(objectives);

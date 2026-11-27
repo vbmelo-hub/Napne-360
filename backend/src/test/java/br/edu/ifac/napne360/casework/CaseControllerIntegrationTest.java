@@ -94,15 +94,33 @@ class CaseControllerIntegrationTest {
                 .summary("Resumo reservado").openedAt(Instant.parse("2026-01-01T10:00:00Z")).build());
     }
 
+    @Test void editingDetailsPreservesHistoryAndDoesNotAdvanceAnUnchangedCase() throws Exception {
+        var path = "/api/v1/cases/" + legacy.getId();
+        perform(patch(path).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"source\":\"Origem revisada\",\"summary\":\"Resumo revisado\",\"version\":0}"), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1))
+                .andExpect(jsonPath("$.stage").value("RECEIVED"));
+        var details = history(legacy.getId(), 0, 10).get("content").get(0);
+        assertThat(details.get("type").asText()).isEqualTo("DETAILS_UPDATED");
+        assertThat(details.get("fromSource").asText()).isEqualTo("Legado");
+        assertThat(details.get("toSummary").asText()).isEqualTo("Resumo revisado");
+
+        perform(patch(path).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"source\":\"Origem revisada\",\"summary\":\"Resumo revisado\",\"version\":1}"), actor)
+                .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1));
+        assertThat(history(legacy.getId(), 0, 10).get("content")).hasSize(1);
+        verify(projections, times(1)).stage(any());
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
-    void careRecordCreateUsesJpaTransactionOnlyForLinkedSave(boolean linked) throws Exception {
+    void careRecordDraftSaveLocksAuthorAndDispatchesProjectionAfterCommit(boolean linked) throws Exception {
         when(templates.findByDocumentTypeAndActiveTrueOrderByUpdatedAtDesc("CASE_STUDY")).thenAnswer(call -> {
             assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("template lookup").isFalse();
             return List.of();
         });
         when(records.save(any(CareRecordDocument.class))).thenAnswer(call -> {
-            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("Mongo save").isEqualTo(linked);
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).as("Mongo save protegendo autorização do autor").isTrue();
             CareRecordDocument saved = call.getArgument(0);
             assertThat(saved.getCaseId()).isEqualTo(linked ? legacy.getId() : null);
             return saved;

@@ -9,3 +9,17 @@ table{width:100%;border-collapse:collapse}th,td{padding:.85rem 1rem;text-align:l
 .list-filter { max-width: min(100%, 26rem); }
 .list-filter-toolbar { padding: 0 var(--space-5) var(--space-3); }
 .list-pagination { display: block; padding: 0 var(--space-5) var(--space-4); }
+
+.field-required {
+  color: var(--danger);
+}
+
+.grid > :is(label, .field),
+.grid > fieldset > label {
+  align-content: start;
+  min-width: 0;
+}
+
+.grid :is(label, .field) > :is(select, input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="color"])) {
+  min-height: calc(1lh + 1.44rem + 2px);
+}

@@ -1,7 +1,9 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { forkJoin } from 'rxjs';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { forkJoin, map } from 'rxjs';
 import { ApiService } from '../core/api.service';
+import { trackFormChanges } from '../core/form-changes';
 import { createListView } from '../core/list-view';
 import { DocumentTemplateView, ReferenceEntryAdmin } from '../core/models';
 import { errorMessage, labelFor } from '../core/presentation';
@@ -10,18 +12,18 @@ import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
 import { PaginationComponent } from '../shared/pagination.component';
 
 @Component({selector:'app-admin-references',standalone:true,imports:[ReactiveFormsModule,ConfirmDialogComponent,PaginationComponent],template:`
-  <header class="module-head"><span class="eyebrow">Cadastros de referência</span><h2>Períodos, categorias e modelos</h2><p>Padronize opções usadas nos registros e nos novos rascunhos sem expor códigos técnicos aos usuários finais.</p></header>
+  <header class="module-head"><span class="eyebrow">Cadastros de referência</span><h2>Categorias e modelos</h2><p>Padronize opções usadas nos registros e nos novos rascunhos sem expor códigos técnicos aos usuários finais.</p></header>
 
   @if(loading()){
     <div class="loading-grid" aria-label="Carregando cadastros de referência"><span class="skeleton skeleton-card"></span><span class="skeleton skeleton-card"></span></div>
   } @else {
     <div class="reference-grid">
       <form class="card stack" [formGroup]="entryForm" (ngSubmit)="saveEntry()">
-        <div class="section-header"><div><h3>{{entryId()?'Editar item':'Novo item de catálogo'}}</h3><p>Use códigos estáveis e rótulos claros em português.</p></div>@if(entryId()){<button type="button" class="secondary compact" (click)="clearEntry()">Cancelar edição</button>}</div>
-        <label class="required">Catálogo<select formControlName="kind"><option value="ACADEMIC_TERM">Período letivo</option><option value="NEED_CATEGORY">Categoria de necessidade</option></select></label>
-        <div class="grid two"><label class="required">Código<input formControlName="code"><span class="field-hint">Identificador interno estável; não pode ser alterado após a criação.</span></label><label class="required">Nome apresentado<input formControlName="label"><span class="field-hint">Texto que será mostrado nas novas seleções. Registros anteriores conservam o nome registrado.</span></label></div>
+        <div class="section-header"><div><h3>{{entryId()?'Editar item':'Novo item de catálogo'}}</h3><p>Use códigos estáveis e rótulos claros em português.</p></div>@if(entryId()){<button type="button" class="secondary compact" (click)="discardEntry()">Cancelar edição</button>}</div>
+        <label><span>Catálogo&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="kind" aria-required="true"><option value="NEED_CATEGORY">Categoria de necessidade</option></select></label>
+        <div class="grid two"><label><span id="catalog-code-hint-label">Código&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="code" aria-required="true" aria-labelledby="catalog-code-hint-label" aria-describedby="catalog-code-hint"><span class="field-hint" id="catalog-code-hint">Identificador interno estável; não pode ser alterado após a criação.</span></label><label><span id="catalog-name-hint-label">Nome apresentado&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="label" aria-required="true" aria-labelledby="catalog-name-hint-label" aria-describedby="catalog-name-hint"><span class="field-hint" id="catalog-name-hint">Texto que será mostrado nas novas seleções. Registros anteriores conservam o nome registrado.</span></label></div>
         <label>Descrição<textarea formControlName="description"></textarea></label>
-        <button [disabled]="entryForm.invalid||busy()">@if(busy()){<span class="spinner"></span>}{{entryId()?'Salvar alterações':'Criar item'}}</button>
+        <button [disabled]="entryForm.invalid||busy()||(!!entryId()&&!entryChanges.changed())">@if(busy()){<span class="spinner"></span>}{{entryId()?'Salvar alterações':'Criar item'}}</button>
       </form>
 
       <section class="card catalog-card">
@@ -33,7 +35,7 @@ import { PaginationComponent } from '../shared/pagination.component';
             </label>
           </div>
         }
-        @if(entries().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum item cadastrado</h3><p>Os períodos letivos e categorias aparecerão aqui.</p></div>}
+        @if(entries().length===0){<div class="empty-state"><span class="empty-state-mark">0</span><h3>Nenhum item cadastrado</h3><p>As categorias cadastradas aparecerão aqui.</p></div>}
         @else if (!entryList.totalElements()) {
           <p class="empty-state">Nenhum item corresponde ao filtro.</p>
         } @else {
@@ -47,13 +49,13 @@ import { PaginationComponent } from '../shared/pagination.component';
     </div>
 
     <form class="card stack template-form" [formGroup]="templateForm" (ngSubmit)="saveTemplate()">
-      <div class="section-header"><div><span class="eyebrow">Modelos versionados</span><h3>{{templateId()?'Editar modelo':'Novo modelo de documento'}}</h3><p>Os valores do modelo preenchem novos rascunhos; a revisão humana permanece obrigatória.</p></div>@if(templateId()){<button type="button" class="secondary compact" (click)="clearTemplate()">Cancelar edição</button>}</div>
-      <div class="grid two"><label class="required">Nome do modelo<input formControlName="name"></label><label class="required">Documento<select formControlName="documentType">@for(type of types;track type){<option [value]="type">{{label(type)}}</option>}</select></label></div>
+      <div class="section-header"><div><span class="eyebrow">Modelos versionados</span><h3>{{templateId()?'Editar modelo':'Novo modelo de documento'}}</h3><p>Os valores do modelo preenchem novos rascunhos; a revisão humana permanece obrigatória.</p></div>@if(templateId()){<button type="button" class="secondary compact" (click)="discardTemplate()">Cancelar edição</button>}</div>
+      <div class="grid two"><label><span>Nome do modelo&nbsp;<span class="field-required" aria-hidden="true">*</span></span><input formControlName="name" aria-required="true"></label><label><span>Documento&nbsp;<span class="field-required" aria-hidden="true">*</span></span><select formControlName="documentType" aria-required="true">@for(type of types;track type){<option [value]="type">{{label(type)}}</option>}</select></label></div>
       <div class="notice"><strong>Configuração avançada</strong><p>Informe apenas um objeto JSON com os campos e valores iniciais do rascunho. Essa configuração não aprova nem finaliza documentos.</p></div>
-      <label class="required">Valores iniciais por campo (JSON)<textarea rows="10" formControlName="defaults" spellcheck="false" aria-describedby="template-json-help"></textarea><span id="template-json-help" class="field-hint">Exemplo: <code>&#123;"generalObjectives":"..."&#125;</code></span></label>
+      <label><span id="template-json-help-label">Valores iniciais por campo (JSON)&nbsp;<span class="field-required" aria-hidden="true">*</span></span><textarea rows="10" formControlName="defaults" aria-required="true" aria-labelledby="template-json-help-label" spellcheck="false" aria-describedby="template-json-help"></textarea><span id="template-json-help" class="field-hint">Exemplo: <code>&#123;"generalObjectives":"..."&#125;</code></span></label>
       @if(jsonError()){<div class="error" role="alert">{{jsonError()}}</div>}
       <label>Situação<select formControlName="active"><option [ngValue]="true">Ativo</option><option [ngValue]="false">Inativo</option></select></label>
-      <div><button [disabled]="templateForm.invalid||busy()">@if(busy()){<span class="spinner"></span>}Salvar versão do modelo</button></div>
+      <div><button [disabled]="templateForm.invalid||busy()||(!!templateId()&&!templateChanges.changed())">@if(busy()){<span class="spinner"></span>}Salvar versão do modelo</button></div>
     </form>
 
     <section class="card templates-card">
@@ -104,18 +106,39 @@ export class AdminReferencesComponent implements OnInit {
   private templateVersion:number|null=null;
   readonly label=labelFor;
   readonly types=['PEI','INITIAL_SCREENING','WELCOMING','CASE_STUDY','PEDAGOGICAL_GUIDANCE','ACTION_PLAN','TEACHER_FEEDBACK','TUTOR_OBSERVATION','SUPPORT_REFUSAL','SUPPORT_REQUEST'];
-  readonly entryForm=this.fb.nonNullable.group({kind:['ACADEMIC_TERM',Validators.required],code:['',Validators.required],label:['',Validators.required],description:['']});
+  readonly entryForm=this.fb.nonNullable.group({kind:['NEED_CATEGORY',Validators.required],code:['',Validators.required],label:['',Validators.required],description:['']});
   readonly templateForm=this.fb.nonNullable.group({name:['',Validators.required],documentType:['PEI',Validators.required],defaults:['{}',Validators.required],active:[true]});
+
+  protected readonly entryChanges = trackFormChanges(toSignal(this.entryForm.valueChanges.pipe(
+    map(() => this.entryForm.getRawValue())), { initialValue: this.entryForm.getRawValue() }));
+  protected readonly templateChanges = trackFormChanges(toSignal(this.templateForm.valueChanges.pipe(
+    map(() => this.templateForm.getRawValue())), { initialValue: this.templateForm.getRawValue() }));
+
+  hasPendingChanges(): boolean {
+    return this.entryChanges.changed() || this.templateChanges.changed();
+  }
+
+  protected discardEntry(): void {
+    if (!this.entryChanges.changed() || this.confirmDiscard()) this.clearEntry();
+  }
+
+  protected discardTemplate(): void {
+    if (!this.templateChanges.changed() || this.confirmDiscard()) this.clearTemplate();
+  }
+
+  private confirmDiscard(): boolean {
+    return window.confirm('Descartar as alterações ainda não salvas?');
+  }
 
   ngOnInit(){this.load();}
   load(){this.loading.set(true);forkJoin({entries:this.api.adminReferences(),templates:this.api.adminTemplates()}).subscribe({next:v=>{this.entries.set(v.entries);this.templates.set(v.templates);this.loading.set(false);},error:e=>{this.loading.set(false);this.toast.show(errorMessage(e.status,'carregar os cadastros de referência'),'error');}});}
-  saveEntry(){this.entryForm.markAllAsTouched();if(this.entryForm.invalid)return;const id=this.entryId();this.busy.set(true);const call=id?this.api.updateReference(id,this.entryForm.getRawValue()):this.api.createReference(this.entryForm.getRawValue());call.subscribe({next:()=>{this.clearEntry();this.done('Item de catálogo salvo.');},error:e=>this.fail(e.status,'salvar o item')});}
-  editEntry(entry:ReferenceEntryAdmin){this.entryId.set(entry.id);this.entryForm.patchValue({kind:entry.kind,code:entry.code,label:entry.label,description:entry.description??''});this.entryForm.controls.kind.disable();this.entryForm.controls.code.disable();}
-  clearEntry(){this.entryId.set(null);this.entryForm.enable();this.entryForm.reset({kind:'ACADEMIC_TERM'});}
+  saveEntry(){this.entryForm.markAllAsTouched();if(this.entryForm.invalid||this.busy()||(this.entryId()&&!this.entryChanges.changed()))return;const id=this.entryId();this.busy.set(true);const call=id?this.api.updateReference(id,this.entryForm.getRawValue()):this.api.createReference(this.entryForm.getRawValue());call.subscribe({next:()=>{this.clearEntry();this.done('Item de catálogo salvo.');},error:e=>this.fail(e.status,'salvar o item')});}
+  editEntry(entry:ReferenceEntryAdmin){if(this.entryChanges.changed()&&!this.confirmDiscard())return;this.entryId.set(entry.id);this.entryForm.patchValue({kind:entry.kind,code:entry.code,label:entry.label,description:entry.description??''});this.entryForm.controls.kind.disable();this.entryForm.controls.code.disable();this.entryChanges.capture();}
+  clearEntry(){this.entryId.set(null);this.entryForm.enable();this.entryForm.reset({kind:'NEED_CATEGORY'});this.entryChanges.capture();}
   confirmToggle(){const item=this.toggleCandidate();if(!item)return;this.toggleCandidate.set(null);this.busy.set(true);this.api.setReferenceActive(item.id,!item.active).subscribe({next:()=>this.done('Situação do item atualizada.'),error:e=>this.fail(e.status,'alterar a situação do item')});}
-  saveTemplate(){this.templateForm.markAllAsTouched();if(this.templateForm.invalid)return;const v=this.templateForm.getRawValue();let defaults:unknown;this.jsonError.set('');try{defaults=JSON.parse(v.defaults);}catch{this.jsonError.set('O conteúdo deve ser um objeto JSON válido.');return;}if(!defaults||Array.isArray(defaults)||typeof defaults!=='object'){this.jsonError.set('Informe um objeto JSON com nomes de campos e valores iniciais.');return;}const data={...v,defaults,version:this.templateVersion};const id=this.templateId();this.busy.set(true);const call=id?this.api.updateTemplate(id,data):this.api.createTemplate(data);call.subscribe({next:()=>{this.clearTemplate();this.done('Modelo salvo como nova versão.');},error:e=>this.fail(e.status,'salvar o modelo')});}
-  editTemplate(template:DocumentTemplateView){this.templateId.set(template.id);this.templateVersion=template.version;this.jsonError.set('');this.templateForm.patchValue({name:template.name,documentType:template.documentType,defaults:JSON.stringify(template.defaults,null,2),active:template.active});}
-  clearTemplate(){this.templateId.set(null);this.templateVersion=null;this.jsonError.set('');this.templateForm.reset({documentType:'PEI',defaults:'{}',active:true});}
+  saveTemplate(){this.templateForm.markAllAsTouched();if(this.templateForm.invalid||this.busy()||(this.templateId()&&!this.templateChanges.changed()))return;const v=this.templateForm.getRawValue();let defaults:unknown;this.jsonError.set('');try{defaults=JSON.parse(v.defaults);}catch{this.jsonError.set('O conteúdo deve ser um objeto JSON válido.');return;}if(!defaults||Array.isArray(defaults)||typeof defaults!=='object'){this.jsonError.set('Informe um objeto JSON com nomes de campos e valores iniciais.');return;}const data={...v,defaults,version:this.templateVersion};const id=this.templateId();this.busy.set(true);const call=id?this.api.updateTemplate(id,data):this.api.createTemplate(data);call.subscribe({next:()=>{this.clearTemplate();this.done('Modelo salvo como nova versão.');},error:e=>this.fail(e.status,'salvar o modelo')});}
+  editTemplate(template:DocumentTemplateView){if(this.templateChanges.changed()&&!this.confirmDiscard())return;this.templateId.set(template.id);this.templateVersion=template.version;this.jsonError.set('');this.templateForm.patchValue({name:template.name,documentType:template.documentType,defaults:JSON.stringify(template.defaults,null,2),active:template.active});this.templateChanges.capture();}
+  clearTemplate(){this.templateId.set(null);this.templateVersion=null;this.jsonError.set('');this.templateForm.reset({documentType:'PEI',defaults:'{}',active:true});this.templateChanges.capture();}
   kindLabel(kind:string){return kind==='ACADEMIC_TERM'?'Período letivo':kind==='NEED_CATEGORY'?'Categoria de necessidade':labelFor(kind);}
   fieldCount(defaults:Record<string,unknown>){return Object.keys(defaults??{}).length;}
   private done(message:string){this.busy.set(false);this.toast.show(message,'success');this.load();}

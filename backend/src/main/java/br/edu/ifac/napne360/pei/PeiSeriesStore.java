@@ -19,6 +19,7 @@ import java.util.stream.Stream;
 @Repository
 @RequiredArgsConstructor
 public class PeiSeriesStore {
+    private static final List<PeiStatus> UNFINISHED_STATUSES = List.of(PeiStatus.DRAFT, PeiStatus.IN_REVIEW);
     private static final List<PeiStatus> WORKING_STATUSES = List.of(PeiStatus.DRAFT, PeiStatus.IN_REVIEW, PeiStatus.APPROVED);
     private final MongoOperations mongo;
     private final PeiRepository legacy;
@@ -58,11 +59,37 @@ public class PeiSeriesStore {
     }
 
     public boolean hasOpenWork(List<Long> subjectIds) {
-        var query = Query.query(Criteria.where("subjectId").in(subjectIds).and("revisions.status").in(WORKING_STATUSES));
+        return hasOpenWork(Query.query(Criteria.where("subjectId").in(subjectIds).and("revisions.status").in(WORKING_STATUSES)),
+                Query.query(Criteria.where("subjectId").in(subjectIds).and("status").in(WORKING_STATUSES)));
+    }
+
+    public boolean hasOpenWorkForTeacher(Long teacherId) {
+        var seriesQuery = Query.query(Criteria.where("revisions").elemMatch(
+                Criteria.where("teacherId").is(teacherId).and("status").in(WORKING_STATUSES)));
+        var legacyQuery = Query.query(Criteria.where("teacherId").is(teacherId).and("status").in(WORKING_STATUSES));
+        return hasOpenWork(seriesQuery, legacyQuery);
+    }
+
+    public boolean hasOpenWorkForStudent(Long studentId) {
+        return hasOpenWork(Query.query(Criteria.where("studentId").is(studentId).and("revisions.status").in(UNFINISHED_STATUSES)),
+                Query.query(Criteria.where("studentId").is(studentId).and("status").in(UNFINISHED_STATUSES)));
+    }
+
+    public boolean hasOpenWorkForOffering(Long offeringId) {
+        return hasOpenWorkForEnrollment(null, offeringId);
+    }
+
+    public boolean hasOpenWorkForEnrollment(Long studentId, Long offeringId) {
+        var query = Query.query(Criteria.where("revisions").elemMatch(
+                Criteria.where("academicOfferingId").is(offeringId).and("status").in(UNFINISHED_STATUSES)));
+        if (studentId != null) query.addCriteria(Criteria.where("studentId").is(studentId));
+        return mongo.exists(query, PeiSeries.class);
+    }
+
+    private boolean hasOpenWork(Query query, Query legacyQuery) {
         if (mongo.exists(query, PeiSeries.class)) return true;
 
         // Once a series is stored, it owns the current state of every legacy revision in that series.
-        var legacyQuery = Query.query(Criteria.where("subjectId").in(subjectIds).and("status").in(WORKING_STATUSES));
         legacyQuery.fields().include("studentId", "subjectId", "academicTerm");
         try (Stream<PeiDocument> legacyPlans = mongo.stream(legacyQuery, PeiDocument.class)) {
             boolean openLegacy = legacyPlans.map(plan -> PeiSeries.key(plan.getStudentId(), plan.getSubjectId(), plan.getAcademicTerm()))

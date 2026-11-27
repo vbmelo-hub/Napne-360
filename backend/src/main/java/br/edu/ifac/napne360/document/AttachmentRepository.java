@@ -9,4 +9,8 @@ public interface AttachmentRepository extends MongoRepository<AttachmentDocument
     @Query(value = "{ 'studentId': ?0, 'archived': { '$ne': true }, 'uploadPending': { '$ne': true } }",
            sort = "{ 'uploadedAt': -1 }")
     List<AttachmentDocument> findActiveByStudentId(Long studentId);
+
+    @Query(value = "{ 'studentId': ?0, 'uploadPending': { '$ne': true } }",
+           sort = "{ 'uploadedAt': -1 }")
+    List<AttachmentDocument> findConfirmedByStudentId(Long studentId);
 }

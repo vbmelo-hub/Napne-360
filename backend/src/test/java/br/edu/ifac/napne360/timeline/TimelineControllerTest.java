@@ -86,6 +86,21 @@ class TimelineControllerTest {
         assertThat(last.content()).extracting(TimelineEventDocument::getId).containsExactly("pei-100", "pei-101", "pei-102");
     }
 
+    @Test void hidesAcademicPeiEventsFromAnotherOfferingOfTheSamePeriodAndComponent() {
+        var access = mock(AccessGuard.class);
+        var users = mock(CurrentUserService.class);
+        var timeline = mock(TimelineRepository.class);
+        when(users.require()).thenReturn(UserAccount.builder().roles(Set.of(RoleName.TEACHER)).build());
+        when(access.canViewPei(1L, 3L, "2026.2", 61L)).thenReturn(true);
+        when(timeline.findByStudentIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(
+                event("wrong-offering", "PEI_SUBMITTED", TimelineVisibility.PEDAGOGICAL,
+                        Map.of("subjectId", 3L, "academicTerm", "2026.2", "offeringId", 60L)),
+                event("right-offering", "PEI_SUBMITTED", TimelineVisibility.PEDAGOGICAL,
+                        Map.of("subjectId", 3L, "academicTerm", "2026.2", "offeringId", 61L))));
+        assertThat(new TimelineController(timeline, access, users).list(1L, null, null, null, 10))
+                .extracting(TimelineEventDocument::getId).containsExactly("right-offering");
+    }
+
     private TimelineEventDocument event(String id, String type, TimelineVisibility visibility, Map<String, Object> data) {
         return TimelineEventDocument.builder().id(id).eventType(type).visibility(visibility).data(data).build();
     }

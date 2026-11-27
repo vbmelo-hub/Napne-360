@@ -19,8 +19,10 @@ public class StudentController {
 
     @GetMapping
     @PreAuthorize("hasAnyRole('NAPNE','COTEP','COURSE_COORDINATOR','MANAGEMENT','TEACHER','TUTOR')")
-    public Page<StudentService.StudentSummary> list(@RequestParam(defaultValue = "") String query, Pageable pageable) {
-        return service.list(query, pageable);
+    public Page<StudentService.StudentSummary> list(@RequestParam(defaultValue = "") String query,
+                                                    @RequestParam(defaultValue = "") String academicQuery,
+                                                    @RequestParam(defaultValue = "false") boolean archived, Pageable pageable) {
+        return service.list(query, academicQuery, archived, pageable);
     }
 
     @GetMapping("/{id}")
@@ -38,6 +40,12 @@ public class StudentController {
     public StudentService.StudentDetails update(@PathVariable Long id, @Valid @RequestBody StudentService.StudentRequest request,
                                                 Authentication auth, HttpServletRequest http) {
         return service.update(access.requireView(id), request, auth, http);
+    }
+
+    @PatchMapping("/{id}/reactivate")
+    @PreAuthorize("@accessGuard.canEditDossier(#id)")
+    public StudentService.StudentDetails reactivate(@PathVariable Long id, Authentication auth, HttpServletRequest http) {
+        return service.reactivate(access.requireView(id), auth, http);
     }
 
     @DeleteMapping("/{id}")

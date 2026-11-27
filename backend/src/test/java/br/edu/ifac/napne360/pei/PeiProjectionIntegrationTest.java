@@ -75,7 +75,7 @@ class PeiProjectionIntegrationTest {
         var draft = older.revisions().getFirst().toBuilder().status(PeiStatus.DRAFT).storageVersion(1L).build();
         var returned = new PeiProjection("pei:" + legacyId.toHexString() + ":1", 101L, null, legacyId.toHexString(), 7,
                 occurredAt, null, "Pessoa fictícia", "192.0.2.53", "RETURN", "PEI_RETURNED",
-                "PEI devolvido para ajustes", TimelineVisibility.PEDAGOGICAL);
+                "PEI devolvido para ajustes", TimelineVisibility.PEDAGOGICAL, null, null);
         store.save(older, older.next(List.of(draft), returned), returned);
 
         var beforeLostAck = spy(store);
@@ -90,7 +90,7 @@ class PeiProjectionIntegrationTest {
         store.acknowledgeProjection(key, returned.key());
         var submitted = new PeiProjection("pei:" + legacyId.toHexString() + ":2", 101L, null, legacyId.toHexString(), 7,
                 occurredAt.plusSeconds(1), null, "Docente fictício", "192.0.2.54", "SUBMIT", "PEI_SUBMITTED",
-                "PEI enviado para revisão", TimelineVisibility.PEDAGOGICAL);
+                "PEI enviado para revisão", TimelineVisibility.PEDAGOGICAL, null, null);
         var inReview = draft.toBuilder().status(PeiStatus.IN_REVIEW).storageVersion(2L).build();
         store.save(awaitingConfirmation, awaitingConfirmation.next(List.of(inReview), submitted), submitted);
         assertThatThrownBy(() -> store.save(older, older.next(List.of(draft), returned), returned))

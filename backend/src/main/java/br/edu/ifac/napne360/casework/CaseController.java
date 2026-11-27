@@ -27,6 +27,13 @@ public class CaseController {
         return service.create(access.requireView(studentId), request, auth, http);
     }
 
+    @PatchMapping("/cases/{caseId}")
+    @PreAuthorize("hasRole('NAPNE')")
+    public CaseService.CaseView update(@PathVariable String caseId, @Valid @RequestBody CaseService.CaseDetailsRequest request,
+                                       Authentication auth, HttpServletRequest http) {
+        return service.updateDetails(caseId(caseId), request, auth, http);
+    }
+
     @PatchMapping("/cases/{caseId}/stage")
     @PreAuthorize("hasRole('NAPNE')")
     public CaseService.CaseView changeStage(@PathVariable String caseId, @Valid @RequestBody CaseService.CaseStageRequest request,

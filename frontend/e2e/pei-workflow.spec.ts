@@ -21,10 +21,10 @@ async function readRevision(response: APIResponse): Promise<Revision> {
 
 test('docente salva e envia pelo editor e o NAPNE devolve, aprova e arquiva', async ({ page, request }) => {
   const f = await catalogFixture(request);
-  const term = await f.entry('ACADEMIC_TERM', 'Período fictício PEI pela interface');
+  const { offering } = f.academic;
   const path = `/estudantes/${f.student.id}/pei`;
   const draft = await readRevision(await request.post(`${f.path}/peis`, {
-    headers: f.teacherHeaders, data: { subjectId: f.subject.id, academicTermId: term.id }
+    headers: f.teacherHeaders, data: { offeringId: offering.id }
   }));
   const status = page.locator('.pei-header .badge');
   const edit = page.getByRole('button', { name: 'Salvar rascunho', exact: true });
@@ -103,10 +103,10 @@ test('D04 preserva o vigente até a aprovação da substituta e aplica permissõ
   const cotep = await loginApi(request, 'cotep');
   const coordinator = await loginApi(request, 'coordenacao');
   const readOnlyHeaders = [cotep, coordinator].map(({ token }) => ({ Authorization: `Bearer ${token}` }));
-  const term = await f.entry('ACADEMIC_TERM', 'Período fictício D04');
+  const { offering } = f.academic;
   const path = `${f.path}/peis`;
   const create = (headers = f.teacherHeaders) => request.post(path, {
-    headers, data: { subjectId: f.subject.id, academicTermId: term.id }
+    headers, data: { offeringId: offering.id }
   });
   const action = (item: Revision, name: string, headers = f.headers) => request.post(`${path}/${item.id}/${name}`, {
     headers, data: { version: item.storageVersion }
@@ -174,10 +174,10 @@ test('D04 preserva o vigente até a aprovação da substituta e aplica permissõ
 
 test('CA19 serializa aberturas, edições e aprovações concorrentes sem duplicar revisão ou evento', async ({ request, playwright, baseURL }) => {
   const f = await catalogFixture(request);
-  const term = await f.entry('ACADEMIC_TERM', 'Período fictício CA19');
+  const { term, offering } = f.academic;
   const path = `${f.path}/peis`;
   const create = () => request.post(path, {
-    headers: f.teacherHeaders, data: { subjectId: f.subject.id, academicTermId: term.id }
+    headers: f.teacherHeaders, data: { offeringId: offering.id }
   });
   const race = async (first: Promise<APIResponse>, second: Promise<APIResponse>) => {
     const responses = await Promise.all([first, second]);

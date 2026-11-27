@@ -5,6 +5,16 @@ export interface SessionUser {
   email: string;
   campusId: number | null;
   roles: string[];
+  session?: SessionTiming;
+}
+
+export type SessionEndReason = 'IDLE_TIMEOUT' | 'MAX_DURATION' | 'SESSION_ENDED' | 'REVOKED' | 'ACCOUNT_INACTIVE';
+
+export interface SessionTiming {
+  serverTime: number;
+  warningAt: number;
+  expiresAt: number;
+  reason: SessionEndReason;
 }
 
 export interface Page<T> {
@@ -94,7 +104,11 @@ export interface CaseHistoryView {
   id: number;
   caseId: number;
   version: number;
-  type: 'OPENED' | 'STAGE_CHANGED' | 'RESPONSIBLE_CHANGED';
+  type: 'OPENED' | 'STAGE_CHANGED' | 'RESPONSIBLE_CHANGED' | 'DETAILS_UPDATED';
+  fromSource?: string | null;
+  toSource?: string | null;
+  fromSummary?: string | null;
+  toSummary?: string | null;
   fromStage: string | null;
   toStage: string | null;
   fromStageLabel?: string | null;
@@ -133,6 +147,7 @@ export interface CareRecord {
   updatedAt: string;
   version: number | null;
   history?: CareRecordRevision[];
+  editable?: boolean | null;
 }
 
 export interface Pei {
@@ -143,6 +158,7 @@ export interface Pei {
   academicTerm: string;
   academicTermId?: number | null;
   academicTermLabel?: string | null;
+  academicOfferingId?: number | null;
   revision: number;
   status: string;
   content: Record<string, unknown>;
@@ -215,7 +231,25 @@ export interface AdminCourse extends Course { active: boolean; }
 export interface Subject { id: number; name: string; code: string; workloadHours: number; courseId: number; }
 export interface AdminSubject extends Subject { active: boolean; }
 export interface Campus { id: number; name: string; code: string; active: boolean; }
-export interface UserView { id: number; name: string; email: string; active: boolean; campusId: number | null; roles: string[]; }
+export interface UserView {
+  id: number;
+  name: string;
+  email: string;
+  active: boolean;
+  campusId: number | null;
+  roles: string[];
+  cpfMasked?: string | null;
+  institutionalRegistration?: string | null;
+  securityBlocked?: boolean;
+}
+export interface UserDetails {
+  id: number;
+  name: string;
+  email: string;
+  cpf: string | null;
+  institutionalRegistration: string | null;
+  campusId: number | null;
+}
 
 export type ReferenceKind = 'NEED_CATEGORY' | 'ACADEMIC_TERM';
 
@@ -226,9 +260,7 @@ export interface ReferenceOption {
 }
 
 export interface PeiCreateRequest {
-  subjectId: number;
-  teacherId?: number;
-  academicTermId: number;
+  offeringId: number;
 }
 
 export interface ReferenceEntryAdmin {

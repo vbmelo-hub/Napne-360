@@ -4,7 +4,7 @@ import { catalogFixture, loginUi } from './catalog-fixtures';
 
 test('docente preenche, reabre e baixa o PEI do Anexo I na revisão salva', async ({ page, request }, testInfo) => {
   const f = await catalogFixture(request);
-  const term = await f.entry('ACADEMIC_TERM', 'Período fictício Anexo I');
+  const { term, offering } = f.academic;
   const apiPath = `${f.path}/peis`;
   const editorResponse = (method: string, pathname: string) => page.waitForResponse(response =>
     response.request().method() === method && new URL(response.url()).pathname === pathname
@@ -14,8 +14,7 @@ test('docente preenche, reabre e baixa o PEI do Anexo I na revisão salva', asyn
   await page.goto(`/estudantes/${f.student.id}`);
   await page.getByRole('button', { name: 'PEI', exact: true }).click();
   const create = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Criar rascunho de PEI' }) });
-  await create.getByRole('combobox', { name: /^Componente/ }).selectOption(String(f.subject.id));
-  await create.getByRole('combobox', { name: /^Período letivo/ }).selectOption(String(term.id));
+  await create.getByRole('combobox', { name: /^Oferta curricular/ }).selectOption(String(offering.id));
   const creation = editorResponse('POST', apiPath);
   await create.getByRole('button', { name: 'Criar rascunho', exact: true }).click();
   const created = await creation;

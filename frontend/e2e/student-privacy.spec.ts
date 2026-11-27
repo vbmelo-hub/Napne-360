@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { expect, test, type Locator } from '@playwright/test';
 import type { Course, Page, Pei, StudentDetails, StudentSummary } from '../src/app/core/models';
 import { apiJson } from './case-fixtures';
-import { loginApi, loginUi } from './catalog-fixtures';
+import { academicFixture, loginApi, loginUi } from './catalog-fixtures';
 
 const restrictedFields = ['civilName', 'birthDate', 'institutionalEmail', 'phone'] as const;
 type RegistrationData = Record<(typeof restrictedFields)[number], string> & { socialName: string };
@@ -96,9 +96,11 @@ test('CA05 protege os dados cadastrais e usa o nome de exibição no novo PEI', 
     })).status()).toBe(403);
   });
 
-  const teacherAssignment = await adminPost<{ id: number }>('/assignments', {
-    studentId: student.id, userId: teacher.id, subjectId: subject.id, assignmentType: 'TEACHER'
+  const academicForSemester = (semester: 1 | 2) => academicFixture(request, {
+    semester, studentId: student.id, subjectId: subject.id, teacherIds: [teacher.id],
+    adminHeaders: admin.headers, napneHeaders: napne.headers
   });
+  const academic = { civil: await academicForSemester(1), social: await academicForSemester(2) };
   await adminPost('/assignments', { studentId: student.id, userId: tutor.id, assignmentType: 'TUTOR' });
   for (const account of [cotep, coordinator, management]) {
     await adminPost('/assignments', { studentId: student.id, userId: account.id, assignmentType: 'COORDINATOR' });
@@ -139,11 +141,8 @@ test('CA05 protege os dados cadastrais e usa o nome de exibição no novo PEI', 
 
   const peis = `${path}/peis`;
   const createPei = async (period: 'civil' | 'social', displayName: string, forbidden: string[]) => {
-    const term = await adminPost<{ id: number }>('/references', {
-      kind: 'ACADEMIC_TERM', code: `CA05-${key}-${period}`, label: `Período fictício CA05 ${period} ${key}`
-    });
     const draft = await apiJson<Pei>(request, peis, {
-      method: 'POST', headers: teacher.headers, data: { subjectId: subject.id, academicTermId: term.id }
+      method: 'POST', headers: teacher.headers, data: { offeringId: academic[period].offering.id }
     });
     expect(draft).toMatchObject({ status: 'DRAFT', formVersion: 'IFAC_76_2025', content: { student: displayName } });
     for (const value of forbidden) expect(JSON.stringify(draft)).not.toContain(value);
@@ -230,10 +229,12 @@ test('CA05 protege os dados cadastrais e usa o nome de exibição no novo PEI', 
   });
 
   await test.step('revogar o vínculo impede a consulta ao cadastro e ao PDF', async () => {
-    const disabled = await apiJson<{ active: boolean }>(request, `/admin/assignments/${teacherAssignment.id}/active`, {
-      method: 'PATCH', headers: admin.headers, data: { active: false }
-    });
-    expect(disabled.active).toBe(false);
+    for (const entry of Object.values(academic)) {
+      const disabled = await apiJson<{ active: boolean }>(request, `/admin/academic/teaching/${entry.teaching[0].id}/active`, {
+        method: 'PATCH', headers: admin.headers, data: { active: false }
+      });
+      expect(disabled.active).toBe(false);
+    }
     expect((await list(teacher.headers)).content).toEqual([]);
     expect((await request.get(`/api/v1${path}`, { headers: teacher.headers })).status()).toBe(403);
     expect((await request.get(`/api/v1${peis}/${archived.id}/pdf`, { headers: teacher.headers })).status()).toBe(403);

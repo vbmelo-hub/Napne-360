@@ -8,7 +8,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 @Entity
-@Table(name = "app_user")
+@Table(name = "app_user", uniqueConstraints = @UniqueConstraint(name = "uk_app_user_cpf", columnNames = "cpf"))
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class UserAccount {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -20,11 +20,17 @@ public class UserAccount {
     private String name;
     @Column(nullable = false, unique = true, length = 190)
     private String email;
+    @Column(length = 11)
+    private String cpf;
+    @Column(name = "institutional_registration", length = 60)
+    private String institutionalRegistration;
     @Column(name = "password_hash", nullable = false, length = 100)
     private String passwordHash;
     @Column(nullable = false)
     @Builder.Default
     private boolean active = true;
+    @Column(nullable = false)
+    private boolean securityBlocked;
     @Column(nullable = false)
     private long sessionVersion;
     @ElementCollection(fetch = FetchType.EAGER)

@@ -63,10 +63,10 @@ async function seedGuidanceMarkers(fixture: Awaited<ReturnType<typeof catalogFix
 }
 
 async function createDraft(request: APIRequestContext, fixture: Awaited<ReturnType<typeof catalogFixture>>) {
-  const term = await fixture.entry('ACADEMIC_TERM', 'Período fictício CA16');
+  const { offering } = fixture.academic;
   const response = await request.post(`${fixture.path}/peis`, {
     headers: fixture.teacherHeaders,
-    data: { subjectId: fixture.subject.id, teacherId: fixture.teacher.id, academicTermId: term.id }
+    data: { offeringId: offering.id, teacherId: fixture.teacher.id }
   });
   expect(response.status()).toBe(200);
   return response.json() as Promise<{

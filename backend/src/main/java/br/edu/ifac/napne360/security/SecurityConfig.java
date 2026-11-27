@@ -57,7 +57,7 @@ public class SecurityConfig {
         configuration.setAllowedOrigins(Arrays.stream(origins.split(",")).map(String::trim).toList());
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "If-Match", "Idempotency-Key"));
-        configuration.setExposedHeaders(List.of("ETag", "Content-Disposition"));
+        configuration.setExposedHeaders(List.of("ETag", "Content-Disposition", JwtService.STATUS_HEADER));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;

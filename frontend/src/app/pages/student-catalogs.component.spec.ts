@@ -3,6 +3,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { ActivatedRoute, provideRouter } from '@angular/router';
 import { of, Subject, throwError } from 'rxjs';
 import { StudentDetailComponent } from './student-detail.component';
+import { AcademicApi, AcademicOffering } from '../core/academic-api.service';
 import { ApiService } from '../core/api.service';
 import { Dossier, Pei, StudentDetails } from '../core/models';
 import { ToastService } from '../core/toast.service';
@@ -10,6 +11,12 @@ import { ToastService } from '../core/toast.service';
 describe('StudentDetailComponent — catálogos e referências históricas', () => {
   let fixture: ComponentFixture<StudentDetailComponent>;
   let api: jasmine.SpyObj<ApiService>;
+  let academic: jasmine.SpyObj<AcademicApi>;
+  const offer: AcademicOffering = {
+    id: 22, subjectId: 100, subjectName: 'Componente', groupCode: 'Turma A',
+    courseId: 10, courseName: 'Curso', campusId: 1, campusName: 'Campus',
+    periodId: 21, periodCode: '2026.1', periodLabel: 'Primeiro semestre de 2026', active: true
+  };
   const student: StudentDetails = {
     id: 1, registration: 'TEST-1', displayName: 'Pessoa fictícia', course: 'Curso', campus: 'Campus',
     status: 'ACTIVE', civilName: 'Pessoa fictícia', socialName: null, birthDate: null,
@@ -41,10 +48,13 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
       ? [{ id: 11, code: 'CAT', label: 'Categoria ativa' }]
       : [{ id: 21, code: '2026.1', label: 'Primeiro semestre de 2026' }]));
     api.saveDossier.and.returnValue(of(baseDossier)); api.createPei.and.returnValue(of(pei));
+    academic = jasmine.createSpyObj<AcademicApi>('AcademicApi', ['peiOffers']);
+    academic.peiOffers.and.returnValue(of([offer]));
     await TestBed.configureTestingModule({
       imports: [StudentDetailComponent], providers: [provideHttpClient(), provideRouter([]),
         { provide: ActivatedRoute, useValue: { snapshot: { paramMap: { get: () => '1' } } } },
         { provide: ApiService, useValue: api },
+        { provide: AcademicApi, useValue: academic },
         { provide: ToastService, useValue: jasmine.createSpyObj('ToastService', ['show']) }]
     }).compileComponents();
   });
@@ -121,10 +131,15 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     const dom = view('dossier');
     const select = dom.querySelector<HTMLSelectElement>('[data-testid="need-category"]');
     expect(select?.value).toBe('91'); expect(select?.textContent).toContain('Categoria histórica');
+    const notes = (fixture.nativeElement as HTMLElement).querySelector<HTMLTextAreaElement>(
+      '#dossier-identification .details-content > label > textarea'
+    )!;
+    notes.value = 'Nota pedagógica revisada';
+    notes.dispatchEvent(new Event('input'));
     saveDossier();
     expect(api.saveDossier).toHaveBeenCalledWith(1, jasmine.objectContaining({ educationalNeeds:
       jasmine.objectContaining({ categoryId: 91, category: 'Categoria histórica', notes: 'Conservar' }) }));
-    const periods = view('pei').querySelector<HTMLSelectElement>('select[formControlName="academicTermId"]');
+    const periods = view('pei').querySelector<HTMLSelectElement>('select[formControlName="offeringId"]');
     expect(periods).not.toBeNull(); expect(periods?.textContent).not.toContain('Categoria histórica');
     expect(periods?.querySelector('option[value="91"]')).toBeNull();
   });
@@ -133,6 +148,11 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     start({ ...baseDossier, educationalNeeds: { categoryId: 11, category: 'Nome registrado antes' } });
     const select = view('dossier').querySelector<HTMLSelectElement>('[data-testid="need-category"]');
     expect(select?.selectedOptions[0]?.textContent).toContain('Nome registrado antes');
+    const notes = (fixture.nativeElement as HTMLElement).querySelector<HTMLTextAreaElement>(
+      '#dossier-identification .details-content > label > textarea'
+    )!;
+    notes.value = 'Nota pedagógica revisada';
+    notes.dispatchEvent(new Event('input'));
     saveDossier();
     expect(api.saveDossier).toHaveBeenCalledWith(1, jasmine.objectContaining({ educationalNeeds:
       jasmine.objectContaining({ categoryId: 11, category: 'Nome registrado antes' }) }));
@@ -143,6 +163,11 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     const dom = view('dossier');
     expect(dom.textContent).toContain('Categoria ativa');
     expect(dom.querySelector<HTMLSelectElement>('[data-testid="need-category"]')?.value).not.toBe('11');
+    const notes = (fixture.nativeElement as HTMLElement).querySelector<HTMLTextAreaElement>(
+      '#dossier-identification .details-content > label > textarea'
+    )!;
+    notes.value = 'Nota pedagógica revisada';
+    notes.dispatchEvent(new Event('input'));
     saveDossier();
     const sent = api.saveDossier.calls.mostRecent().args[1] as { educationalNeeds: Record<string, unknown> };
     expect(sent.educationalNeeds['category']).toBe('Categoria ativa');
@@ -159,7 +184,11 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
 
   it('omite ID nulo já presente no legado para não remover seu texto ao salvar notas', () => {
     start({ ...baseDossier, educationalNeeds: { categoryId: null, category: 'Legado sem associação', extra: 'conservar' } });
-    view('dossier'); saveDossier();
+    const dom = view('dossier');
+    const notes = dom.querySelector<HTMLTextAreaElement>('#dossier-identification .details-content > label > textarea')!;
+    notes.value = 'Nota pedagógica revisada';
+    notes.dispatchEvent(new Event('input'));
+    saveDossier();
     const sent = api.saveDossier.calls.mostRecent().args[1] as { educationalNeeds: Record<string, unknown> };
     expect(sent.educationalNeeds['category']).toBe('Legado sem associação');
     expect(sent.educationalNeeds['extra']).toBe('conservar');
@@ -174,8 +203,7 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     expect(dossier.textContent).toContain('Legado legível');
     expect(dossier.querySelector('[data-testid="category-catalog-error"]')).toBeNull();
     const dom = view('pei');
-    expect(dom.querySelector('[data-testid="term-catalog-empty"]')).toBeNull();
-    expect(dom.querySelector('select[formControlName="academicTermId"]')).toBeNull();
+    expect(dom.querySelector('select[formControlName="offeringId"]')).toBeNull();
     expect(dom.querySelector('.pei-row')?.textContent).toContain('2026.1');
     expect(fixture.componentInstance.loadError()).toBe('');
   });
@@ -209,19 +237,19 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     expect(dom.querySelector<HTMLSelectElement>('[data-testid="need-category"]')?.value).toBe('11');
   });
 
-  it('cria PEI com ID numérico e mostra nome snapshot com fallback dos antigos', () => {
+  it('cria PEI pela oferta selecionada e mostra o período registrado dos planos antigos', () => {
     setSession(['TEACHER']);
+    academic.peiOffers.and.returnValue(of([offer, { ...offer, id: 23, groupCode: 'Turma B' }]));
     api.createPei.and.returnValue(of({ ...pei, id: 'novo-pei' }));
     api.peis.and.returnValue(of([{ ...pei, academicTermLabel: 'Período registrado' }, { ...pei, id: 'legado', academicTerm: '2025.2' }]));
     start(); const dom = view('pei');
-    changeSelect('select[formControlName="subjectId"]', '100');
-    const term = changeSelect('select[formControlName="academicTermId"]', '21');
+    const term = changeSelect('select[formControlName="offeringId"]', '22');
     expect(dom.querySelector<HTMLInputElement>('.create-panel input[readonly]')?.value).toBe('Docente fictício');
     expect(dom.querySelector('select[formControlName="teacherId"]')).toBeNull();
     expect(term?.textContent).toContain('Primeiro semestre de 2026');
     dom.querySelector<HTMLButtonElement>('.create-panel button[type="submit"]')?.click(); fixture.detectChanges();
     expect(api.createPei.calls.mostRecent().args[0]).toBe(1);
-    expect(api.createPei.calls.mostRecent().args[1] as unknown).toEqual({ subjectId: 100, academicTermId: 21 });
+    expect(api.createPei.calls.mostRecent().args[1] as unknown).toEqual({ offeringId: 22 });
     expect(dom.textContent).toContain('Período registrado'); expect(dom.textContent).toContain('2025.2');
   });
 
@@ -229,39 +257,37 @@ describe('StudentDetailComponent — catálogos e referências históricas', () 
     setSession(['TEACHER']);
     const pending = new Subject<Pei>(); api.createPei.and.returnValue(pending);
     start(); const dom = view('pei');
-    changeSelect('select[formControlName="subjectId"]', '100');
-    changeSelect('select[formControlName="academicTermId"]', '21');
+    changeSelect('select[formControlName="offeringId"]', '22');
     dom.querySelector<HTMLButtonElement>('.create-panel button[type="submit"]')?.click(); fixture.detectChanges();
-    const term = dom.querySelector<HTMLSelectElement>('select[formControlName="academicTermId"]');
+    const term = dom.querySelector<HTMLSelectElement>('select[formControlName="offeringId"]');
     expect(term?.matches(':disabled')).toBeTrue();
     pending.error({ status: 400 }); fixture.detectChanges();
-    expect(term?.matches(':disabled')).toBeFalse(); expect(term?.value).toBe('21');
+    expect(term?.matches(':disabled')).toBeFalse(); expect(term?.value).toBe('22');
   });
 
-  it('falha do período bloqueia criação e mantém planos históricos acessíveis', () => {
+  it('falha das ofertas bloqueia criação e mantém planos históricos acessíveis', () => {
     setSession(['TEACHER']);
-    api.references.and.callFake(kind => kind === 'ACADEMIC_TERM' ? throwError(() => ({ status: 500 })) : of([]));
+    academic.peiOffers.and.returnValue(throwError(() => ({ status: 500 })));
     api.peis.and.returnValue(of([pei])); start(); const dom = view('pei');
-    expect(dom.querySelector('[data-testid="term-catalog-error"]')).not.toBeNull();
-    expect(dom.querySelector('[data-testid="term-catalog-empty"]')).toBeNull();
+    expect(dom.querySelector('[data-testid="offer-error"]')).not.toBeNull();
     expect(dom.querySelector('.pei-row a')).not.toBeNull();
-    fixture.componentInstance.peiForm.patchValue({ subjectId: '100' });
+    fixture.componentInstance.peiForm.patchValue({ offeringId: '22' });
     fixture.componentInstance.createPei();
     expect(api.createPei).not.toHaveBeenCalled();
   });
 
   it('não oferece criação de PEI ao NAPNE, mas mantém a consulta aos existentes', () => {
     api.peis.and.returnValue(of([pei])); start(); const dom = view('pei');
-    expect(dom.querySelector('select[formControlName="academicTermId"]')).toBeNull();
+    expect(dom.querySelector('select[formControlName="offeringId"]')).toBeNull();
     expect(dom.querySelector('.pei-row a')).not.toBeNull();
   });
 
   it('não oferece criação ao docente sem vínculo ativo no componente', () => {
     setSession(['TEACHER']);
-    api.studentTeachers.and.returnValue(of([{ id: 99, name: 'Outro docente', subjectId: 100 }]));
+    academic.peiOffers.and.returnValue(of([]));
     start(); const dom = view('pei');
-    expect(dom.querySelector('select[formControlName="academicTermId"]')).toBeNull();
-    expect(dom.textContent).toContain('Somente docente vinculado');
+    expect(dom.querySelector('select[formControlName="offeringId"]')).toBeNull();
+    expect(dom.textContent).toContain('Nenhuma oferta com matrícula e atribuição docente válidas');
   });
 
   it('não busca categorias nem recompõe dados restritos para perfil pedagógico', () => {

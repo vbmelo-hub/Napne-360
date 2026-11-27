@@ -7,6 +7,7 @@ import br.edu.ifac.napne360.security.CurrentUserService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -33,10 +34,12 @@ public class AttachmentController {
     private final AttachmentService operations;
 
     @GetMapping
-    public List<AttachmentDocument> list(@PathVariable Long studentId) {
+    public List<AttachmentDocument> list(@PathVariable Long studentId,
+                                         @RequestParam(defaultValue = "false") boolean includeArchived) {
         access.requireView(studentId);
         if (!access.canEditDossier(studentId)) return List.of();
-        return attachments.findActiveByStudentId(studentId);
+        return includeArchived ? attachments.findConfirmedByStudentId(studentId)
+                : attachments.findActiveByStudentId(studentId);
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -46,6 +49,13 @@ public class AttachmentController {
                                      @RequestHeader(value = "Idempotency-Key", required = false) String key,
                                      @RequestPart MultipartFile file, HttpServletRequest http) {
         return operations.upload(studentId, category, previousVersionId, key, file, currentUser.require(), http.getRemoteAddr());
+    }
+
+    @GetMapping("/{id}/versions")
+    @PreAuthorize("@accessGuard.canEditDossier(#studentId)")
+    public ResponseEntity<List<AttachmentDocument>> versions(@PathVariable Long studentId, @PathVariable String id) {
+        access.requireView(studentId);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(operations.versions(studentId, id));
     }
 
     @GetMapping("/{id}/content")
@@ -58,6 +68,7 @@ public class AttachmentController {
         Resource resource = storage.load(metadata.getStoredName());
         audit.record(auth, http, "DOWNLOAD", "ATTACHMENT", metadata.getId(), "SUCCESS", metadata.getCategory());
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(metadata.getContentType()))
+                .cacheControl(CacheControl.noStore())
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
                         .filename(metadata.getOriginalName(), StandardCharsets.UTF_8).build().toString())
                 .body(resource);
@@ -71,7 +82,9 @@ public class AttachmentController {
 
     @ExceptionHandler(AttachmentService.UnavailableException.class)
     ProblemDetail unavailable() {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+        var response = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
                 "A confirmação está temporariamente indisponível. Consulte os anexos antes de reenviar.");
+        response.setProperty("code", "ATTACHMENT_CONFIRMATION_UNAVAILABLE");
+        return response;
     }
 }

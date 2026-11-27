@@ -37,6 +37,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-napne360}
       MONGODB_URI: mongodb://mongo:27017/napne360_documents
       JWT_SECRET: ${JWT_SECRET:-change-this-development-secret-with-at-least-32-bytes}
+      JWT_EXPIRATION_MINUTES: ${JWT_EXPIRATION_MINUTES:-60}
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
+      SESSION_WARNING_MINUTES: ${SESSION_WARNING_MINUTES:-5}
+      SESSION_MAX_MINUTES: ${SESSION_MAX_MINUTES:-480}
       STORAGE_ROOT: /data/uploads
       CORS_ALLOWED_ORIGINS: http://localhost:4200,http://127.0.0.1:4200
       SEED_ENABLED: ${SEED_ENABLED:-true}

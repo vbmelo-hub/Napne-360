@@ -4,6 +4,7 @@ import br.edu.ifac.napne360.timeline.MutationProjection;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.*;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Transient;
 import org.springframework.data.annotation.Version;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.index.Indexed;
@@ -39,6 +40,8 @@ public class CareRecordDocument {
     private Instant updatedAt = Instant.now();
     @Version
     private Long version;
+    @Transient
+    private Boolean editable;
     @Builder.Default
     private java.util.List<Revision> history = new java.util.ArrayList<>();
     @JsonIgnore

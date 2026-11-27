@@ -1,5 +1,6 @@
 package br.edu.ifac.napne360.pei;
 
+import br.edu.ifac.napne360.academic.AcademicService;
 import br.edu.ifac.napne360.audit.AuditService;
 import br.edu.ifac.napne360.common.ConflictException;
 import br.edu.ifac.napne360.document.CareRecordService;
@@ -42,7 +43,7 @@ class PeiServiceTest {
         mongo = new PeiMongoFixture(peis);
         service = new PeiService(mock(br.edu.ifac.napne360.identity.ReferenceCatalogService.class), mongo.store,
                 careRecords, subjects, currentUser, new PeiProjectionService(mongo.store, timeline, audit, Runnable::run),
-                access, templates, assignments);
+                access, templates, assignments, mock(AcademicService.class));
         pei = PeiDocument.builder().id("p1").studentId(1L).subjectId(2L).teacherId(9L).academicTerm("2026-2").build();
         when(peis.findById("p1")).thenReturn(Optional.of(pei));
         lenient().when(peis.findByStudentIdAndSubjectIdAndAcademicTermOrderByRevisionDesc(1L, 2L, "2026-2"))
@@ -60,7 +61,7 @@ class PeiServiceTest {
 
     @Test void supersededVersionCannotBeEdited() {
         actor(RoleName.TEACHER);
-        when(access.canTeachPei(1L,2L)).thenReturn(true);
+        when(access.canTeachPei(1L, 2L, "2026-2", null)).thenReturn(true);
         pei.setStatus(PeiStatus.SUPERSEDED);
         assertThatThrownBy(() -> service.createVersion(1L,"p1",new PeiService.PeiUpdateRequest(Map.of(), 0L),null,null))
                 .isInstanceOf(ConflictException.class);

@@ -1,6 +1,6 @@
 import { expect, test, type APIResponse } from '@playwright/test';
 import { apiJson, caseFixture } from './case-fixtures';
-import { loginUi } from './catalog-fixtures';
+import { academicFixture, loginUi } from './catalog-fixtures';
 
 type Revision = {
   id: string;
@@ -31,17 +31,12 @@ test('NAPNE transfere rascunho devolvido e novo docente continua o PEI com hist√
   });
   expect(subjects.length, 'componente do curso fict√≠cio').toBeGreaterThan(0);
   const subjectId = subjects[0].id;
-  const assign = (userId: number) => apiJson<{ id: number }>(request, '/admin/assignments', {
-    method: 'POST', headers: admin.headers, data: { studentId: student.id, userId, subjectId, assignmentType: 'TEACHER' }
+  const { offering, teaching: [authorAssignment] } = await academicFixture(request, {
+    studentId: student.id, subjectId, teacherIds: [author.id, recipient.id],
+    adminHeaders: admin.headers, napneHeaders: napne.headers
   });
-  const authorAssignment = await assign(author.id);
-  await assign(recipient.id);
   const authorSession = await fixture.login(author);
   const recipientSession = await fixture.login(recipient);
-  const term = await apiJson<{ id: number }>(request, '/admin/references', {
-    method: 'POST', headers: admin.headers,
-    data: { kind: 'ACADEMIC_TERM', code: `TEST-PEI-TRANSFER-${fixture.key}`, label: 'Per√≠odo fict√≠cio de transfer√™ncia' }
-  });
   const path = `${fixture.path}/peis`;
   const editor = (id: string) => `/estudantes/${student.id}/pei/${id}`;
   const get = (id: string, headers = napne.headers) => apiJson<Revision>(request, `${path}/${id}`, { headers });
@@ -61,7 +56,7 @@ test('NAPNE transfere rascunho devolvido e novo docente continua o PEI com hist√
 
   const { current, draft } = await test.step('preparar um PEI vigente e um rascunho devolvido ao autor', async () => {
     const firstDraft = await apiJson<Revision>(request, path, {
-      method: 'POST', headers: authorSession.headers, data: { subjectId, academicTermId: term.id }
+      method: 'POST', headers: authorSession.headers, data: { offeringId: offering.id }
     });
     const complete = await save(firstDraft, {
       ...firstDraft.content,
@@ -93,7 +88,7 @@ test('NAPNE transfere rascunho devolvido e novo docente continua o PEI com hist√
     await expect(objective).toHaveValue(String(draft.content['generalObjectives']));
     await expect(transferButton).toHaveCount(0);
 
-    const disabled = await apiJson<{ active: boolean }>(request, `/admin/assignments/${authorAssignment.id}/active`, {
+    const disabled = await apiJson<{ active: boolean }>(request, `/admin/academic/teaching/${authorAssignment.id}/active`, {
       method: 'PATCH', headers: admin.headers, data: { active: false }
     });
     expect(disabled.active).toBe(false);

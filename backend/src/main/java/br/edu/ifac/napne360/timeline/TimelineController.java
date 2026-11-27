@@ -63,7 +63,7 @@ public class TimelineController {
         access.requireView(studentId);
         boolean canViewRestricted = currentUser.require().getRoles().contains(RoleName.NAPNE);
         String typePrefix = type == null || type.isBlank() ? "" : type.toUpperCase(Locale.ROOT);
-        var peiPermissions = new HashMap<Long, Boolean>();
+        var peiPermissions = new HashMap<PeiScope, Boolean>();
         var subjectPermissions = new HashMap<Long, Boolean>();
         return event -> {
             String eventType = event.getEventType();
@@ -76,13 +76,20 @@ public class TimelineController {
             var subject = data.get("subjectId");
             if (eventType != null && eventType.startsWith("PEI_")) {
                 Long subjectId = subject instanceof Number id ? id.longValue() : null;
-                return peiPermissions.computeIfAbsent(subjectId, id -> access.canViewPei(studentId, id));
+                String term = data.get("academicTerm") instanceof String code ? code : null;
+                Long offeringId = data.get("offeringId") instanceof Number id ? id.longValue() : null;
+                var scope = new PeiScope(subjectId, term, offeringId);
+                return peiPermissions.computeIfAbsent(scope, key -> term == null && offeringId == null
+                        ? access.canViewPei(studentId, subjectId)
+                        : access.canViewPei(studentId, subjectId, term, offeringId));
             }
             return !data.containsKey("subjectId")
                     || subject instanceof Number id
                             && subjectPermissions.computeIfAbsent(id.longValue(), key -> access.canViewSubject(studentId, key));
         };
     }
+
+    private record PeiScope(Long subjectId, String term, Long offeringId) {}
 
     public record TimelinePage(List<TimelineEventDocument> content, long totalElements, long totalPages, int number, int size) {}
 }

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { academicFixture } from './catalog-fixtures';
 
 test('caso completo: dossiê, acompanhamento, PEI e negação de acesso',async({request})=>{
   const login=async(email:string)=>{
@@ -23,7 +24,9 @@ test('caso completo: dossiê, acompanhamento, PEI e negação de acesso',async({
   const studentPath=`/students/${student.id}`;
   expect((await request.get('/api/v1'+studentPath,{headers:teacherHeaders})).status()).toBe(403);
   expect((await request.get('/api/v1'+studentPath+'/dossier',{headers:adminHeaders})).status()).toBe(403);
-  await post('/admin/assignments',{studentId:student.id,userId:teacher.id,subjectId:subjects[0].id,assignmentType:'TEACHER'},adminHeaders);
+  const { offering, term } = await academicFixture(request, {
+    studentId: student.id, subjectId: subjects[0].id, teacherIds: [teacher.id], adminHeaders, napneHeaders: headers
+  });
   const caseValue=await post(studentPath+'/cases',{source:'Teste automatizado',summary:'Caso fictício'});
   const initial=await (await request.get('/api/v1'+studentPath+'/dossier',{headers})).json();
   const updated=await request.put('/api/v1'+studentPath+'/dossier',{headers,data:{...initial,identification:{demand:'Acompanhamento fictício'},strengths:{learning:'Exemplos visuais'}}});
@@ -31,9 +34,8 @@ test('caso completo: dossiê, acompanhamento, PEI e negação de acesso',async({
   for(const type of ['INITIAL_SCREENING','CASE_STUDY','PEDAGOGICAL_GUIDANCE','ACTION_PLAN'])
     await post(studentPath+'/records',{caseId:caseValue.id,type,title:`Teste ${type}`,status:'ACTIVE',content:{notes:'Conteúdo fictício'}});
   await post(studentPath+'/records',{type:'TEACHER_FEEDBACK',subjectId:subjects[0].id,title:'Devolutiva de teste',status:'ACTIVE',content:{performance:'Atividade concluída'}},teacherHeaders);
-  const term=await post('/admin/references',{kind:'ACADEMIC_TERM',code:`TEST-WORKFLOW-${Date.now()}`,label:'Período fictício do fluxo'},adminHeaders);
-  // Compatibilidade do cliente antigo: o código agora precisa existir e estar ativo.
   const draft=await post(studentPath+'/peis',{subjectId:subjects[0].id,teacherId:teacher.id,academicTerm:term.code},teacherHeaders);
+  expect(draft.academicOfferingId).toBe(offering.id);
   const bypass=await request.put('/api/v1'+studentPath+`/peis/${draft.id}`,{headers:teacherHeaders,data:{version:draft.storageVersion,status:'APPROVED',content:draft.content}});
   expect(bypass.status()).toBe(400);
   const content={

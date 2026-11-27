@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ApiService } from '../core/api.service';
+import { trackFormChanges } from '../core/form-changes';
 import { createListView, LIST_PAGE_SIZE } from '../core/list-view';
 import { CaseStageConfiguration } from '../core/models';
 import { errorMessage } from '../core/presentation';
@@ -58,8 +59,8 @@ interface DraftStage {
               @let issue = nameError(stage.label);
               <li class="stage-row">
                 <div>
-                  <label class="required">
-                    Nome da etapa {{position}}
+                  <label>
+                    <span>Nome da etapa {{position}}&nbsp;<span class="field-required" aria-hidden="true">*</span></span>
                     <input #nameField required [value]="stage.label" (input)="rename(stage.id, nameField.value)"
                       [attr.aria-invalid]="issue ? 'true' : null"
                       [attr.aria-describedby]="issue ? 'stage-error-' + stage.id : null">
@@ -97,7 +98,7 @@ interface DraftStage {
           }
           <div class="row">
             <button type="button" class="secondary" (click)="add()">Adicionar etapa</button>
-            <button type="submit" [disabled]="conflict() || invalid()">Salvar etapas</button>
+            <button type="submit" [disabled]="busy() || conflict() || invalid() || !changes.changed()">Salvar etapas</button>
           </div>
         </fieldset>
       }
@@ -132,6 +133,8 @@ export class AdminCaseStagesComponent implements OnInit {
   protected readonly busy = computed(() => this.operation() !== null);
   protected readonly conflict = signal(false);
   protected readonly error = signal('');
+  private readonly stageValues = computed(() => this.stages().map(({code, label}) => ({ code, label: label.trim() })));
+  protected readonly changes = trackFormChanges(this.stageValues);
   protected readonly lastActiveIndex = computed(() => this.stages().length - 3);
   protected readonly invalid = computed(() => this.stages().some(stage => this.nameError(stage.label)));
   protected readonly stageOrder = computed(() => new Map(this.stages().map((stage, index) => [stage.id, index])));
@@ -144,8 +147,14 @@ export class AdminCaseStagesComponent implements OnInit {
     this.load();
   }
 
+  hasPendingChanges(): boolean {
+    return this.changes.changed();
+  }
+
   protected load() {
     if (this.busy()) return;
+    if (this.changes.changed() && !this.conflict()
+        && !window.confirm('Descartar as alterações ainda não salvas nas etapas?')) return;
     this.operation.set('load');
     this.error.set('');
     this.api.adminCaseStages().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
@@ -198,8 +207,8 @@ export class AdminCaseStagesComponent implements OnInit {
 
   protected save() {
     const version = this.version();
-    if (version === null || this.busy() || this.conflict() || this.invalid()) return;
-    const stages = this.stages().map(({ code, label }) => ({ code, label: label.trim() }));
+    if (version === null || this.busy() || this.conflict() || this.invalid() || !this.changes.changed()) return;
+    const stages = this.stageValues();
     this.operation.set('save');
     this.error.set('');
     this.api.updateCaseStages({ version, stages }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
@@ -221,6 +230,7 @@ export class AdminCaseStagesComponent implements OnInit {
   private apply(configuration: CaseStageConfiguration) {
     this.filterLabels.set(new Map());
     this.stages.set(configuration.stages.map(stage => ({ ...stage, id: this.nextId++ })));
+    this.changes.capture();
     this.version.set(configuration.version);
     this.conflict.set(false);
     this.operation.set(null);

@@ -49,5 +49,14 @@ public class CaseHistory {
     @Column(length = 500, updatable = false)
     private String reason;
 
-    public enum Type { OPENED, STAGE_CHANGED, RESPONSIBLE_CHANGED }
+    @Column(length = 80, updatable = false)
+    private String fromSource;
+    @Column(length = 80, updatable = false)
+    private String toSource;
+    @Column(length = 500, updatable = false)
+    private String fromSummary;
+    @Column(length = 500, updatable = false)
+    private String toSummary;
+
+    public enum Type { OPENED, STAGE_CHANGED, RESPONSIBLE_CHANGED, DETAILS_UPDATED }
 }

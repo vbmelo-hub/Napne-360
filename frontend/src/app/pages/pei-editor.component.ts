@@ -1,9 +1,10 @@
 import { DOCUMENT } from '@angular/common';
-import { Component, DestroyRef, ElementRef, Injector, OnInit, afterNextRender, computed, inject, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, HostListener, Injector, OnInit, afterNextRender, computed, inject, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormBuilder, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { EMPTY, Subscription, catchError, finalize, switchMap } from 'rxjs';
+import { FormValue, sameFormValue } from '../core/form-changes';
 import { ApiService } from '../core/api.service';
 import { PEI_ANNEX_I_VERSION, Pei, PeiAction, PeiAnnexI, PeiTransferCandidate } from '../core/models';
 import { errorMessage, labelFor, toneFor } from '../core/presentation';
@@ -93,7 +94,7 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
           <fieldset class="pei-fields" [disabled]="!canEdit() || saving()">
             <section class="card form-section" id="overview">
               <div class="section-header"><div><span class="eyebrow">01 · Visão geral</span><h2>Direcionamento pedagógico</h2><p>Defina o objetivo central e as competências profissionais.</p></div></div>
-              <label class="required">Objetivo geral · necessário para aprovação<textarea formControlName="generalObjectives"></textarea></label>
+              <label><span>Objetivo geral · necessário para aprovação&nbsp;<span class="field-required" aria-hidden="true">*</span></span><textarea formControlName="generalObjectives"></textarea></label>
               <label>Habilidades e competências profissionais<textarea formControlName="professionalSkills" placeholder="Uma habilidade por linha"></textarea></label>
             </section>
             <section class="card form-section" id="objectives">
@@ -129,7 +130,7 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
           }
           <div class="editor-actions">
             <div><strong>{{ isDirty() ? 'Alterações ainda não salvas' : 'Revisão atual salva' }}</strong><small>{{ isDirty() ? 'Salve o rascunho antes de alterar o estado do PEI.' : 'As ações disponíveis seguem o estado desta versão.' }}</small></div>
-            @if (canEdit()) { <button type="submit" [disabled]="saving() || !documentReady()">@if (saving()) { <span class="spinner"></span> }Salvar rascunho</button> }
+            @if (canEdit()) { <button type="submit" [disabled]="saving() || !canSaveDraft()">@if (saving()) { <span class="spinner"></span> }Salvar rascunho</button> }
             @if (hasAction('SUBMIT')) { <button type="button" (click)="performAction('SUBMIT')" [disabled]="saving() || isDirty() || !documentReady()">Enviar para revisão</button> }
             @if (hasAction('START_REVISION')) { <button type="button" (click)="performAction('START_REVISION')" [disabled]="saving() || isDirty()">Iniciar nova revisão</button> }
             @if (hasAction('RETURN')) { <button type="button" class="secondary" (click)="requestConfirmation('RETURN')" [disabled]="saving() || isDirty()">Devolver para ajustes</button> }
@@ -156,7 +157,7 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
       @if (transferCandidateOptions(); as candidates) {
         @if (candidates.length) {
           <fieldset class="stack" [formGroup]="transferForm" [disabled]="saving()">
-            <label>Novo docente
+            <label><span>Novo docente&nbsp;<span class="field-required" aria-hidden="true">*</span></span>
               <select formControlName="teacherId" required>
                 <option value="">Selecione um docente</option>
                 @for (candidate of candidates; track candidate.id) {
@@ -164,7 +165,7 @@ const TRANSFER_CONFLICT = 'O PEI mudou desde que foi carregado. Atualize a pági
                 }
               </select>
             </label>
-            <label>Motivo
+            <label><span>Motivo&nbsp;<span class="field-required" aria-hidden="true">*</span></span>
               <textarea formControlName="reason" required maxlength="500" rows="3" aria-describedby="pei-transfer-reason-hint"></textarea>
             </label>
             <small id="pei-transfer-reason-hint" class="field-hint">Obrigatório. Até 500 caracteres.</small>
@@ -275,12 +276,13 @@ export class PeiEditorComponent implements OnInit {
   readonly tone = toneFor;
   readonly canEdit = computed(() => this.hasAction('EDIT'));
   private rawContent: Record<string, unknown> = {};
+  private savedFormValue: FormValue;
   private transferCandidatesRequest?: Subscription;
   private annexLoading = false;
   private pdfRequest?: Subscription;
 
   readonly form = this.fb.nonNullable.group({
-    generalObjectives: ['', Validators.required], specificObjectives: [''], eliminatedObjectives: [''],
+    generalObjectives: [''], specificObjectives: [''], eliminatedObjectives: [''],
     alternativeObjectives: [''], complementaryObjectives: [''], professionalSkills: [''], syllabus: [''],
     prerequisites: [''], contents: [''], teachingStrategies: [''], methodologicalResources: [''],
     assessmentCriteria: [''], assessmentInstruments: [''], recoveryProposal: [''], basicBibliography: [''],
@@ -298,6 +300,7 @@ export class PeiEditorComponent implements OnInit {
 
         this.pei.set(null);
         this.rawContent = {};
+        this.savedFormValue = undefined;
         this.form.reset();
         this.annexForm.set(null);
         this.resetPdf();
@@ -373,7 +376,7 @@ export class PeiEditorComponent implements OnInit {
     const annex = this.annexForm();
     const form = this.officialForm() ? annex : this.form;
     form?.markAllAsTouched();
-    if (!value || !form || !this.canEdit() || this.saving()) return;
+    if (!value || !form || !this.canSaveDraft() || this.saving()) return;
     this.saving.set(true);
     this.conflict.set(false);
     this.api.revisePei(value.studentId, value.id, {
@@ -391,8 +394,33 @@ export class PeiEditorComponent implements OnInit {
     });
   }
 
-  protected isDirty() {
-    return this.officialForm() ? this.annexForm()?.dirty === true : this.form.dirty;
+  protected isDirty(): boolean {
+    const form = this.officialForm() ? this.annexForm() : this.form;
+    return !!form && this.savedFormValue !== undefined && !sameFormValue(form.getRawValue(), this.savedFormValue);
+  }
+
+  protected canSaveDraft(): boolean {
+    const form = this.officialForm() ? this.annexForm() : this.form;
+    return this.canEdit() && !!form?.valid && this.isDirty();
+  }
+
+  canLeave(): boolean {
+    return !this.isDirty()
+      || window.confirm('Há alterações ainda não salvas no PEI. Sair do editor?');
+  }
+
+  @HostListener('window:beforeunload', ['$event'])
+  protected preventUnsavedUnload(event: BeforeUnloadEvent): void {
+    if (this.isDirty()) {
+      event.preventDefault();
+      event.returnValue = true;
+    }
+  }
+
+  private setAnnexForm(model: PeiAnnexI, content: Record<string, unknown>) {
+    const form = buildPeiAnnexIForm(this.fb, model, content);
+    this.savedFormValue = form.getRawValue();
+    this.annexForm.set(form);
   }
 
   protected loadAnnexModel() {
@@ -411,10 +439,10 @@ export class PeiEditorComponent implements OnInit {
         this.annexModel.set(model);
         const value = this.pei();
         if (value?.formVersion === PEI_ANNEX_I_VERSION) {
-          this.annexForm.set(buildPeiAnnexIForm(this.fb, model, value.content));
+          this.setAnnexForm(model, value.content);
         }
       },
-      error: error => this.annexError.set(errorMessage(error.status, 'carregar o formulário do Anexo I'))
+      error: error => this.annexError.set(errorMessage(error, 'carregar o formulário do Anexo I'))
     });
   }
 
@@ -450,7 +478,7 @@ export class PeiEditorComponent implements OnInit {
         link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       },
-      error: error => this.toast.show(errorMessage(error.status, 'baixar o PDF'), 'error')
+      error: error => this.toast.show(errorMessage(error, 'baixar o PDF'), 'error')
     });
   }
 
@@ -525,7 +553,7 @@ export class PeiEditorComponent implements OnInit {
           this.transferConflict.set(error.status === 409);
           this.transferError.set(error.status === 409
             ? TRANSFER_CONFLICT
-            : errorMessage(error.status, 'carregar docentes elegíveis'));
+            : errorMessage(error, 'carregar docentes elegíveis'));
         }
       });
   }
@@ -560,7 +588,7 @@ export class PeiEditorComponent implements OnInit {
         this.transferConflict.set(error.status === 409);
         this.transferError.set(error.status === 409
           ? `${TRANSFER_CONFLICT} Seleção e motivo preservados.`
-          : errorMessage(error.status, 'transferir o rascunho do PEI'));
+          : errorMessage(error, 'transferir o rascunho do PEI'));
       }
     });
   }
@@ -615,13 +643,14 @@ export class PeiEditorComponent implements OnInit {
     this.pei.set(value);
     if (this.officialForm()) {
       const model = this.annexModel();
-      if (model) this.annexForm.set(buildPeiAnnexIForm(this.fb, model, value.content));
+      if (model) this.setAnnexForm(model, value.content);
       else this.loadAnnexModel();
     } else {
       this.annexForm.set(null);
       this.rawContent = value.content ?? {};
       this.fill(this.rawContent);
       this.form.markAsPristine();
+      this.savedFormValue = this.form.getRawValue();
     }
     this.saving.set(false);
     this.conflict.set(false);
