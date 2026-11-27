@@ -61,7 +61,7 @@ export class ModalShellComponent implements OnChanges, AfterViewChecked {
     if (event.key !== 'Tab' || !this.dialog) return;
     const elements = Array.from(this.dialog.nativeElement.querySelectorAll<HTMLElement>(
       'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    ));
+    )).filter(element => element.getClientRects().length > 0);
     if (elements.length === 0) return;
     const first = elements[0];
     const last = elements[elements.length - 1];

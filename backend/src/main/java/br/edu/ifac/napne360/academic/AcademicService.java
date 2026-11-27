@@ -146,6 +146,15 @@ public class AcademicService {
         return academic.enrollments(studentId, query, filters, page).map(EnrollmentView::of);
     }
 
+    FilterOptions offeringFilters(AcademicFilterScope scope, boolean teaching) {
+        return academic.offeringFilters(scope, teaching);
+    }
+
+    FilterOptions enrollmentFilters(Long studentId, AcademicFilterScope scope) {
+        napneStudent(studentId, false);
+        return academic.enrollmentFilters(studentId, scope);
+    }
+
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public EnrollmentView enroll(Long studentId, Long offeringId) {
         var student = napneStudent(studentId, true);
@@ -196,6 +205,7 @@ public class AcademicService {
         var student = students.findByIdForUpdate(studentId).orElseThrow(() -> new NotFoundException("Estudante não encontrado."));
         if (actor.getCampus() == null || !actor.getCampus().getId().equals(student.getCampus().getId()))
             throw new AccessDeniedException("Acesso negado.");
+        requireActivePeiStudent(student);
         var initial = academic.peiOffers(studentId, actor.getId()).stream().filter(o -> {
             if (offerId != null) return offerId.equals(o.getId());
             return Objects.equals(subjectId, o.getSubject().getId())
@@ -210,6 +220,17 @@ public class AcademicService {
         if (academic.peiOffers(studentId, actor.getId()).stream().noneMatch(o -> o.getId().equals(offering.getId())))
             throw new AccessDeniedException("A oferta deve ter matrícula e atribuição docente ativas.");
         return OfferingView.of(offering);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public void lockStudentForNewPei(Long studentId) {
+        var student = students.findByIdForUpdate(studentId).orElseThrow(() -> new NotFoundException("Estudante não encontrado."));
+        requireActivePeiStudent(student);
+    }
+
+    private void requireActivePeiStudent(Student student) {
+        if (!student.acceptsNewOperations())
+            throw conflict("STUDENT_INACTIVE", "A situação acadêmica do estudante não permite iniciar um PEI.");
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -360,6 +381,10 @@ public class AcademicService {
     }
 
     private record PairId(Long student, Long teacher) {}
+
+    public record FilterSubject(Long id, String name, String code) {}
+
+    public record FilterOptions(List<FilterSubject> subjects, List<String> periodCodes, List<String> groupCodes) {}
 
     public record PeriodView(Long id, String code, String label, boolean active) {
         static PeriodView of(ReferenceEntry entry) {

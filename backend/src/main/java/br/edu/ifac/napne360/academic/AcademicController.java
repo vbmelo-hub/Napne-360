@@ -32,6 +32,11 @@ public class AcademicController {
         return academic.offerings(query, onlyActive, filters, page);
     }
 
+    @GetMapping("/admin/academic/offerings/filter-options") @PreAuthorize("hasRole('ADMIN')")
+    public AcademicService.FilterOptions offeringFilters(@Valid AcademicFilterScope scope) {
+        return academic.offeringFilters(scope, false);
+    }
+
     @PostMapping("/admin/academic/offerings") @PreAuthorize("hasRole('ADMIN')")
     public AcademicService.OfferingView createOffering(@Valid @RequestBody OfferingRequest request) {
         return academic.createOffering(request.subjectId(), request.periodId(), request.groupCode());
@@ -45,6 +50,11 @@ public class AcademicController {
     @GetMapping("/admin/academic/teaching") @PreAuthorize("hasRole('ADMIN')")
     public Page<AcademicService.TeachingView> teaching(@RequestParam(defaultValue = "") String query, AcademicListFilters filters, Pageable page) {
         return academic.teaching(query, filters, page);
+    }
+
+    @GetMapping("/admin/academic/teaching/filter-options") @PreAuthorize("hasRole('ADMIN')")
+    public AcademicService.FilterOptions teachingFilters(@Valid AcademicFilterScope scope) {
+        return academic.offeringFilters(scope, true);
     }
 
     @PostMapping("/admin/academic/teaching") @PreAuthorize("hasRole('ADMIN')")
@@ -70,6 +80,11 @@ public class AcademicController {
     @GetMapping("/students/{studentId}/academic/enrollments") @PreAuthorize("hasRole('NAPNE')")
     public Page<AcademicService.EnrollmentView> enrollments(@PathVariable Long studentId, @RequestParam(defaultValue = "") String query, AcademicListFilters filters, Pageable page) {
         return academic.enrollments(studentId, query, filters, page);
+    }
+
+    @GetMapping("/students/{studentId}/academic/enrollments/filter-options") @PreAuthorize("hasRole('NAPNE')")
+    public AcademicService.FilterOptions enrollmentFilters(@PathVariable Long studentId, @Valid AcademicFilterScope scope) {
+        return academic.enrollmentFilters(studentId, scope);
     }
 
     @PostMapping("/students/{studentId}/academic/enrollments") @PreAuthorize("hasRole('NAPNE')")

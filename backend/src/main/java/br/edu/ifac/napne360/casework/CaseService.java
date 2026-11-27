@@ -11,7 +11,6 @@ import br.edu.ifac.napne360.security.AccessGuard;
 import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.student.Student;
 import br.edu.ifac.napne360.student.StudentRepository;
-import br.edu.ifac.napne360.student.StudentStatus;
 import br.edu.ifac.napne360.timeline.MutationProjection;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,6 +22,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -64,10 +64,11 @@ public class CaseService {
         var currentStudent = students.findByIdForUpdate(student.getId())
                 .orElseThrow(() -> new NotFoundException("Estudante não encontrado."));
         requireCampusAccess(currentStudent.getId());
-        if (currentStudent.getStatus() == StudentStatus.ARCHIVED) {
+        if (currentStudent.isAdministrativelyArchived()) {
             throw new ApiOperationException(HttpStatus.CONFLICT, "CASE_STUDENT_ARCHIVED",
-                    "Reative o cadastro do estudante antes de abrir um caso.");
+                    "Desarquive o cadastro do estudante antes de abrir um caso.");
         }
+        requireActiveStudent(currentStudent);
         var user = lockEligibleResponsible(auth.getName(), currentStudent.getCampus().getId());
         var catalogue = stageConfiguration.current();
         NapneCase value = cases.saveAndFlush(NapneCase.builder().student(currentStudent).source(request.source().trim())
@@ -111,19 +112,28 @@ public class CaseService {
         return view(value, catalogue);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public CaseView changeStage(Long caseId, CaseStageRequest request, Authentication auth, HttpServletRequest http) {
+        var next = request.stage();
+        if (next.isActive()) {
+            var studentId = cases.findStudentId(caseId).orElseThrow(() -> new NotFoundException("Caso não encontrado."));
+            var actor = currentUser.require();
+            if (actor.getCampus() == null || !actor.getRoles().contains(RoleName.NAPNE))
+                throw new AccessDeniedException("Acesso negado.");
+            students.findByIdAndCampusForUpdate(studentId, actor.getCampus().getId())
+                    .orElseThrow(() -> new AccessDeniedException("Acesso negado."));
+        }
         NapneCase value = requireCase(caseId);
         requireVersion(value, request.version());
         var catalogue = stageConfiguration.current();
         CaseStage previous = value.getStage();
-        CaseStage next = request.stage();
         boolean sameStage = previous.equals(next);
         if (sameStage && Objects.equals(value.getSummary(), request.summary())) return view(value, catalogue);
         boolean allowed = sameStage ? previous.isActive()
                 : catalogue.nextOptions(previous).stream().anyMatch(option -> option.code().equals(next));
         if (!allowed) throw new ApiOperationException(HttpStatus.BAD_REQUEST, "CASE_STAGE_INVALID", "A alteração não é permitida nesta etapa do caso.");
 
+        if (!previous.isActive() && next.isActive()) requireActiveStudent(value.getStudent());
         String reason = null;
         if (previous.equals(CaseStage.CLOSED) && next.equals(CaseStage.SCREENING)) {
             reason = CaseText.trimBrowserWhitespace(request.reason());
@@ -192,7 +202,7 @@ public class CaseService {
 
     @Transactional(readOnly = true)
     public HistoryPage history(Long caseId, int page, int size, CaseHistory.Type type,
-                               String actor, Long version, Instant from, Instant to) {
+                               String actor, Long actorId, Long version, Instant from, Instant to) {
         requireCase(caseId);
         if (page < 0 || size < 1 || size > 100 || (long) page * size > Integer.MAX_VALUE)
             throw new IllegalArgumentException("Paginação inválida.");
@@ -200,7 +210,7 @@ public class CaseService {
         if (from != null && to != null && from.isAfter(to)) {
             throw new IllegalArgumentException("A data inicial deve ser anterior ou igual à data final.");
         }
-        var values = history.filter(caseId, type, actor == null || actor.isBlank() ? null : actor.strip(),
+        var values = history.filter(caseId, type, actor == null || actor.isBlank() ? null : actor.strip(), actorId,
                 version, from, to, pagination);
         return new HistoryPage(values.getContent().stream().map(entry -> new CaseHistoryView(entry.getId(), caseId, entry.getVersion(), entry.getType(),
                 entry.getFromStage(), entry.getToStage(), entry.getFromResponsibleId(), entry.getFromResponsible(),
@@ -209,6 +219,14 @@ public class CaseService {
                 entry.getFromSource(), entry.getToSource(), entry.getFromSummary(), entry.getToSummary())).toList(),
                 values.getTotalElements(), values.getTotalPages(), values.getNumber(), values.getSize());
     }
+
+    @Transactional(readOnly = true)
+    public List<HistoryAuthor> historyAuthors(Long caseId) {
+        requireCase(caseId);
+        return history.authors(caseId).stream().map(author -> new HistoryAuthor(author.getId(), author.getName())).toList();
+    }
+
+    public record HistoryAuthor(Long id, String name) {}
 
     private static String historyLabel(CaseStage stage, String snapshot) {
         return snapshot == null ? CaseStageCatalogue.originalLabel(stage) : snapshot;
@@ -227,6 +245,12 @@ public class CaseService {
             throw new AccessDeniedException("Acesso negado.");
         }
         return user;
+    }
+
+    private static void requireActiveStudent(Student student) {
+        if (!student.acceptsNewOperations())
+            throw new ApiOperationException(HttpStatus.CONFLICT, "CASE_STUDENT_INACTIVE",
+                    "A situação acadêmica do estudante não permite abrir ou reabrir um caso.");
     }
 
     private void requireCampusAccess(Long studentId) {
@@ -257,7 +281,9 @@ public class CaseService {
 
     private CaseView view(NapneCase value, CaseStageCatalogue catalogue) {
         var stage = value.getStage();
-        var options = catalogue.nextOptions(stage);
+        var options = catalogue.nextOptions(stage).stream()
+                .filter(option -> stage.isActive() || !option.code().isActive() || value.getStudent().acceptsNewOperations())
+                .toList();
         return new CaseView(value.getId(), value.getStudent().getId(), stage, value.getSource(), value.getOpenedAt(),
                 value.getClosedAt(), value.getResponsible().getId(), value.getResponsible().getName(), value.getSummary(), value.getVersion(),
                 options.stream().map(CaseStageCatalogue.Option::code).toList(), catalogue.label(stage), options);

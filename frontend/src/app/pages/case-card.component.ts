@@ -4,12 +4,15 @@ import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Observable } from 'rxjs';
 import { ApiService } from '../core/api.service';
+import { createFilterOptions } from '../core/filter-options';
 import { reconcileRequiredSelection } from '../core/required-selection';
 import { trackFormChanges } from '../core/form-changes';
 import { CaseHistoryView, CaseResponsibleCandidate, NapneCase, Page } from '../core/models';
 import { errorMessage, labelFor, toneFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
+import { AppliedFiltersComponent, appliedFilterItems } from '../shared/applied-filters.component';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
+import { FilterDisclosureComponent } from '../shared/filter-disclosure.component';
 import { ModalShellComponent } from '../shared/modal-shell.component';
 import { PaginationComponent } from '../shared/pagination.component';
 import { SearchableSelectComponent } from '../shared/searchable-select.component';
@@ -20,7 +23,7 @@ function availableStages(item: NapneCase) {
 
 @Component({
   selector: 'app-case-card',
-  imports: [DatePipe, ReactiveFormsModule, ConfirmDialogComponent, ModalShellComponent, PaginationComponent, SearchableSelectComponent],
+  imports: [DatePipe, ReactiveFormsModule, AppliedFiltersComponent, ConfirmDialogComponent, FilterDisclosureComponent, ModalShellComponent, PaginationComponent, SearchableSelectComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <article class="case-card" [attr.aria-labelledby]="'case-' + item().id">
@@ -66,6 +69,7 @@ function availableStages(item: NapneCase) {
           <button type="button" class="secondary" [disabled]="changesBlocked()"
             (click)="openTransfer()">Transferir responsabilidade</button>
         }
+        <button type="button" class="secondary" [disabled]="busy()" (click)="studyRequested.emit(item().id)">Ver registros do estudo</button>
         <button type="button" class="secondary" [disabled]="busy()" (click)="recordsRequested.emit(item().id)">Ver acompanhamentos</button>
         <button type="button" class="secondary" [disabled]="busy()" (click)="toggleHistory()">
           Consultar histórico
@@ -147,7 +151,8 @@ function availableStages(item: NapneCase) {
     <app-modal-shell [open]="historyOpen()" title="Histórico do caso" (closed)="toggleHistory()">
       <div class="case-panel">
         @if (historyOpen()) {
-          <form class="server-list-toolbar" [formGroup]="historyForm" (ngSubmit)="filterHistory()">
+          <form #historyToolbar tabindex="-1" class="server-list-toolbar filter-toolbar"
+            [formGroup]="historyForm" (ngSubmit)="filterHistory()">
             <label>Tipo de evento
               <select formControlName="type" (change)="filterHistory()" [attr.disabled]="busy() ? '' : null">
                 <option value="">Todos os eventos</option>
@@ -157,16 +162,29 @@ function availableStages(item: NapneCase) {
                 <option value="DETAILS_UPDATED">{{historyLabels.DETAILS_UPDATED}}</option>
               </select>
             </label>
-            <label>Autoria <input formControlName="actor" placeholder="Nome registrado"></label>
-            <label>Versão <input type="number" min="1" formControlName="version"></label>
-            <label>A partir de <input type="date" formControlName="from"></label>
-            <label>Até <input type="date" formControlName="to"></label>
-            <button type="submit" class="secondary compact" [disabled]="busy() || historyForm.invalid">Filtrar histórico</button>
+            <app-filter-disclosure [count]="historyFilters().length" (expandedChange)="loadHistoryAuthors($event)">
+              <div class="toolbar-grid">
+                <app-searchable-select label="Autoria" formControlName="actorId" [options]="historyAuthorOptions()"
+                  [readonly]="historyAuthors.loading() || !!historyAuthors.error()" selectionPlaceholder="Todos"
+                  placeholder="Buscar nome registrado" />
+                <label>Versão <input type="number" min="1" formControlName="version"></label>
+                <label>A partir de <input type="date" formControlName="from"></label>
+                <label>Até <input type="date" formControlName="to"></label>
+              </div>
+              @if (historyAuthors.loading()) { <p class="meta" role="status">Carregando autores…</p> }
+              @if (historyAuthors.error(); as error) { <p class="error" role="alert">{{error}}</p> }
+              <div class="toolbar-actions">
+                <button type="submit" class="toolbar-button" [disabled]="busy() || historyForm.invalid">Aplicar filtros</button>
+              </div>
+            </app-filter-disclosure>
             @if (historyFiltered()) {
-              <button type="button" class="secondary compact" [disabled]="busy()" (click)="clearHistoryFilters()">Limpar filtros</button>
+              <button type="button" class="toolbar-aux" [disabled]="busy()"
+                (click)="clearHistoryFilters(); historyToolbar.focus()">Limpar filtros</button>
             }
-            @if (history(); as page) {<span class="meta" role="status">{{page.totalElements}} resultado(s)</span>}
           </form>
+          <app-applied-filters [filters]="historyFilters()" [fallbackFocus]="historyToolbar"
+            (removed)="removeHistoryFilter($event)" />
+          @if (history(); as page) {<p class="toolbar-results" role="status">{{page.totalElements}} resultado(s)</p>}
         }
         @if (pending() === 'history') {
           <p role="status">Carregando histórico…</p>
@@ -236,6 +254,7 @@ function availableStages(item: NapneCase) {
     .case-action { display: grid; align-content: start; gap: .6rem; min-width: 0; }
     .case-panel { grid-column: 1 / -1; min-width: 0; }
     .case-panel h4 { margin: 0 0 .6rem; }
+    .case-panel .toolbar-results, .case-panel .error { margin-top: var(--space-3); }
     fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
     .case-buttons { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
     .revisions { margin: .75rem 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
@@ -254,8 +273,10 @@ export class CaseCardComponent {
   private readonly toast = inject(ToastService);
 
   readonly item = input.required<NapneCase>();
+  readonly allowsReopening = input(true);
   readonly caseUpdated = output<{value: NapneCase; mutated: boolean}>();
   readonly recordsRequested = output<number>();
+  readonly studyRequested = output<number>();
 
   readonly label = labelFor;
   readonly tone = toneFor;
@@ -275,7 +296,12 @@ export class CaseCardComponent {
   readonly confirmStageOpen = signal(false);
   private readonly nextStage = signal('');
   readonly currentStageLabel = computed(() => this.item().stageLabel ?? labelFor(this.item().stage));
-  readonly stageOptions = computed(() => availableStages(this.item()));
+  readonly stageOptions = computed(() => {
+    const item = this.item();
+    const options = availableStages(item);
+    return item.stage !== 'CLOSED' || this.allowsReopening()
+      ? options : options.filter(stage => stage.code === 'ARCHIVED');
+  });
   private readonly selectedOption = computed(() => this.stageOptions().find(stage => stage.code === this.nextStage()));
   readonly selectedStage = computed(() => this.selectedOption()?.code ?? '');
   readonly reopening = computed(() => this.item().stage === 'CLOSED' && this.selectedStage() === 'SCREENING');
@@ -341,15 +367,37 @@ export class CaseCardComponent {
 
   readonly historyOpen = signal(false);
   readonly history = signal<Page<CaseHistoryView> | null>(null);
+  protected readonly historyAuthors = createFilterOptions<{ id: number; name: string }[]>([]);
+  protected readonly historyAuthorOptions = computed(() => {
+    const authors = this.historyAuthors.value();
+    const counts = new Map<string, number>();
+    for (const author of authors) {
+      const name = author.name.toLocaleLowerCase('pt-BR');
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return authors.map(author => ({
+      id: String(author.id), label: author.name,
+      detail: (counts.get(author.name.toLocaleLowerCase('pt-BR')) ?? 0) > 1 ? `Conta #${author.id}` : undefined,
+    }));
+  });
   readonly historyForm = inject(FormBuilder).group({
     type: new FormControl('', { nonNullable: true }),
-    actor: new FormControl('', { nonNullable: true }),
+    actorId: new FormControl('', { nonNullable: true }),
     version: new FormControl<number | null>(null, [Validators.min(1), Validators.pattern(/^\d+$/)]),
     from: new FormControl('', { nonNullable: true }),
     to: new FormControl('', { nonNullable: true }),
   });
   private readonly historyCriteria = signal(this.historyForm.getRawValue());
-  readonly historyFiltered = computed(() => Object.values(this.historyCriteria()).some(Boolean));
+  protected readonly historyFilters = computed(() => {
+    const criteria = this.historyCriteria();
+    return appliedFilterItems({ ...criteria, version: criteria.version?.toString() }, {
+      type: 'Tipo de evento', actorId: 'Autoria', version: 'Versão', from: 'A partir de', to: 'Até',
+    }, {
+      type: value => this.historyLabels[value as CaseHistoryView['type']],
+      actorId: id => this.historyAuthorOptions().find(author => author.id === id)?.label ?? id,
+    });
+  });
+  readonly historyFiltered = computed(() => this.historyFilters().length > 0);
   readonly requestedPage = signal(0);
   readonly historyError = signal('');
 
@@ -448,6 +496,12 @@ export class CaseCardComponent {
     if (this.busy()) return;
     this.historyOpen.update(open => !open);
     if (this.historyOpen()) this.loadHistory(0);
+    else this.historyAuthors.cancel();
+  }
+
+  protected loadHistoryAuthors(open: boolean): void {
+    if (open) this.historyAuthors.load(this.api.caseHistoryAuthors(this.item().id));
+    else this.historyAuthors.cancel();
   }
 
   filterHistory(): void {
@@ -457,7 +511,7 @@ export class CaseCardComponent {
       this.historyError.set('A data final deve ser igual ou posterior à data inicial.');
       return;
     }
-    this.historyCriteria.set({ ...filter, actor: filter.actor.trim() });
+    this.historyCriteria.set(filter);
     this.history.set(null);
     this.loadHistory(0);
   }
@@ -467,14 +521,23 @@ export class CaseCardComponent {
     this.filterHistory();
   }
 
+  protected removeHistoryFilter(key: string): void {
+    const control = this.historyForm.get(key);
+    if (!control || this.busy()) return;
+    control.reset();
+    this.historyCriteria.update(criteria => ({ ...criteria, [key]: control.value }));
+    this.history.set(null);
+    this.loadHistory(0);
+  }
+
   loadHistory(page: number) {
     if (this.busy()) return;
     this.pending.set('history');
     this.requestedPage.set(page);
     this.historyError.set('');
-    const { type, actor, version, from, to } = this.historyCriteria();
+    const { type, actorId, version, from, to } = this.historyCriteria();
     this.api.caseHistory(this.item().id, page, type, {
-      actor,
+      actorId,
       version: version ?? undefined,
       from: from ? new Date(from + 'T00:00:00').toISOString() : undefined,
       to: to ? new Date(to + 'T23:59:59.999').toISOString() : undefined,

@@ -337,7 +337,7 @@ describe('Cursos na administração acadêmica', () => {
     fixture.detectChanges();
     const links = requiredScope('.assignments');
     search(links, 'Projeto aplicado');
-    click(links, 'Filtrar vínculos');
+    click(links, 'Aplicar filtros');
     http.expectOne('/api/v1/admin/assignments/page?page=0&size=10&query=Projeto%20aplicado')
       .flush({ content: [assignments[10]], number: 0, size: 10, totalPages: 1, totalElements: 1 });
     fixture.detectChanges();
@@ -352,8 +352,9 @@ describe('Cursos na administração acadêmica', () => {
     fixture.detectChanges();
 
     const section = requiredScope('.assignments');
-    expect(section.querySelector('th')?.textContent).toBe('Matrícula');
-    expect(section.querySelector('td[data-label="Matrícula"]')?.textContent).toBe('M1');
+    expect(section.querySelector('th')?.textContent).toBe('Matrícula do estudante');
+    expect(section.querySelector('th:nth-child(2)')?.textContent).toBe('Profissional vinculado');
+    expect(section.querySelector('td[data-label="Matrícula do estudante"]')?.textContent).toBe('M1');
     expect(section.textContent).not.toContain('Nome protegido');
     click(section, 'Revogar');
     expect(requiredScope('[role="alertdialog"]').textContent).toContain('matrícula M1');
@@ -398,7 +399,7 @@ describe('Cursos na administração acadêmica', () => {
     fixture.detectChanges();
     expect(section.querySelectorAll('tbody tr')).toHaveSize(1);
     fixture.componentInstance.assignmentFilters.patchValue({ active: 'false', registration: 'M11' });
-    click(section, 'Filtrar vínculos');
+    click(section, 'Aplicar filtros');
     const request = http.expectOne(r => r.url === '/api/v1/admin/assignments/page' && r.params.get('active') === 'false');
     expect(request.request.params.get('page')).toBe('0');
     expect(request.request.params.get('registration')).toBe('M11');

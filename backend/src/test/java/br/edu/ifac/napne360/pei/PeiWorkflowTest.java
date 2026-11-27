@@ -80,6 +80,7 @@ class PeiWorkflowTest {
         when(legacy.findByStudentIdAndSubjectIdAndAcademicTermOrderByRevisionDesc(1L, 2L, "2026-2"))
                 .thenReturn(List.of(draft, approved));
         when(legacy.findByStudentIdOrderByUpdatedAtDesc(1L)).thenReturn(List.of(draft, approved));
+        when(access.requireView(1L)).thenReturn(Student.builder().id(1L).build());
         when(access.canViewPei(1L, 2L, "2026-2", null)).thenReturn(true);
         when(access.canTeachPei(1L, 2L, "2026-2", null)).thenReturn(true);
         when(access.canEditDossier(1L)).thenReturn(true);
@@ -105,13 +106,13 @@ class PeiWorkflowTest {
                 .andExpect(jsonPath("$.allowedActions", containsInAnyOrder("EDIT", "SUBMIT")));
         update("draft", "{\"content\":{},\"version\":0}").andExpect(status().isConflict());
         assertThat(approved.getStatus()).isEqualTo(PeiStatus.APPROVED);
-        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any(), any());
         verify(audit, times(1)).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test void editSucceedsAndAuditIsAttemptedWhenTimelineFailsAfterTheRevisionWrite() throws Exception {
         doThrow(new DataAccessResourceFailureException("timeline indisponível")).doNothing()
-                .when(timeline).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+                .when(timeline).appendOnce(any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         update("draft", "{\"content\":{\"notes\":\"Novo\"},\"version\":0}")
                 .andExpect(status().isOk()).andExpect(jsonPath("$.revision").value(8));
@@ -137,7 +138,7 @@ class PeiWorkflowTest {
         var saved = mongo.store.load(1L, 2L, "2026-2");
         assertThat(saved.find("draft").orElseThrow().getStatus()).isEqualTo(PeiStatus.IN_REVIEW);
         assertThat(saved.pendingProjections()).extracting(PeiProjection::key).containsExactly("pei:draft:1");
-        verify(timeline).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(timeline).appendOnce(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test void requestReturnsWhileProjectionIsBlocked() throws Exception {
@@ -147,7 +148,7 @@ class PeiWorkflowTest {
             started.countDown();
             assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
             return null;
-        }).when(timeline).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        }).when(timeline).appendOnce(any(), any(), any(), any(), any(), any(), any(), any(), any());
         try (var worker = Executors.newSingleThreadExecutor()) {
             setUpController(access, worker);
             try {
@@ -174,7 +175,7 @@ class PeiWorkflowTest {
 
         projections.retryPending();
         assertThat(mongo.store.load(1L, 2L, "2026-2").pendingProjections()).isEmpty();
-        verify(timeline).appendOnce(eq("pei:draft:1"), any(), eq("PEI_SUBMITTED"), any(), any(), any(), any(), any());
+        verify(timeline).appendOnce(eq("pei:draft:1"), any(), eq("PEI_SUBMITTED"), any(), any(), any(), any(), any(), any());
         verify(audit).recordPeiMutation(eq("pei:draft:1"), any(), any(), eq("SUBMIT"), eq("draft"), eq(7), any());
     }
 
@@ -200,7 +201,7 @@ class PeiWorkflowTest {
         mvc.perform(get(PATH + "/old")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUPERSEDED"));
         action("draft", "approve", VERSION).andExpect(status().isConflict());
-        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any(), any());
         verify(audit, times(1)).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
     }
 
@@ -347,7 +348,7 @@ class PeiWorkflowTest {
         assertThat(previous.getTeacherId()).isEqualTo(9L);
         assertThat(previous.getContent()).isEqualTo(draft.getContent());
         assertThat(saved.find(id).orElseThrow().getContent()).isEqualTo(draft.getContent());
-        verify(timeline).appendOnce(eq("pei:" + id + ":0"), eq(1L), eq("PEI_TRANSFERRED"), anyString(), anyString(),
+        verify(timeline).appendOnce(eq("pei:" + id + ":0"), eq(1L), eq("PEI_TRANSFERRED"), anyString(), anyString(), any(),
                 eq(TimelineVisibility.RESTRICTED), eq(Map.of("peiId", id, "subjectId", 2L, "revision", 8, "academicTerm", "2026-2")), any());
         verify(audit).recordPeiMutation(eq("pei:" + id + ":0"), any(), any(), eq("TRANSFER"), eq(id), eq(8), any());
 
@@ -498,7 +499,7 @@ class PeiWorkflowTest {
         assertThat(saved.revisions().stream().filter(plan -> plan.getStatus() == PeiStatus.DRAFT))
                 .singleElement().extracting(PeiDocument::getTeacherId).isEqualTo(12L);
         assertThat(saved.current().orElseThrow().getId()).isEqualTo("old");
-        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any(), any());
         verify(audit, times(1)).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
     }
 
@@ -619,7 +620,7 @@ class PeiWorkflowTest {
             assertThat(plan.getStatus()).isEqualTo(PeiStatus.DRAFT);
             assertThat(plan.getRevision()).isEqualTo(1);
         });
-        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any(), any());
         verify(audit, times(1)).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
     }
 
@@ -635,7 +636,7 @@ class PeiWorkflowTest {
         assertThat(saved.revisions()).hasSize(2);
         assertThat(saved.find("old").orElseThrow().getStatus()).isEqualTo(PeiStatus.SUPERSEDED);
         assertThat(saved.current().orElseThrow().getId()).isEqualTo("draft");
-        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(timeline, times(1)).appendOnce(any(), any(), any(), any(), any(), any(), any(), any(), any());
         verify(audit, times(1)).recordPeiMutation(any(), any(), any(), any(), any(), anyInt(), any());
     }
 

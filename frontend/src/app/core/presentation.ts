@@ -8,7 +8,7 @@ const LABELS: Record<string, string> = {
   ACTION_PLAN: 'Plano de ação', PEI: 'PEI', FOLLOW_UP: 'Acompanhamento', CLOSED: 'Encerrado',
   INITIAL_SCREENING: 'Triagem inicial', PEDAGOGICAL_GUIDANCE: 'Orientações pedagógicas',
   TEACHER_FEEDBACK: 'Devolutiva docente', TUTOR_OBSERVATION: 'Observação de tutoria',
-  SUPPORT_REFUSAL: 'Recusa de apoio', SUPPORT_REQUEST: 'Solicitação de apoio',
+  NAPNE_FOLLOW_UP: 'Acompanhamento NAPNE', SUPPORT_REFUSAL: 'Recusa de apoio', SUPPORT_REQUEST: 'Solicitação de apoio',
   CASE: 'Caso', DOSSIER: 'Dossiê', CARE_RECORD: 'Acompanhamento', ATTACHMENT: 'Documento',
   ADMIN: 'Administrador técnico', NAPNE: 'Equipe NAPNE', COTEP: 'COTEP',
   COURSE_COORDINATOR: 'Coordenação de curso', TEACHER: 'Professor', TUTOR: 'Tutor/Monitor',
@@ -22,7 +22,9 @@ const LABELS: Record<string, string> = {
   PEI_CREATED: 'Criação de PEI', PEI_REVISED: 'Revisão de PEI', PEI_SUBMITTED: 'Envio de PEI para revisão',
   PEI_APPROVED: 'Aprovação de PEI', PEI_RETURNED: 'Devolução de PEI para ajustes',
   PEI_ARCHIVED: 'Arquivamento de PEI', PEI_TRANSFERRED: 'Transferência de responsabilidade pelo PEI',
-  STUDENT_CREATED: 'Cadastro de estudante', STUDENT_UPDATED: 'Atualização de estudante'
+  STUDENT_CREATED: 'Cadastro de estudante', STUDENT_UPDATED: 'Atualização de estudante',
+  STUDENT_STATUS_CHANGED: 'Situação acadêmica alterada', STUDENT_ARCHIVED: 'Cadastro do estudante arquivado',
+  STUDENT_UNARCHIVED: 'Cadastro do estudante desarquivado'
 };
 
 export function labelFor(value: string | null | undefined): string {
@@ -69,7 +71,9 @@ const ERROR_MESSAGES: Readonly<Record<string, string>> = {
   ATTACHMENT_VERSION_MISSING: 'A versão anterior do documento não foi encontrada.',
   PEI_DRAFT_EXISTS: 'Já existe um PEI em andamento ou vigente para este componente e período.',
   PEI_SUBJECT_ARCHIVED: 'O componente da oferta está arquivado.',
-  CASE_STUDENT_ARCHIVED: 'Reative o cadastro do estudante antes de abrir um caso.',
+  CASE_STUDENT_ARCHIVED: 'Desarquive o cadastro do estudante antes de abrir um caso.',
+  CASE_STUDENT_INACTIVE: 'A situação acadêmica do estudante não permite abrir ou reabrir um caso.',
+  CARE_RECORD_STUDENT_INACTIVE: 'A situação acadêmica do estudante não permite iniciar ou reabrir acompanhamentos.',
   CASE_STAGE_INVALID: 'A mudança para essa etapa não é permitida no estado atual do caso.',
   CASE_REOPEN_REASON_REQUIRED: 'Informe um motivo de reabertura com até 500 caracteres.',
   CASE_RESPONSIBLE_INELIGIBLE: 'Selecione um profissional ativo da equipe NAPNE do campus do estudante.',

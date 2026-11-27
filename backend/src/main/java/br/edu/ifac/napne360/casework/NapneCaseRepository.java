@@ -15,6 +15,9 @@ public interface NapneCaseRepository extends JpaRepository<NapneCase, Long> {
     boolean existsByStudentCampusIdAndStageNotIn(Long campusId, List<CaseStage> stages);
     Optional<NapneCase> findFirstByStudentIdAndStageNotInOrderByOpenedAtDesc(Long studentId, List<CaseStage> stages);
 
+    @Query("select c.student.id from NapneCase c where c.id = :id")
+    Optional<Long> findStudentId(Long id);
+
     @Lock(LockModeType.PESSIMISTIC_READ)
     @Query("select c from NapneCase c where c.id = :caseId and c.student.id = :studentId")
     Optional<NapneCase> findByIdAndStudentIdForLink(@Param("caseId") Long caseId, @Param("studentId") Long studentId);

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test, type Page, type TestInfo } from '@playwright/test';
+import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { apiJson, caseFixture } from './case-fixtures';
 import { catalogFixture, loginApi, loginUi } from './catalog-fixtures';
 
@@ -8,6 +8,53 @@ async function capture(page: Page, info: TestInfo, name: string) {
   await page.screenshot({ path });
   await info.attach(name, { path, contentType: 'image/png' });
 }
+
+async function choose(picker: Locator, label: string) {
+  await picker.getByRole('button').click();
+  await picker.getByRole('combobox').fill(label);
+  await picker.getByRole('option').filter({ hasText: label }).click();
+}
+
+test('combina componente, período e turma de opções cadastradas em ofertas e matrículas', async ({ page, request }, info) => {
+  const fixture = await catalogFixture(request);
+  const alternative = await fixture.academicForSemester(2);
+  const { academic, subject, course } = fixture;
+  const openFilters = (scope: Locator) => scope.getByRole('button', { name: /^Filtros/ }).click();
+  const selectCriteria = async (scope: Locator) => {
+    await choose(scope.locator('app-searchable-select[formControlName="subjectId"]'), subject.name);
+    await scope.getByRole('combobox', { name: 'Período letivo' }).selectOption(academic.term.code);
+    await choose(scope.locator('app-searchable-select[formControlName="groupCode"]'), academic.offering.groupCode);
+    await scope.getByRole('button', { name: 'Aplicar filtros' }).click();
+    const rows = scope.locator('tbody tr');
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText(academic.offering.groupCode);
+    await expect(rows.first()).not.toContainText(alternative.offering.groupCode);
+  };
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await loginUi(page, 'admin');
+  await page.goto('/administracao');
+  await page.getByRole('button', { name: 'Cursos, componentes e vínculos' }).click();
+  await page.getByRole('button', { name: 'Gerenciar', exact: true }).click();
+  await page.locator('app-admin-academic-offerings').getByRole('button', { name: 'Ofertas curriculares', exact: true }).click();
+  const offerings = page.locator('app-admin-academic-offerings');
+  await openFilters(offerings);
+  await choose(offerings.locator('app-searchable-select[formControlName="courseId"]'), course.name);
+  await selectCriteria(offerings);
+  await offerings.getByRole('button', { name: 'Aplicar filtros' }).scrollIntoViewIfNeeded();
+  await capture(page, info, 'ofertas-desktop-filtros-combinados');
+
+  await loginUi(page, 'napne');
+  await page.goto('/estudantes/' + fixture.student.id);
+  await page.getByRole('button', { name: 'Matrículas', exact: true }).click();
+  const enrollments = page.locator('app-academic-enrollments');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openFilters(enrollments);
+  await selectCriteria(enrollments);
+  await enrollments.getByRole('button', { name: 'Aplicar filtros' }).scrollIntoViewIfNeeded();
+  await capture(page, info, 'matriculas-mobile-filtros-combinados');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
 
 test('modal com 50 componentes edita a ementa e preserva página e filtros', async ({ page, request }, info) => {
   const admin = await loginApi(request, 'admin');
@@ -87,15 +134,15 @@ test('combina filtros do estudante, dos acompanhamentos e da linha do tempo no n
   await capture(page, info, 'estudantes');
   await page.getByRole('link', { name: 'Abrir acompanhamento' }).click();
   for (const [label, heading] of [
-    ['Casos', 'Casos e encaminhamentos'], ['PEI', 'Planos de Ensino Individualizados'], ['Documentos', 'Arquivos disponíveis'],
+    ['Estudo de caso', 'Estudo de caso'], ['PEI', 'Planos de Ensino Individualizados'], ['Documentos', 'Arquivos disponíveis'],
   ]) {
     await page.getByRole('button', { name: label, exact: true }).click();
     await expect(page.getByRole('heading', { name: heading })).toBeVisible();
     await page.locator('app-list-filters:visible').first().scrollIntoViewIfNeeded();
     await capture(page, info, label.toLowerCase());
   }
-  await page.getByRole('button', { name: 'Acompanhamento', exact: true }).click();
-  const records = page.getByRole('region', { name: 'Registros de acompanhamento' });
+  await page.getByRole('button', { name: 'Estudo de caso', exact: true }).click();
+  const records = page.getByRole('region', { name: 'Registros do estudo de caso' });
   await expect(records.getByText('12 resultados', { exact: true })).toBeVisible();
   await records.getByRole('button', { name: 'Filtros', exact: true }).click();
   await records.getByLabel('Tipo de registro').selectOption('PEDAGOGICAL_GUIDANCE');
@@ -106,12 +153,17 @@ test('combina filtros do estudante, dos acompanhamentos e da linha do tempo no n
 
   await page.getByRole('button', { name: 'Linha do tempo', exact: true }).click();
   await page.getByRole('combobox', { name: 'Tipo de evento', exact: true }).selectOption('CARE_RECORD');
-  await page.getByLabel('Profissional', { exact: true }).fill(napne.name);
-  await page.getByRole('button', { name: 'Filtrar eventos' }).click();
+  const timeline = page.locator('ol.timeline');
+  const timelineSection = page.locator('section.card').filter({ has: page.getByLabel('Tipo de evento', { exact: true }) });
+  await timelineSection.getByRole('button', { name: /^Filtros/ }).click();
+  const author = timelineSection.locator('app-searchable-select[formControlName="actor"]');
+  await author.getByRole('button').click();
+  await author.getByRole('option', { name: napne.name, exact: true }).click();
+  await timelineSection.getByRole('button', { name: 'Aplicar filtros' }).click();
   await expect(page.getByText('12 resultado(s)', { exact: true })).toBeVisible();
-  await expect(page.locator('ol.timeline li')).toHaveCount(10);
+  await expect(timeline.locator('li')).toHaveCount(10);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: 'Filtrar eventos' }).scrollIntoViewIfNeeded();
+  await timelineSection.getByRole('button', { name: 'Aplicar filtros' }).scrollIntoViewIfNeeded();
   await expect.poll(() => page.locator('.sidebar').evaluate(node => node.getBoundingClientRect().right)).toBeLessThanOrEqual(0);
   await capture(page, info, 'linha-do-tempo-mobile');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
@@ -174,7 +226,6 @@ test('seletores de vínculo e atribuição distinguem homônimos com mais de 100
   const offers = page.locator('app-admin-academic-offerings');
   const group = fixture.academic.offering.groupCode;
   await offers.getByRole('searchbox').fill(group);
-  await offers.getByRole('button', { name: 'Buscar', exact: true }).click();
   await offers.getByRole('row').filter({ hasText: group }).getByRole('button', { name: 'Atribuir professor' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: /^Professor/ }).click();
@@ -244,19 +295,19 @@ test('filtra atribuições encerradas por professor inativo', async ({ page, req
   await page.getByRole('button', { name: 'Gerenciar', exact: true }).click();
   await page.getByRole('button', { name: 'Atribuições docentes', exact: true }).click();
   const section = page.locator('app-admin-academic-offerings');
-  await section.getByText('Filtros', { exact: true }).click();
+  await section.getByRole('button', { name: 'Filtros', exact: true }).click();
   const picker = section.locator('app-searchable-select[formControlName="teacherId"]');
   await picker.getByRole('button').click();
   await picker.getByRole('combobox').fill(teacher.name);
   await picker.getByRole('option', { name: new RegExp(teacher.name) }).click();
   await expect(picker.getByRole('button', { name: /^Professor / })).toContainText(teacher.name);
   await section.getByRole('combobox', { name: 'Situação', exact: true }).selectOption('false');
-  await section.getByRole('button', { name: 'Buscar', exact: true }).click();
+  await section.getByRole('button', { name: 'Aplicar filtros', exact: true }).click();
   const records = section.locator('tbody tr');
   await expect(records).toHaveCount(1);
   await expect(records.first()).toContainText(teacher.name);
   await expect(records.first()).toContainText('Encerrada');
-  await section.getByText(/^Filtros/).click();
+  await section.getByRole('button', { name: /^Filtros/ }).click();
   const removeStatus = section.getByRole('button', { name: 'Remover filtro Situação: Encerrada' });
   await expect(removeStatus).toBeVisible();
   const updated = page.waitForResponse(response => {

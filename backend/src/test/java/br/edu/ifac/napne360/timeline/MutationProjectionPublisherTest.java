@@ -24,7 +24,7 @@ class MutationProjectionPublisherTest {
         publisher.publish(event);
 
         verify(timeline).appendOnce(event.key(), event.studentId(), event.eventType(), event.title(),
-                event.actorName(), event.visibility(), event.data(), event.occurredAt());
+                event.actorName(), event.actorId(), event.visibility(), event.data(), event.occurredAt());
         verify(audit).recordProjection(event.key(), event.actorId(), event.ipAddress(), event.action(),
                 event.resourceType(), event.resourceId(), event.details(), event.occurredAt());
     }
@@ -36,6 +36,6 @@ class MutationProjectionPublisherTest {
 
         assertThatThrownBy(() -> publisher.publish(event)).isInstanceOf(DataAccessResourceFailureException.class);
         verify(timeline).appendOnce(event.key(), event.studentId(), event.eventType(), event.title(),
-                event.actorName(), event.visibility(), event.data(), event.occurredAt());
+                event.actorName(), event.actorId(), event.visibility(), event.data(), event.occurredAt());
     }
 }

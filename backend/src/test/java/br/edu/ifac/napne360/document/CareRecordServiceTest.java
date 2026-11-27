@@ -14,6 +14,7 @@ import br.edu.ifac.napne360.identity.UserEmailHistoryService;
 import br.edu.ifac.napne360.security.AccessGuard;
 import br.edu.ifac.napne360.security.CurrentUserService;
 import br.edu.ifac.napne360.student.Student;
+import br.edu.ifac.napne360.student.StudentRepository;
 import br.edu.ifac.napne360.timeline.MutationProjection;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -67,6 +68,7 @@ class CareRecordServiceTest {
     @Mock PlatformTransactionManager transactionManager;
     @Mock UserEmailHistoryService emailHistory;
     @Mock UserAccountRepository users;
+    @Mock StudentRepository students;
     private final ObjectMapper json = Jackson2ObjectMapperBuilder.json().build();
     private CareRecordService service;
     private MockMvc mvc;
@@ -77,7 +79,8 @@ class CareRecordServiceTest {
     void setUp() {
         lenient().when(transactionManager.getTransaction(any())).thenAnswer(call -> new SimpleTransactionStatus());
         service = new CareRecordService(records, currentUser, projections, access, cases,
-                templates, subjects, new TransactionTemplate(transactionManager), emailHistory, users);
+                templates, subjects, new TransactionTemplate(transactionManager), emailHistory, users, students);
+        lenient().when(students.findByIdForUpdate(1L)).thenReturn(Optional.of(Student.builder().id(1L).build()));
         mvc = MockMvcBuilders.standaloneSetup(new CareRecordController(service, access))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(json)).build();

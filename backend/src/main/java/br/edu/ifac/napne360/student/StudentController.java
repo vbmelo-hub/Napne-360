@@ -23,8 +23,9 @@ public class StudentController {
                                                     @RequestParam(defaultValue = "") String academicQuery,
                                                     @RequestParam(defaultValue = "false") boolean archived,
                                                     @RequestParam(required = false) Long courseId,
-                                                    @RequestParam(required = false) StudentStatus status, Pageable pageable) {
-        return service.list(query, academicQuery, archived, courseId, status, pageable);
+                                                    @RequestParam(required = false) StudentStatus status,
+                                                    @RequestParam(required = false) StudentStatusReason reason, Pageable pageable) {
+        return service.list(query, academicQuery, archived, courseId, status, reason, pageable);
     }
 
     @GetMapping("/filter-courses")
@@ -50,15 +51,31 @@ public class StudentController {
         return service.update(access.requireView(id), request, auth, http);
     }
 
+    @GetMapping("/{id}/status/restrictions")
+    @PreAuthorize("@accessGuard.canEditDossier(#id)")
+    public java.util.List<StudentService.StatusRestriction> statusRestrictions(@PathVariable Long id) {
+        return service.statusRestrictions(id);
+    }
+
+    @PatchMapping("/{id}/status")
+    @PreAuthorize("@accessGuard.canEditDossier(#id)")
+    public StudentService.StudentDetails changeStatus(@PathVariable Long id,
+                                                      @Valid @RequestBody StudentService.StatusRequest request,
+                                                      HttpServletRequest http) {
+        return service.changeStatus(id, request, http);
+    }
+
     @PatchMapping("/{id}/reactivate")
     @PreAuthorize("@accessGuard.canEditDossier(#id)")
-    public StudentService.StudentDetails reactivate(@PathVariable Long id, Authentication auth, HttpServletRequest http) {
-        return service.reactivate(access.requireView(id), auth, http);
+    public StudentService.StudentDetails reactivate(@PathVariable Long id,
+                                                    @Valid @RequestBody(required = false) StudentService.RestoreRequest request,
+                                                    HttpServletRequest http) {
+        return service.reactivate(access.requireView(id), request, http);
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("@accessGuard.canEditDossier(#id)")
-    public void archive(@PathVariable Long id, Authentication auth, HttpServletRequest http) {
-        service.archive(access.requireView(id), auth, http);
+    public void archive(@PathVariable Long id, HttpServletRequest http) {
+        service.archive(access.requireView(id), http);
     }
 }

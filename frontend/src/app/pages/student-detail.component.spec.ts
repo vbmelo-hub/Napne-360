@@ -98,7 +98,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
 
     const apiSpy = jasmine.createSpyObj<ApiService>('ApiService', [
       'student', 'dossier', 'cases', 'records', 'peis', 'timeline',
-      'attachments', 'studentSubjects', 'studentTeachers', 'courses',
+      'attachments', 'studentSubjects', 'studentCaseStages', 'studentTeachers', 'courses',
       'createRecord', 'updateRecord', 'references', 'uploadAttachment'
     ]);
     const toastSpy = jasmine.createSpyObj<ToastService>('ToastService', ['show']);
@@ -111,6 +111,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     apiSpy.peis.and.returnValue(of([]));
     apiSpy.timeline.and.returnValue(of({ content: [], totalElements: 0, totalPages: 0, number: 0, size: 10 }));
     apiSpy.attachments.and.returnValue(of([]));
+    apiSpy.studentCaseStages.and.returnValue(of([]));
     apiSpy.studentSubjects.and.returnValue(of([{ id: 100, name: 'Matemática', code: 'MAT', workloadHours: 60, courseId: 10 }]));
     apiSpy.studentTeachers.and.returnValue(of([]));
     apiSpy.courses.and.returnValue(of([]));
@@ -227,6 +228,14 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     };
   }
 
+  function openRecordSection(label = 'Estudo de caso'): void {
+    const navigation = fixture.nativeElement.querySelector('.student-tabs') as HTMLElement;
+    const link = Array.from(navigation.querySelectorAll('button')).find(button => button.textContent?.trim() === label);
+    expect(link).toBeDefined();
+    link?.click();
+    fixture.detectChanges();
+  }
+
   function caseSelect(): HTMLSelectElement | null {
     return fixture.nativeElement.querySelector('select[formControlName="caseId"]');
   }
@@ -237,8 +246,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
       id: `registro-${index}`,
       title: index ? `Registro ${index}` : 'Orientação individual'
     })));
-    component.tab.set('records');
-    fixture.detectChanges();
+    openRecordSection();
     const root: HTMLElement = fixture.nativeElement;
 
     expect(root.querySelectorAll('.record-card').length).toBe(10);
@@ -272,7 +280,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     expect(timelineTab).toBeDefined();
     timelineTab?.click();
     fixture.detectChanges();
-    expect(apiService.timeline).toHaveBeenCalledOnceWith(1, '', 0, { actor: '', from: undefined, to: undefined });
+    expect(apiService.timeline).toHaveBeenCalledOnceWith(1, '', 0, { actorKey: '', from: undefined, to: undefined });
     expect(fixture.nativeElement.querySelector('.timeline')?.textContent).toContain('Nova versão do PEI');
   });
 
@@ -280,8 +288,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
     const active = careCase(50);
     const custom = careCase(51, { source: 'Solicitação do estudante', stage: 'CUSTOM_123', stageLabel: 'Visita inicial' });
     component.cases.set([active]);
-    component.tab.set('records');
-    fixture.detectChanges();
+    openRecordSection();
 
     const select = caseSelect();
     expect(select).not.toBeNull();
@@ -322,14 +329,14 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
 
     component.cancelRecordEdit();
     setSessionUser({ token: 'jwt-docente', id: 7, name: 'Docente', email: 'docente@example.test', campusId: 1, roles: ['TEACHER'] });
+    openRecordSection('Orientações e plano de ação');
     expect(caseSelect()).toBeNull();
     expect(fixture.nativeElement.querySelector('[data-record-id="rec-1"]').textContent).not.toContain('Caso #50');
   });
 
   it('atualiza as opções ao recusar um caso encerrado durante o preenchimento e mantém o texto', () => {
     component.cases.set([careCase(50)]);
-    component.tab.set('records');
-    fixture.detectChanges();
+    openRecordSection();
 
     const select = caseSelect();
     expect(select).not.toBeNull();
@@ -565,8 +572,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
   });
 
   it('F2: histórico de versões renderiza campos estruturados anteriores além de notas', () => {
-    component.tab.set('records');
-    fixture.detectChanges();
+    openRecordSection();
 
     const compiled = fixture.nativeElement as HTMLElement;
     const historySummary = compiled.querySelector('.record-history summary');
@@ -585,8 +591,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
   });
 
   it('F3: impede troca de edição durante envio pendente e protege formulário contra respostas atrasadas', fakeAsync(() => {
-    component.tab.set('records');
-    fixture.detectChanges();
+    openRecordSection();
 
     const compiled = fixture.nativeElement as HTMLElement;
     const updateSubject = new Subject<CareRecord>();
@@ -641,8 +646,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
   }));
 
   it('F3: no erro da requisição pendente, reabilita fieldset e controles preservando dados digitados', fakeAsync(() => {
-    component.tab.set('records');
-    fixture.detectChanges();
+    openRecordSection();
 
     const compiled = fixture.nativeElement as HTMLElement;
     const updateSubject = new Subject<CareRecord>();
@@ -676,8 +680,7 @@ describe('StudentDetailComponent - Acompanhamentos (Tarefa 2)', () => {
   }));
 
   it('F4: jornada completa no DOM (criar rascunho -> recarregar -> editar -> finalizar) com controles reais', () => {
-    component.tab.set('records');
-    fixture.detectChanges();
+    openRecordSection();
 
     const compiled = fixture.nativeElement as HTMLElement;
 

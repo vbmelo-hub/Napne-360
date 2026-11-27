@@ -1,14 +1,17 @@
 import { AppliedFiltersComponent, appliedFilterItems, type AppliedFilter } from '../shared/applied-filters.component';
-import { Component, DestroyRef, OnInit, computed, inject, input, output, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Observable, Subscription } from 'rxjs';
-import { AcademicApi, AcademicListFilters, AcademicOffering, AcademicPeriod, TeachingAssignment } from '../core/academic-api.service';
+import { Observable, Subscription, debounceTime, distinctUntilChanged, map } from 'rxjs';
+import { AcademicApi, AcademicFilterOptions, AcademicListFilters, AcademicOffering, AcademicPeriod, TeachingAssignment } from '../core/academic-api.service';
+import { createFilterOptions } from '../core/filter-options';
+import { sameFormValue } from '../core/form-changes';
 import { AdminCourse, AdminSubject, Page } from '../core/models';
 import { createProfessionalCandidates } from '../core/professional-search';
 import { errorMessage } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
+import { FilterDisclosureComponent } from '../shared/filter-disclosure.component';
 import { ModalShellComponent } from '../shared/modal-shell.component';
 import { PaginationComponent } from '../shared/pagination.component';
 import { SearchableSelectComponent } from '../shared/searchable-select.component';
@@ -21,7 +24,7 @@ type StatusAction =
 
 @Component({
   selector: 'app-admin-academic-offerings',
-  imports: [AppliedFiltersComponent, ReactiveFormsModule, ConfirmDialogComponent, ModalShellComponent, PaginationComponent, SearchableSelectComponent],
+  imports: [AppliedFiltersComponent, ReactiveFormsModule, ConfirmDialogComponent, FilterDisclosureComponent, ModalShellComponent, PaginationComponent, SearchableSelectComponent],
   template: `
     <div class="stack academic-panel">
       <div class="row" aria-label="Seções acadêmicas">
@@ -39,37 +42,46 @@ type StatusAction =
           <button type="button" (click)="openOffering()">Nova oferta curricular</button>
         }
       </div>
-      <form class="server-list-toolbar" (submit)="$event.preventDefault(); applyFilters()">
+      <form class="server-list-toolbar filter-toolbar" (submit)="$event.preventDefault(); applyFilters()">
         <label class="toolbar-search">Buscar {{title().toLocaleLowerCase('pt-BR')}}
-          <input #filterSearch type="search" [formControl]="search">
+          <input #filterSearch type="search" [formControl]="search" (keydown.enter)="$event.preventDefault()"
+            placeholder="Nome ou código">
         </label>
         @if (section() !== 'periods') {
-          <details>
-            <summary>Filtros{{filteredCount() ? ' (' + filteredCount() + ')' : ''}}</summary>
-            <div class="server-list-toolbar" [formGroup]="filters">
+          <app-filter-disclosure [count]="filteredCount()" (expandedChange)="filterOptionsOpen.set($event)">
+            <div class="toolbar-grid" [formGroup]="filters">
               <app-searchable-select label="Curso" formControlName="courseId" [options]="courseFilterOptions()"
                 selectionPlaceholder="Todos" placeholder="Nome, código ou campus" />
               <app-searchable-select label="Componente" formControlName="subjectId" [options]="subjectFilterOptions()"
                 selectionPlaceholder="Todos" placeholder="Nome ou código" />
               <app-searchable-select #teacherFilter label="Professor" formControlName="teacherId" [remote]="filterTeacherLookup"
                 selectionPlaceholder="Todos" placeholder="Nome, matrícula ou CPF" />
-              <label>Turma <input formControlName="groupCode" placeholder="Código da turma"></label>
-              <label>Período letivo <input formControlName="periodCode" placeholder="Ex.: 2026.2"></label>
+              <label>Período letivo <select formControlName="periodCode" [attr.disabled]="filterOptions.loading() ? '' : null">
+                <option value="">Todos</option>
+                @for (code of filterOptions.value().periodCodes; track code) { <option [value]="code">{{code}}</option> }
+              </select></label>
+              <app-searchable-select label="Turma" formControlName="groupCode" [options]="groupFilterOptions()"
+                [readonly]="filterOptions.loading() || !!filterOptions.error()"
+                selectionPlaceholder="Todas" placeholder="Buscar código da turma" />
               <label>Situação<select formControlName="active"><option value="">Todas</option><option value="true">Ativa</option>
                 <option value="false">{{section() === 'teaching' ? 'Encerrada' : 'Arquivada'}}</option>
               </select></label>
             </div>
-          </details>
+            @if (filterOptions.loading()) { <p class="meta" role="status">Carregando períodos e turmas…</p> }
+            @if (filterOptions.error(); as error) { <p class="error" role="alert">{{error}}</p> }
+            <div class="toolbar-actions"><button class="toolbar-button" type="submit">Aplicar filtros</button></div>
+          </app-filter-disclosure>
         }
-        <button class="secondary compact" type="submit">Buscar</button>
-        @if (filteredCount() || appliedQuery) {
-          <button class="secondary compact" type="button" (click)="clearFilters()">Limpar filtros</button>
-        }
-        @if (result() && !loading() && !loadError()) {
-          <span class="meta" role="status">{{result()?.totalElements}} resultado(s)</span>
+        @if (filteredCount() || appliedQuery()) {
+          <button class="toolbar-aux" type="button" (click)="clearFilters(); filterSearch.focus()">Limpar filtros</button>
         }
       </form>
-      <app-applied-filters [fallbackFocus]="filterSearch" [filters]="appliedItems()" (removed)="removeFilter($event)" />
+      @if (appliedItems().length) {
+        <app-applied-filters [fallbackFocus]="filterSearch" [filters]="appliedItems()" (removed)="removeFilter($event)" />
+      }
+      @if (result() && !loading() && !loadError()) {
+        <p class="toolbar-results" role="status">{{result()?.totalElements}} resultado(s)</p>
+      }
       @if (loadError()) {<p class="error" role="alert">{{loadError()}}</p>}
       @if (loading()) {<p role="status">Carregando…</p>}
       @else if (!result()?.content?.length && !loadError()) {<p class="meta">Nenhum registro encontrado.</p>}
@@ -212,14 +224,23 @@ export class AdminAcademicOfferingsComponent implements OnInit {
   });
   readonly search = this.fb.nonNullable.control('');
   readonly filters = this.fb.nonNullable.group({courseId: '', subjectId: '', teacherId: '', groupCode: '', periodCode: '', active: ''});
+  protected readonly filterOptionsOpen = signal(false);
+  protected readonly filterOptions = createFilterOptions<AcademicFilterOptions>({ subjects: [], groupCodes: [], periodCodes: [] });
+  private readonly filterScope = toSignal(this.filters.valueChanges.pipe(
+    map(() => this.currentFilterScope()),
+    distinctUntilChanged((previous, current) => sameFormValue(previous, current)),
+  ), { initialValue: this.currentFilterScope() });
+  protected readonly groupFilterOptions = computed(() => this.filterOptions.value().groupCodes
+    .map(code => ({ id: code, label: code })));
   protected readonly appliedItems = signal<AppliedFilter[]>([]);
   readonly filteredCount = computed(() => this.appliedItems().length);
   protected readonly courseFilterOptions = computed(() => (this.allCourses() ?? this.courses())
     .map(course => ({ id: String(course.id), label: course.name, detail: `${course.code} · ${course.campus}` })));
   protected readonly subjectFilterOptions = computed(() => this.subjects()
+    .filter(subject => !this.filterScope().courseId || String(subject.courseId) === this.filterScope().courseId)
     .map(subject => ({ id: String(subject.id), label: subject.name, detail: subject.code })));
   readonly allCourses = input<readonly AdminCourse[]>();
-  protected appliedQuery = '';
+  protected readonly appliedQuery = signal('');
   private appliedFilters: AcademicListFilters = {};
   readonly loading = signal(false);
   readonly busy = signal(false);
@@ -272,21 +293,55 @@ export class AdminAcademicOfferingsComponent implements OnInit {
       ? 'A atribuição ficará no histórico. Os vínculos docentes sem outra relação válida serão revogados.'
       : 'O registro ficará disponível no histórico e sairá das novas seleções. Encerre as dependências ativas antes de arquivar.';
   });
-  private request = 0;
+  private listRequest?: Subscription;
   private periodsRequest?: Subscription;
 
+  constructor() {
+    effect(() => {
+      const section = this.section();
+      if (!this.filterOptionsOpen() || section === 'periods') {
+        this.filterOptions.cancel();
+        return;
+      }
+      this.filterOptions.load(this.api.offeringFilters(section, this.filterScope()));
+    });
+  }
+
   ngOnInit() {
+    this.search.valueChanges.pipe(debounceTime(250), takeUntilDestroyed(this.destroyRef)).subscribe(value => {
+      const query = value.trim();
+      if (this.appliedQuery() === query) return;
+      this.appliedQuery.set(query);
+      this.load(0);
+    });
+    const { courseId, subjectId, periodCode, groupCode } = this.filters.controls;
+    courseId.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(value => {
+      if (!value) return;
+      if (subjectId.value && !this.subjects().some(subject => String(subject.id) === subjectId.value
+          && String(subject.courseId) === value)) subjectId.reset();
+      periodCode.reset();
+      groupCode.reset();
+    });
+    subjectId.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(value => {
+      if (!value) return;
+      periodCode.reset();
+      groupCode.reset();
+    });
+    periodCode.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(value => {
+      if (value) groupCode.reset();
+    });
     this.load(0);
   }
 
   selectSection(section: Section) {
     if (section === this.section()) return;
     this.section.set(section);
+    if (section === 'periods') this.filterOptionsOpen.set(false);
     this.clearFilters();
   }
 
   applyFilters(): void {
-    this.appliedQuery = this.search.value.trim();
+    this.appliedQuery.set(this.search.value.trim());
     this.appliedFilters = this.section() !== 'periods' ? this.filters.getRawValue() : {};
     this.appliedItems.set(appliedFilterItems({ ...this.appliedFilters }, {
       courseId: 'Curso', subjectId: 'Componente', teacherId: 'Professor', groupCode: 'Turma',
@@ -316,17 +371,21 @@ export class AdminAcademicOfferingsComponent implements OnInit {
   }
 
   load(page: number) {
-    const request = ++this.request;
     this.loadError.set('');
     this.loading.set(true);
-    const query = this.appliedQuery;
+    const query = this.appliedQuery();
     if (this.section() === 'periods') {
-      this.loadPage(this.api.periods(page, query), this.periods.set, request);
+      this.loadPage(this.api.periods(page, query), this.periods.set);
     } else if (this.section() === 'offerings') {
-      this.loadPage(this.api.offerings(page, query, false, this.appliedFilters), this.offerings.set, request);
+      this.loadPage(this.api.offerings(page, query, false, this.appliedFilters), this.offerings.set);
     } else {
-      this.loadPage(this.api.teaching(page, query, this.appliedFilters), this.teaching.set, request);
+      this.loadPage(this.api.teaching(page, query, this.appliedFilters), this.teaching.set);
     }
+  }
+
+  private currentFilterScope() {
+    const { courseId, subjectId, periodCode } = this.filters.getRawValue();
+    return { courseId, subjectId, periodCode };
   }
 
   openOffering() {
@@ -367,7 +426,7 @@ export class AdminAcademicOfferingsComponent implements OnInit {
     }
     this.mutate(this.api.createOffering(Number(value.subjectId), Number(value.periodId), groupCode), 'Oferta curricular registrada.', () => {
       this.closeOffering();
-      this.load(0);
+      this.load(this.result()?.number ?? 0);
     });
   }
 
@@ -393,8 +452,7 @@ export class AdminAcademicOfferingsComponent implements OnInit {
     const action = previous ? this.api.replaceTeacher(previous.id, teacherId, previous.version) : this.api.createTeaching(offer.id, teacherId);
     this.mutate(action, previous ? 'Professor substituído.' : 'Atribuição docente registrada.', () => {
       this.closeTeaching();
-      if (this.section() === 'teaching') this.load(0);
-      else this.selectSection('teaching');
+      this.load(this.result()?.number ?? 0);
     });
   }
 
@@ -410,10 +468,10 @@ export class AdminAcademicOfferingsComponent implements OnInit {
     this.mutate(call, 'Situação atualizada.', () => this.load(this.result()?.number ?? 0), true);
   }
 
-  private loadPage<T>(request$: Observable<Page<T>>, set: (page: Page<T>) => void, request: number) {
-    request$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+  private loadPage<T>(request$: Observable<Page<T>>, set: (page: Page<T>) => void) {
+    this.listRequest?.unsubscribe();
+    this.listRequest = request$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: page => {
-        if (request !== this.request) return;
         const lastPage = Math.max(0, page.totalPages - 1);
         if (page.number > lastPage) {
           this.load(lastPage);
@@ -423,7 +481,6 @@ export class AdminAcademicOfferingsComponent implements OnInit {
         this.loading.set(false);
       },
       error: failure => {
-        if (request !== this.request) return;
         this.loading.set(false);
         this.loadError.set(errorMessage(failure, 'carregar os registros acadêmicos'));
       },
@@ -439,6 +496,10 @@ export class AdminAcademicOfferingsComponent implements OnInit {
         this.busy.set(false);
         this.toast.show(success, 'success');
         next();
+        const section = this.section();
+        if (this.filterOptionsOpen() && section !== 'periods') {
+          this.filterOptions.load(this.api.offeringFilters(section, this.filterScope()));
+        }
         this.changed.emit();
       },
       error: failure => {

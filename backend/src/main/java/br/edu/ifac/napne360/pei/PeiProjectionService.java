@@ -54,7 +54,7 @@ class PeiProjectionService {
             if (event.subjectId() != null) data.put("subjectId", event.subjectId());
             if (event.academicTerm() != null) data.put("academicTerm", event.academicTerm());
             if (event.offeringId() != null) data.put("offeringId", event.offeringId());
-            timeline.appendOnce(event.key(), event.studentId(), event.eventType(), event.title(), event.actorName(),
+            timeline.appendOnce(event.key(), event.studentId(), event.eventType(), event.title(), event.actorName(), event.actorId(),
                     event.visibility(), data, event.occurredAt());
         });
         boolean auditWritten = attempt(event.key(), "auditoria", () ->

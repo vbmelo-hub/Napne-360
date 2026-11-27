@@ -118,6 +118,38 @@ public class AcademicRepository {
                 "o.period.code desc, o.subject.name, o.groupCode, e.id", params, page);
     }
 
+    AcademicService.FilterOptions offeringFilters(AcademicFilterScope scope, boolean teaching) {
+        String from = teaching ? "from TeachingAssignment t join t.offering o where 1 = 1 "
+                : "from AcademicOffering o where 1 = 1 ";
+        return filterOptions(from, Map.of(), scope, List.of());
+    }
+
+    AcademicService.FilterOptions enrollmentFilters(Long studentId, AcademicFilterScope scope) {
+        String from = "from AcademicEnrollment e join e.offering o where e.student.id = :student ";
+        var params = Map.<String, Object>of("student", studentId);
+        var subjects = db.createQuery("""
+                select distinct o.subject.id, o.subject.name, o.subject.code
+                """ + from + " order by o.subject.name, o.subject.code, o.subject.id", Object[].class)
+                .setParameter("student", studentId).getResultList().stream()
+                .map(subject -> new AcademicService.FilterSubject((Long) subject[0], (String) subject[1], (String) subject[2]))
+                .toList();
+        return filterOptions(from, params, scope, subjects);
+    }
+
+    private AcademicService.FilterOptions filterOptions(String from, Map<String, Object> baseParams,
+            AcademicFilterScope scope, List<AcademicService.FilterSubject> subjects) {
+        var params = new HashMap<>(baseParams);
+        var criteria = new StringBuilder(from);
+        filter(criteria, params, "courseId", scope.courseId(), "o.subject.course.id = :courseId");
+        filter(criteria, params, "subjectId", scope.subjectId(), "o.subject.id = :subjectId");
+        var periods = db.createQuery("select distinct o.period.code " + criteria + " order by o.period.code desc", String.class);
+        params.forEach(periods::setParameter);
+        filter(criteria, params, "periodCode", normalized(scope.periodCode()), "lower(o.period.code) = :periodCode");
+        var groups = db.createQuery("select distinct o.groupCode " + criteria + " order by o.groupCode", String.class);
+        params.forEach(groups::setParameter);
+        return new AcademicService.FilterOptions(subjects, periods.getResultList(), groups.getResultList());
+    }
+
     private String offeringCriteria(AcademicListFilters filters, String activeField, Map<String, Object> params) {
         var criteria = new StringBuilder();
         filter(criteria, params, "courseId", filters.courseId(), "o.subject.course.id = :courseId");

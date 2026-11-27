@@ -109,6 +109,13 @@ public class AdminController {
         return results.map(link -> AssignmentView.of(link, ids.contains(link.getId())));
     }
 
+    @GetMapping("/assignments/periods")
+    @Transactional(readOnly = true)
+    public List<String> assignmentPeriods(@RequestParam(required = false) @Positive Long campus,
+                                          @RequestParam(required = false) @Positive Long course) {
+        return assignments.administrativePeriodCodes(campus, course);
+    }
+
     private static String searchPattern(String text) {
         return text == null || text.isBlank() ? null : "%"
                 + text.strip().toLowerCase(Locale.ROOT).replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%";
@@ -305,7 +312,10 @@ public class AdminController {
             throw new ApiOperationException(HttpStatus.CONFLICT, "ACADEMIC_LINK_TEACHER_REQUIRES_OFFER", "Registre a atribuição docente e a matrícula na mesma oferta para gerar um vínculo de professor.");
         Student student = students.findByIdForUpdate(request.studentId())
                 .orElseThrow(() -> new NotFoundException("Estudante não encontrado."));
-        if (student.getStatus() == StudentStatus.ARCHIVED) throw new ApiOperationException(HttpStatus.CONFLICT, "ACADEMIC_LINK_STUDENT_ARCHIVED", "O estudante está arquivado.");
+        if (student.isAdministrativelyArchived())
+            throw new ApiOperationException(HttpStatus.CONFLICT, "ACADEMIC_LINK_STUDENT_ARCHIVED", "O estudante está arquivado.");
+        if (!student.acceptsNewOperations())
+            throw new ApiOperationException(HttpStatus.CONFLICT, "ACADEMIC_LINK_STUDENT_INACTIVE", "A situação acadêmica do estudante não permite novos vínculos ativos.");
         Course course = lockActiveCourse(student.getCourse().getId());
         UserAccount user = users.findByIdForUpdate(request.userId()).orElseThrow(() -> new NotFoundException("Usuário não encontrado."));
         Subject subject = request.subjectId() == null ? null : subjects.findById(request.subjectId())

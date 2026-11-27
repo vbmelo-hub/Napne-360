@@ -1,5 +1,6 @@
 package br.edu.ifac.napne360.document;
 
+import br.edu.ifac.napne360.common.ApiOperationException;
 import br.edu.ifac.napne360.common.ConflictException;
 import br.edu.ifac.napne360.common.NotFoundException;
 import br.edu.ifac.napne360.identity.ReferenceIdDeserializer;
@@ -9,6 +10,7 @@ import br.edu.ifac.napne360.identity.UserAccount;
 import br.edu.ifac.napne360.identity.UserAccountRepository;
 import br.edu.ifac.napne360.identity.UserEmailHistoryService;
 import br.edu.ifac.napne360.security.CurrentUserService;
+import br.edu.ifac.napne360.student.StudentRepository;
 import br.edu.ifac.napne360.timeline.MutationProjection;
 import br.edu.ifac.napne360.timeline.TimelineVisibility;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
@@ -19,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.types.ObjectId;
 import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -48,6 +51,7 @@ public class CareRecordService {
     private final TransactionTemplate transactions;
     private final UserEmailHistoryService emailHistory;
     private final UserAccountRepository users;
+    private final StudentRepository students;
 
     public List<CareRecordDocument> list(Long studentId, CareRecordType type) {
         UserAccount user = currentUser.require();
@@ -99,19 +103,27 @@ public class CareRecordService {
         var event = mutation(draft, 0L, "CREATE", "CARE_RECORD_CREATED", "Registro de acompanhamento criado", user, auth, http);
         draft.setPendingProjections(List.of(event));
         UserAccount draftAuthor = draft.getStatus() == RecordStatus.DRAFT ? user : null;
-        CareRecordDocument value = withLinkLocks(draft.getCaseId(), studentId, draft.getSubjectId(), draftAuthor,
+        CareRecordDocument value = withLinkLocks(draft.getCaseId(), studentId, draft.getSubjectId(), draftAuthor, true,
                 () -> records.save(draft));
         projections.enqueue(value.getId(), CareRecordDocument.class, event);
         return value;
     }
 
     private CareRecordDocument withLinkLocks(Long caseId, Long studentId, Long subjectId,
-                                             UserAccount draftAuthor, Supplier<CareRecordDocument> mutation) {
-        if (caseId == null && subjectId == null && draftAuthor == null) return mutation.get();
+                                             UserAccount draftAuthor, boolean newOperation,
+                                             Supplier<CareRecordDocument> mutation) {
+        if (caseId == null && subjectId == null && draftAuthor == null && !newOperation) return mutation.get();
 
         var saved = new AtomicReference<CareRecordDocument>();
         try {
             return transactions.execute(status -> {
+                if (newOperation) {
+                    var student = students.findByIdForUpdate(studentId)
+                            .orElseThrow(() -> new NotFoundException("Estudante não encontrado."));
+                    if (!student.acceptsNewOperations())
+                        throw new ApiOperationException(HttpStatus.CONFLICT, "CARE_RECORD_STUDENT_INACTIVE",
+                                "A situação acadêmica do estudante não permite iniciar ou reabrir acompanhamentos.");
+                }
                 if (caseId != null) {
                     var linkedCase = cases.findByIdAndStudentIdForLink(caseId, studentId)
                             .orElseThrow(() -> new IllegalArgumentException("Caso inválido para o estudante."));
@@ -171,6 +183,7 @@ public class CareRecordService {
         if (archive && (!java.util.Objects.equals(value.getTitle(), request.title())
                 || !java.util.Objects.equals(value.getContent(), content)))
             throw new IllegalArgumentException("Arquive o registro sem alterar seu conteúdo.");
+        boolean reopen = status == RecordStatus.DRAFT && value.getStatus() != RecordStatus.DRAFT;
         value.getHistory().add(new CareRecordDocument.Revision(value.getVersion(), value.getTitle(), value.getStatus(),
                 new java.util.LinkedHashMap<>(value.getContent()), value.getUpdatedBy(), value.getUpdatedAt()));
         value.setTitle(request.title());
@@ -187,7 +200,7 @@ public class CareRecordService {
                 .set("updatedBy", value.getUpdatedBy()).set("updatedAt", value.getUpdatedAt());
         Long subjectLock = value.getStatus() == RecordStatus.DRAFT ? value.getSubjectId() : null;
         UserAccount draftAuthor = status == RecordStatus.DRAFT ? user : null;
-        withLinkLocks(null, studentId, subjectLock, draftAuthor, () -> {
+        withLinkLocks(null, studentId, subjectLock, draftAuthor, reopen, () -> {
             projections.update(value.getId(), value.getVersion(), changes, event, CareRecordDocument.class);
             return value;
         });

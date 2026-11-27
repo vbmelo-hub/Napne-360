@@ -19,14 +19,16 @@ public class PeiController {
 
     @GetMapping
     public List<PeiDocument> list(@PathVariable Long studentId) {
-        access.requireView(studentId);
-        return service.list(studentId);
+        var student = access.requireView(studentId);
+        var plans = service.list(studentId);
+        return student.acceptsNewOperations() ? plans : plans.stream().map(PeiController::withoutNewRevision).toList();
     }
 
     @GetMapping("/{id}")
     public PeiDocument get(@PathVariable Long studentId, @PathVariable String id) {
-        access.requireView(studentId);
-        return service.get(studentId, id);
+        var student = access.requireView(studentId);
+        var plan = service.get(studentId, id);
+        return student.acceptsNewOperations() ? plan : withoutNewRevision(plan);
     }
 
     @PostMapping
@@ -69,4 +71,9 @@ public class PeiController {
         };
         return service.transition(studentId, id, action, request.version(), auth, http);
     }
+    private static PeiDocument withoutNewRevision(PeiDocument plan) {
+        return plan.toBuilder().allowedActions(plan.getAllowedActions().stream()
+                .filter(action -> !action.equals(PeiService.Action.START_REVISION.name())).toList()).build();
+    }
+
 }

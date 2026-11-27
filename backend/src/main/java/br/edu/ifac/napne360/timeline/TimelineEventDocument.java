@@ -1,5 +1,6 @@
 package br.edu.ifac.napne360.timeline;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.*;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
@@ -19,6 +20,8 @@ public class TimelineEventDocument {
     private String eventType;
     private String title;
     private String actor;
+    @JsonIgnore
+    private Long actorId;
     @Builder.Default
     private TimelineVisibility visibility = TimelineVisibility.RESTRICTED;
     @Builder.Default

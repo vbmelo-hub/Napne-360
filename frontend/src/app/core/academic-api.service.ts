@@ -49,6 +49,14 @@ export interface AcademicListFilters {
   active?: string;
 }
 
+export type AcademicFilterScope = Pick<AcademicListFilters, 'courseId' | 'subjectId' | 'periodCode'>;
+
+export interface AcademicFilterOptions {
+  subjects: { id: number; name: string; code: string }[];
+  periodCodes: string[];
+  groupCodes: string[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class AcademicApi {
   private readonly http = inject(HttpClient);
@@ -70,6 +78,12 @@ export class AcademicApi {
   offerings(page: number, query: string, onlyActive = false, filters: AcademicListFilters = {}) {
     return this.http.get<Page<AcademicOffering>>(`${this.admin}/offerings`, {
       params: this.listParams(page, query, filters).set('onlyActive', onlyActive),
+    });
+  }
+
+  offeringFilters(section: 'offerings' | 'teaching', scope: AcademicFilterScope) {
+    return this.http.get<AcademicFilterOptions>(`${this.admin}/${section}/filter-options`, {
+      params: this.filterParams(new HttpParams(), scope),
     });
   }
 
@@ -109,6 +123,12 @@ export class AcademicApi {
     });
   }
 
+  enrollmentFilters(studentId: number, scope: AcademicFilterScope) {
+    return this.http.get<AcademicFilterOptions>(`${this.student(studentId)}/enrollments/filter-options`, {
+      params: this.filterParams(new HttpParams(), scope),
+    });
+  }
+
   createEnrollment(studentId: number, offeringId: number) {
     return this.http.post<AcademicEnrollment>(`${this.student(studentId)}/enrollments`, { offeringId });
   }
@@ -122,7 +142,10 @@ export class AcademicApi {
   }
 
   private listParams(page: number, query: string, filters: AcademicListFilters = {}) {
-    let params = new HttpParams().set('page', page).set('size', 10).set('query', query.trim());
+    return this.filterParams(new HttpParams().set('page', page).set('size', 10).set('query', query.trim()), filters);
+  }
+
+  private filterParams(params: HttpParams, filters: AcademicListFilters) {
     for (const [key, value] of Object.entries(filters)) {
       if (value.trim()) params = params.set(key, value.trim());
     }

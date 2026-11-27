@@ -53,7 +53,7 @@ test('ADMIN configura uma etapa que o NAPNE usa e cujo nome fica registrado no h
   const openCard = async () => {
     await loginUi(page, 'napne');
     await page.goto('/estudantes/' + student.id);
-    await page.getByRole('button', { name: 'Casos', exact: true }).click();
+    await page.getByRole('button', { name: 'Estudo de caso', exact: true }).click();
     const card = page.getByRole('article', { name: 'Caso nº ' + opened.id + ' · ' + opened.source, exact: true });
     await expect(card).toBeVisible();
     return card;

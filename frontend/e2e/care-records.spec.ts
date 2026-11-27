@@ -49,7 +49,7 @@ for (const scenario of [
     expect((await loginResponse).status()).toBe(200);
     await expect(page.getByRole('heading', { name: 'Acompanhamento NAPNE', exact: true })).toBeVisible();
     await page.goto(`/estudantes/${student.id}`);
-    await page.getByRole('button', { name: 'Acompanhamento', exact: true }).click();
+    await page.getByRole('button', { name: scenario.role === 'napne' ? 'Estudo de caso' : 'Acompanhamento', exact: true }).click();
     const title = `Registro fictício ${scenario.role}`;
     const createForm = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Novo registro', exact: true }) });
     await createForm.getByRole('combobox', { name: /^Tipo/ }).selectOption(scenario.type);
@@ -66,12 +66,14 @@ for (const scenario of [
     await expect(card.getByText('Nota inicial fictícia', { exact: true })).toBeVisible();
 
     await page.reload();
-    await page.getByRole('button', { name: 'Acompanhamento', exact: true }).click();
+    await page.getByRole('button', { name: scenario.role === 'napne' ? 'Estudo de caso' : 'Acompanhamento', exact: true }).click();
     await card.getByRole('button', { name: 'Editar', exact: true }).click();
     const editForm = page.locator('form').filter({ has: page.getByRole('heading', { name: 'Editar registro', exact: true }) });
     await expect(editForm.getByLabel(scenario.field, { exact: true })).toHaveValue('Campo pedagógico inicial');
     await editForm.getByLabel('Comentários adicionais', { exact: true }).fill('Alteração a cancelar');
+    page.once('dialog', dialog => dialog.accept());
     await editForm.getByRole('button', { name: 'Cancelar edição', exact: true }).click();
+    await expect(editForm).toHaveCount(0);
     await expect(card.getByText('Nota inicial fictícia', { exact: true })).toBeVisible();
 
     await card.getByRole('button', { name: 'Editar', exact: true }).click();

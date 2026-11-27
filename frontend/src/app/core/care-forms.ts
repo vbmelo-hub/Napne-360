@@ -61,6 +61,12 @@ export const RECORD_FIELDS: Record<string, CareField[]> = {
     {key:'peiSituation',label:'Situação e aplicação do PEI'}
   ],
   TUTOR_OBSERVATION: [{key:'activity',label:'Atividade acompanhada'}, {key:'observations',label:'Observações'}, {key:'support',label:'Apoio prestado e encaminhamentos'}],
+  NAPNE_FOLLOW_UP: [
+    {key:'observations',label:'Observações e evolução'},
+    {key:'difficulties',label:'Dificuldades identificadas'},
+    {key:'interventions',label:'Intervenções realizadas'},
+    {key:'referrals',label:'Encaminhamentos e próximos passos'}
+  ],
   SUPPORT_REFUSAL: [{key:'offeredSupport',label:'Apoio oferecido'}, {key:'studentStatement',label:'Manifestação do estudante'}, {key:'date',label:'Data e participantes'}],
   SUPPORT_REQUEST: [{key:'requestedSupport',label:'Apoio solicitado'}, {key:'studentStatement',label:'Manifestação do estudante'}, {key:'nextSteps',label:'Próximos passos'}]
 };

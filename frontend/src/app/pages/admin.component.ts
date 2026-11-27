@@ -116,28 +116,41 @@ const EMPTY_USERS: Page<UserView> = { content: [], totalElements: 0, totalPages:
   </app-modal-shell>
   <app-modal-shell [open]="accessUser() !== null" eyebrow="Perfis e segurança" [title]="'Acessos de ' + (accessUser()?.name ?? 'usuário')"
     [description]="accessUser()?.email ?? ''" (closed)="closeAccess()">
-    <form class="stack" (ngSubmit)="changeRoles()">
-      <fieldset><legend>Perfis autorizados</legend><div class="role-checks">
-        @for (role of roles; track role.value) {
-          <label><input type="checkbox" [checked]="selectedRoles().includes(role.value)"
-            (change)="toggleRole(role.value, $any($event.target).checked)"><span>{{role.label}}</span></label>
-        }
-      </div></fieldset>
-      @if (campusRoleError()) {<p class="field-hint" role="alert">{{campusRoleError()}}</p>}
-      @if (roleChanges.changed()) {<p class="field-hint" aria-live="polite">Há alterações pendentes.</p>}
-      <div><button [disabled]="!selectedRoles().length || !roleChanges.changed() || !!campusRoleError() || busy()">Salvar perfis e revogar sessões</button></div>
-    </form>
-    <form class="security-box" (ngSubmit)="resetPassword()">
-      <div><strong>Redefinir senha temporária</strong><p>A operação revoga as sessões atuais da conta.</p></div>
-      <label>Nova senha<input type="password" autocomplete="new-password" [formControl]="resetSecret"></label>
-      <button class="secondary" [disabled]="resetSecret.invalid || busy()">Redefinir senha</button>
-    </form>
-    @if (accessUser(); as account) {
-      <div class="row">
-        <button class="secondary" type="button" [disabled]="busy()" (click)="askUserAction(account,'revoke')">Revogar sessões</button>
-        @if (account.active) {<button class="secondary" type="button" [disabled]="busy()" (click)="askUserAction(account,'block')">Bloquear acesso imediatamente</button>}
-      </div>
-    }
+    <div class="access-settings">
+      <form class="access-section" (ngSubmit)="changeRoles()">
+        <fieldset>
+          <legend>Perfis autorizados</legend>
+          <div class="role-checks">
+            @for (role of roles; track role.value) {
+              <label><input type="checkbox" [checked]="selectedRoles().includes(role.value)"
+                (change)="toggleRole(role.value, $any($event.target).checked)"><span>{{role.label}}</span></label>
+            }
+          </div>
+        </fieldset>
+        @if (campusRoleError()) {<p class="field-hint" role="alert">{{campusRoleError()}}</p>}
+        @if (roleChanges.changed()) {<p class="field-hint" aria-live="polite">Há alterações pendentes.</p>}
+        <div class="row"><button [disabled]="!selectedRoles().length || !roleChanges.changed() || !!campusRoleError() || busy()">Salvar perfis e revogar sessões</button></div>
+      </form>
+      <form class="access-section" aria-labelledby="password-reset-title" (ngSubmit)="resetPassword()">
+        <div>
+          <h3 id="password-reset-title">Redefinição de senha</h3>
+          <p>Redefinir a senha temporária revoga as sessões atuais da conta.</p>
+        </div>
+        <div class="row password-reset-controls">
+          <label>Nova senha<input type="password" autocomplete="new-password" [formControl]="resetSecret"></label>
+          <button class="secondary" [disabled]="resetSecret.invalid || busy()">Redefinir senha</button>
+        </div>
+      </form>
+      @if (accessUser(); as account) {
+        <section class="access-section" aria-labelledby="access-control-title">
+          <h3 id="access-control-title">Controle de acesso</h3>
+          <div class="row">
+            <button class="secondary" type="button" [disabled]="busy()" (click)="askUserAction(account,'revoke')">Revogar sessões</button>
+            @if (account.active) {<button class="danger" type="button" [disabled]="busy()" (click)="askUserAction(account,'block')">Bloquear acesso imediatamente</button>}
+          </div>
+        </section>
+      }
+    </div>
   </app-modal-shell>
   <app-modal-shell [open]="showCampusForm()" eyebrow="Campus" [title]="editCampus() ? 'Editar campus' : 'Cadastrar campus'"
     (closed)="closeCampusForm()">
@@ -160,7 +173,46 @@ const EMPTY_USERS: Page<UserView> = { content: [], totalElements: 0, totalPages:
     [description]="campusTarget()?.active ? 'O campus deixa de receber novos vínculos. O histórico permanece disponível.' : 'O campus volta a ficar disponível para novos vínculos.'"
     [confirmLabel]="campusTarget()?.active ? 'Arquivar campus' : 'Reativar campus'"
     [danger]="campusTarget()?.active ?? false" [busy]="busy()" (confirmed)="confirmCampusAction()" (cancelled)="campusTarget.set(null)" />
-`,styles:[`.admin-tabs{margin:0 0 1rem}.users-card{padding:0;overflow:hidden}.users-card .section-header{padding:1.25rem 1.5rem;margin:0}.users-card .table-wrap{border-radius:0;border-left:0;border-right:0;border-bottom:0}.users-card td strong,.users-card td small{display:block}.users-card td small{color:var(--ink-600)}.roles{display:flex;gap:.25rem;flex-wrap:wrap}.campus-row{display:flex;align-items:center;justify-content:space-between;padding:.85rem 0;border-top:1px solid var(--border)}.campus-row strong,.campus-row small{display:block}.campus-row small{color:var(--ink-600)}.role-checks{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}.role-checks label{display:flex;align-items:center;border:1px solid var(--border);border-radius:.5rem;padding:.7rem}.role-checks input{width:auto}.security-box{display:grid;grid-template-columns:1fr 1fr auto;align-items:end;gap:1rem;background:var(--surface-soft);border:1px solid var(--border);border-radius:.75rem;padding:1rem}.security-box p{color:var(--ink-600);font-size:.82rem;margin:0}@media(max-width:800px){.security-box{grid-template-columns:1fr}.role-checks{grid-template-columns:1fr}}` ]})
+`,styles:[`.admin-tabs{margin:0 0 1rem}.users-card{padding:0;overflow:hidden}.users-card .section-header{margin:0}.users-card .table-wrap{border-radius:0;border-left:0;border-right:0;border-bottom:0}.users-card td strong,.users-card td small{display:block}.users-card td small{color:var(--ink-600)}.roles{display:flex;gap:.25rem;flex-wrap:wrap}.campus-row{display:flex;align-items:center;justify-content:space-between;padding:.85rem 0;border-top:1px solid var(--border)}.campus-row strong,.campus-row small{display:block}.campus-row small{color:var(--ink-600)}
+.users-card { --list-inset: var(--space-6); }
+.users-card .section-header { padding: var(--space-5) var(--list-inset); }
+.users-card > :is(app-list-filters, .loading-grid, .empty-state) { margin-inline: var(--list-inset); }
+.users-card .empty-state button { margin-top: var(--space-2); }
+.access-settings { display: grid; gap: var(--space-4); }
+.access-section {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.access-section fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.access-section legend { padding: 0; margin-bottom: var(--space-2); }
+.access-section h3, .access-section p { margin: 0; }
+.access-section p { color: var(--ink-600); font-size: .875rem; }
+.role-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: var(--space-2);
+}
+.role-checks label {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.role-checks input { width: auto; }
+.password-reset-controls { align-items: end; }
+.password-reset-controls label { flex: 0 1 19rem; min-width: 0; }
+@media (max-width: 700px) {
+  .users-card { --list-inset: var(--space-4); }
+  .users-card .table-wrap { padding-inline: var(--list-inset); }
+  .access-section { padding: var(--space-3); }
+}
+` ]})
 export class AdminComponent implements OnInit {
   private readonly api = inject(ApiService);
   private readonly fb = inject(FormBuilder);

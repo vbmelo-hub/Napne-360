@@ -42,6 +42,14 @@ public class AuditService {
                 .ipAddress(request == null ? null : request.getRemoteAddr()).details(sanitize(details)).build());
     }
 
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordStudentStatus(UserAccount actor, HttpServletRequest request, Long studentId,
+                                    String action, Instant recordedAt) {
+        repository.save(AuditEvent.builder().actor(actor).action(action).resourceType("STUDENT")
+                .resourceId(studentId.toString()).outcome("SUCCESS").occurredAt(recordedAt)
+                .ipAddress(request == null ? null : request.getRemoteAddr()).build());
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW, timeout = 10)
     public void recordPeiMutation(String key, Long actorId, String ipAddress, String action,
                                   String revisionId, int revision, Instant occurredAt) {

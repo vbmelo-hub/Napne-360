@@ -36,8 +36,55 @@ describe('Seleção de professor para uma oferta curricular', () => {
 
   afterEach(() => http.verify());
 
+  it('espera a digitação, cancela buscas anteriores e volta à primeira página', fakeAsync(() => {
+    const component = fixture.componentInstance;
+    component.load(2);
+    const pageRequest = http.expectOne(req => req.url.endsWith('/academic/periods') && req.params.get('page') === '2');
+    const search = root.querySelector<HTMLInputElement>('input[type="search"]')!;
+    type(search, '202');
+    tick(100);
+    http.expectNone(req => req.params.get('query') === '202');
+    type(search, '2026');
+    tick(250);
+    expect(pageRequest.cancelled).toBeTrue();
+    const request = http.expectOne(req => req.url.endsWith('/academic/periods') && req.params.get('query') === '2026');
+    expect(request.request.params.get('page')).toBe('0');
+    request.flush({ content: [], totalElements: 0, totalPages: 0, number: 0, size: 10 });
+  }));
+
+  it('oferece períodos e turmas históricas e envia as opções selecionadas antes da paginação', () => {
+    const component = fixture.componentInstance;
+    component.selectSection('offerings');
+    const endpoint = '/api/v1/admin/academic/offerings';
+    const emptyPage = { content: [], totalElements: 0, totalPages: 0, number: 0, size: 10 };
+    http.expectOne(request => request.url === endpoint).flush(emptyPage);
+    fixture.detectChanges();
+    root.querySelector<HTMLButtonElement>('.filters-toggle')!.click();
+    fixture.detectChanges();
+    http.expectOne(endpoint + '/filter-options').flush({ subjects: [], periodCodes: ['2024.2'], groupCodes: ['HIST'] });
+    fixture.detectChanges();
+
+    const period = root.querySelector<HTMLSelectElement>('select[formControlName="periodCode"]')!;
+    period.value = '2024.2';
+    period.dispatchEvent(new Event('change', { bubbles: true }));
+    fixture.detectChanges();
+    http.expectOne(endpoint + '/filter-options?periodCode=2024.2')
+      .flush({ subjects: [], periodCodes: ['2024.2'], groupCodes: ['HIST'] });
+    fixture.detectChanges();
+    const group = root.querySelector<HTMLElement>('app-searchable-select[formControlName="groupCode"]')!;
+    group.querySelector('button')!.click();
+    fixture.detectChanges();
+    group.querySelector<HTMLElement>('[role="option"]')!.click();
+    component.applyFilters();
+    const page = http.expectOne(request => request.url === endpoint);
+    expect(page.request.params.get('periodCode')).toBe('2024.2');
+    expect(page.request.params.get('groupCode')).toBe('HIST');
+    expect(page.request.params.get('page')).toBe('0');
+    page.flush(emptyPage);
+  });
+
   function openPicker() {
-    root.querySelector<HTMLButtonElement>('app-searchable-select[formControlName="teacherId"] button')!.click();
+    root.querySelector<HTMLButtonElement>('[role="dialog"] app-searchable-select[formControlName="teacherId"] button')!.click();
     fixture.detectChanges();
     return root.querySelector<HTMLInputElement>('[role="combobox"]')!;
   }
@@ -111,6 +158,14 @@ describe('Seleção de professor para uma oferta curricular', () => {
   });
 
   it('usa o total da consulta inicial e envia o ID escolhido pelo teclado', fakeAsync(() => {
+    const component = fixture.componentInstance;
+    const offerings = '/api/v1/admin/academic/offerings';
+    const page = { content: [offer], totalElements: 1, totalPages: 1, number: 0, size: 10 };
+    component.selectSection('offerings');
+    http.expectOne(req => req.url === offerings).flush(page);
+    component.filters.controls.periodCode.setValue(offer.periodCode);
+    component.applyFilters();
+    http.expectOne(req => req.url === offerings && req.params.get('periodCode') === offer.periodCode).flush(page);
     startTeaching();
     const input = openPicker();
     expect(fixture.componentInstance.teacherForm.controls.teacherId.value).toBe('');
@@ -123,7 +178,7 @@ describe('Seleção de professor para uma oferta curricular', () => {
     press(input, 'ArrowDown');
     press(input, 'Enter');
     expect(root.querySelector('[role="combobox"]')).toBeNull();
-    expect(root.querySelector('app-searchable-select')?.textContent).toContain('MAT-21');
+    expect(root.querySelector('[role="dialog"] app-searchable-select')?.textContent).toContain('MAT-21');
 
     const validation = http.expectOne(candidates);
     expect(validation.request.body).toEqual(jasmine.objectContaining({ selectedId: otherTeacher.id, query: '' }));
@@ -134,7 +189,11 @@ describe('Seleção de professor para uma oferta curricular', () => {
     expect(request.request.method).toBe('POST');
     expect(request.request.body).toEqual({ offeringId: offer.id, teacherId: otherTeacher.id });
     request.flush({});
-    http.expectOne(request => request.url.endsWith('/academic/teaching')).flush({ content: [], totalElements: 0, totalPages: 0 });
+    expect(component.section()).toBe('offerings');
+    const refreshed = http.expectOne(req => req.url === offerings);
+    expect(refreshed.request.params.get('periodCode')).toBe(offer.periodCode);
+    expect(refreshed.request.params.get('page')).toBe('0');
+    refreshed.flush(page);
   }));
 
   it('bloqueia o envio quando a atribuição troca de escopo antes de revalidar', () => {
@@ -194,9 +253,17 @@ describe('Seleção de professor para uma oferta curricular', () => {
   }));
 
   it('seleciona a única substituição elegível e envia a versão da atribuição anterior', async () => {
-    fixture.componentInstance.openTeaching(offer, {
+    const component = fixture.componentInstance;
+    const teaching = '/api/v1/admin/academic/teaching';
+    const assignment = {
       id: 15, teacherId: teacher.id, teacherName: teacher.name, offering: offer, active: true, version: 3,
-    });
+    };
+    const page = { content: [assignment], totalElements: 11, totalPages: 2, number: 1, size: 10 };
+    component.selectSection('teaching');
+    http.expectOne(req => req.url === teaching && req.params.get('page') === '0').flush({ ...page, number: 0 });
+    component.load(1);
+    http.expectOne(req => req.url === teaching && req.params.get('page') === '1').flush(page);
+    component.openTeaching(offer, assignment);
     fixture.detectChanges();
     const initial = http.expectOne(candidates);
     expect(initial.request.body).toEqual(jasmine.objectContaining({ campusId: 1, roles: ['TEACHER'], excludedId: teacher.id }));
@@ -212,6 +279,7 @@ describe('Seleção de professor para uma oferta curricular', () => {
     expect(request.request.method).toBe('PUT');
     expect(request.request.body).toEqual({ teacherId: otherTeacher.id, version: 3 });
     request.flush({});
-    http.expectOne(request => request.url.endsWith('/academic/teaching')).flush({ content: [], totalElements: 0, totalPages: 0 });
+    expect(component.section()).toBe('teaching');
+    http.expectOne(req => req.url === teaching && req.params.get('page') === '1').flush(page);
   });
 });

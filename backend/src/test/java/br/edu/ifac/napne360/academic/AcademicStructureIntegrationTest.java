@@ -264,6 +264,55 @@ class AcademicStructureIntegrationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].id").value(enrollment));
     }
 
+    @Test
+    void historicalFilterOptionsAreScopedToTheListingAndKeepArchivedRecords() throws Exception {
+        long historicalOffer = offering("TURMA-HISTORICA");
+        long historicalEnrollment = enrollment(historicalOffer);
+        long historicalTeaching = teaching(historicalOffer, teacher);
+        var nextPeriod = periods.findByKindAndCode(ReferenceEntry.Kind.ACADEMIC_TERM, CURRENT_YEAR + ".2").orElseThrow();
+        offering("TURMA-SO-OFERTA", nextPeriod);
+        jdbc.update("update academic_enrollment set active = false where id = ?", historicalEnrollment);
+        jdbc.update("update teaching_assignment set active = false where id = ?", historicalTeaching);
+        jdbc.update("update academic_offering set active = false where id = ?", historicalOffer);
+        jdbc.update("update reference_entry set active = false where id = ?", period.getId());
+        try {
+            var adminActor = user(admin.getEmail()).roles("ADMIN");
+            var napneActor = user(napne.getEmail()).roles("NAPNE");
+            var enrollmentFilters = studentPath() + "/academic/enrollments/filter-options";
+            String courseId = course.getId().toString();
+
+            mvc.perform(get(ADMIN_URL + "/offerings/filter-options").param("courseId", courseId)
+                            .param("periodCode", period.getCode()).with(adminActor))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.periodCodes[1]").value(period.getCode()))
+                    .andExpect(jsonPath("$.groupCodes.length()").value(1))
+                    .andExpect(jsonPath("$.groupCodes[0]").value("TURMA-HISTORICA"));
+            mvc.perform(get(ADMIN_URL + "/teaching/filter-options").param("courseId", courseId).with(adminActor))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.groupCodes.length()").value(1))
+                    .andExpect(jsonPath("$.groupCodes[0]").value("TURMA-HISTORICA"));
+            mvc.perform(get("/api/v1/admin/assignments/periods").with(adminActor))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[?(@ == '" + period.getCode() + "')]").isNotEmpty());
+            mvc.perform(get(enrollmentFilters).with(napneActor))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.subjects[0].id").value(subject.getId()))
+                    .andExpect(jsonPath("$.periodCodes.length()").value(1))
+                    .andExpect(jsonPath("$.groupCodes.length()").value(1))
+                    .andExpect(jsonPath("$.groupCodes[0]").value("TURMA-HISTORICA"));
+            mvc.perform(get(enrollmentFilters).with(user(account(campus(), RoleName.NAPNE).getEmail()).roles("NAPNE")))
+                    .andExpect(status().isForbidden());
+            mvc.perform(get(studentPath() + "/academic/enrollments")
+                            .param("subjectId", subject.getId().toString()).param("periodCode", period.getCode())
+                            .param("groupCode", "TURMA-HISTORICA").param("active", "false").with(napneActor))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalElements").value(1))
+                    .andExpect(jsonPath("$.content[0].id").value(historicalEnrollment));
+        } finally {
+            jdbc.update("update reference_entry set active = true where id = ?", period.getId());
+        }
+    }
+
     private Campus campus() {
         return campuses.saveAndFlush(Campus.builder().name("Campus acadêmico").code(UUID.randomUUID().toString()).build());
     }

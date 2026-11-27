@@ -62,6 +62,13 @@ public interface StudentAssignmentRepository extends JpaRepository<StudentAssign
                                      Long course, Long subjectId, boolean general, AssignmentType type,
                                      AssignmentOrigin origin, String periodCode, Boolean active, Pageable pageable);
 
+    @Query("""
+            select distinct period.code from StudentAssignment a join a.period period
+            where (:campus is null or a.student.campus.id = :campus) and (:course is null or a.student.course.id = :course)
+            order by period.code desc
+            """)
+    java.util.List<String> administrativePeriodCodes(Long campus, Long course);
+
     @Query("select a.id from StudentAssignment a where a.id in :ids and " + EFFECTIVE)
     Set<Long> effectiveAssignmentIdsFor(List<Long> ids);
 
@@ -75,6 +82,9 @@ public interface StudentAssignmentRepository extends JpaRepository<StudentAssign
     boolean existsBySubjectId(Long subjectId);
     boolean existsBySubjectIdAndActiveTrue(Long subjectId);
     boolean existsByStudentCampusIdAndActiveTrue(Long campusId);
+
+    @Query(EXISTING + "where a.student.id = :studentId and " + EFFECTIVE)
+    boolean existsEffectiveForStudent(Long studentId);
 
     @org.springframework.data.jpa.repository.Query(
             "select distinct a.assignmentType from StudentAssignment a where a.user.id = :userId and a.active = true")

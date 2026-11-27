@@ -25,6 +25,23 @@ export interface Page<T> {
   size: number;
 }
 
+export type AcademicStudentStatus = 'ACTIVE' | 'INACTIVE' | 'COMPLETED' | 'TRANSFERRED';
+export type StudentStatusReason = 'DROPOUT' | 'COURSE_COMPLETION' | 'TRANSFER' | 'LEAVE_OF_ABSENCE'
+  | 'DISMISSAL' | 'OTHER' | 'ACADEMIC_RESUMPTION' | 'ADMINISTRATIVE_CORRECTION';
+export interface StudentStatusRestriction { code: string; message: string }
+export interface StudentStatusChange {
+  status: AcademicStudentStatus;
+  reason: StudentStatusReason;
+  effectiveDate: string;
+  observations: string | null;
+  version: number;
+}
+export interface StudentStatusRestore {
+  academicStatus?: AcademicStudentStatus;
+  observations?: string;
+  version?: number;
+}
+
 export interface StudentSummary {
   id: number;
   registration: string;
@@ -32,6 +49,9 @@ export interface StudentSummary {
   course: string;
   campus: string;
   status: string;
+  academicStatus?: AcademicStudentStatus | null;
+  archived?: boolean;
+  statusReason?: StudentStatusReason | null;
 }
 
 export interface StudentDetails extends StudentSummary {
@@ -210,6 +230,13 @@ export interface TimelineEvent {
   actor: string;
   visibility: string;
   createdAt: string;
+  data?: Partial<{
+    effectiveDate: string;
+    previousStatus: AcademicStudentStatus;
+    newStatus: AcademicStudentStatus;
+    reason: StudentStatusReason;
+    observations: string;
+  }>;
 }
 
 export interface Attachment {

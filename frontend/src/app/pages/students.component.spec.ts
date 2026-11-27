@@ -70,6 +70,27 @@ describe('StudentsComponent — envio da busca', () => {
     expect(dom.querySelector('[aria-current="page"]')?.textContent?.trim()).toBe('3');
   });
 
+  it('combina situação acadêmica e motivo e permite remover cada filtro separadamente', () => {
+    initialLoad.flush({ content: [student], number: 0, totalElements: 1, totalPages: 1 });
+    fixture.detectChanges();
+    const component = fixture.componentInstance;
+    const dom = fixture.nativeElement as HTMLElement;
+    component.statusFilter.setValue('COMPLETED');
+    component.reasonFilter.setValue('COURSE_COMPLETION');
+    component.searchStudents();
+
+    const filtered = http.expectOne(request => request.url === '/api/v1/students'
+      && request.params.get('status') === 'COMPLETED' && request.params.get('reason') === 'COURSE_COMPLETION'
+      && request.params.get('page') === '0');
+    filtered.flush({ content: [], number: 0, totalElements: 0, totalPages: 0 });
+    fixture.detectChanges();
+
+    dom.querySelector<HTMLButtonElement>('button[aria-label="Remover filtro Motivo: Conclusão do curso"]')!.click();
+    const stillFiltered = http.expectOne(request => request.url === '/api/v1/students'
+      && request.params.get('status') === 'COMPLETED' && request.params.get('reason') === null);
+    stillFiltered.flush({ content: [], number: 0, totalElements: 0, totalPages: 0 });
+  });
+
   for (const origin of ['botão', 'Enter'] as const) {
     it(`cancela navegação nativa por ${origin} e busca texto digitado a partir da página zero`, () => {
       initialLoad.flush({ content: [student], number: 0, size: 20, totalElements: 40, totalPages: 2 });
@@ -83,7 +104,7 @@ describe('StudentsComponent — envio da busca', () => {
 
       const input = dom.querySelector<HTMLInputElement>('#search')!;
       input.value = '  Pessoa localizada  '; input.dispatchEvent(new Event('input'));
-      const form = dom.querySelector<HTMLFormElement>('form.search')!;
+      const form = input.closest('form')!;
       const button = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
       const event = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: origin === 'botão' ? button : null });
       form.dispatchEvent(event);
@@ -107,7 +128,7 @@ describe('StudentsComponent — envio da busca', () => {
       const input = dom.querySelector<HTMLInputElement>('#search')!;
       input.value = 'Pessoa localizada';
       input.dispatchEvent(new Event('input'));
-      dom.querySelector<HTMLFormElement>('form.search')!.dispatchEvent(new SubmitEvent('submit', {
+      input.closest('form')!.dispatchEvent(new SubmitEvent('submit', {
         bubbles: true, cancelable: true
       }));
 

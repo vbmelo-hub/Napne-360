@@ -28,7 +28,7 @@ test('NAPNE escolhe o caso pertinente e conserva o vínculo após arquivamento',
 
   await loginUi(page, 'napne');
   await page.goto('/estudantes/' + student.id);
-  const openRecords = () => page.getByRole('button', { name: 'Acompanhamento', exact: true }).click();
+  const openRecords = () => page.getByRole('button', { name: 'Estudo de caso', exact: true }).click();
   await openRecords();
   const selector = page.getByRole('combobox', { name: 'Caso vinculado (opcional)', exact: true });
   await expect(selector.locator('option')).toHaveCount(2);

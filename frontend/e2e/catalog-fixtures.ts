@@ -130,8 +130,10 @@ export function makeLegacyFixture(student: { id: number; registration: string },
   const compose = ['compose'];
   if (process.env['NAPNE_E2E_COMPOSE_FILE']) compose.push('-f', process.env['NAPNE_E2E_COMPOSE_FILE']);
   if (process.env['NAPNE_E2E_COMPOSE_PROJECT']) compose.push('-p', process.env['NAPNE_E2E_COMPOSE_PROJECT']);
-  const mysql = 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root --database="$MYSQL_DATABASE" --batch';
-  execFileSync(docker, [...compose, 'exec', '-T', 'mysql', 'sh', '-c', mysql], {
+  const database = process.env['NAPNE_E2E_MYSQL_DB'] || '';
+  if (database && !/^\w+$/.test(database)) throw new Error('Nome de banco fictício inválido.');
+  const mysql = 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root --database="${1:-$MYSQL_DATABASE}" --batch';
+  execFileSync(docker, [...compose, 'exec', '-T', 'mysql', 'sh', '-c', mysql, 'sh', database], {
     input: `insert into student_assignment (student_id, user_id, subject_id, assignment_type, origin)
       values (${student.id}, ${teacherId}, ${subjectId}, 'TEACHER', 'MANUAL');`,
     encoding: 'utf8', timeout: 30_000

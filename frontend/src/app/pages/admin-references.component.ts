@@ -105,7 +105,7 @@ export class AdminReferencesComponent implements OnInit {
   readonly toggleDescription=computed(()=>{const item=this.toggleCandidate();return item?`${item.label} ficará ${item.active?'indisponível':'disponível'} para novos usos. Registros históricos conservam a identificação e o nome e podem manter a associação ao serem editados.`:'';});
   private templateVersion:number|null=null;
   readonly label=labelFor;
-  readonly types=['PEI','INITIAL_SCREENING','WELCOMING','CASE_STUDY','PEDAGOGICAL_GUIDANCE','ACTION_PLAN','TEACHER_FEEDBACK','TUTOR_OBSERVATION','SUPPORT_REFUSAL','SUPPORT_REQUEST'];
+  readonly types=['PEI','INITIAL_SCREENING','WELCOMING','CASE_STUDY','PEDAGOGICAL_GUIDANCE','ACTION_PLAN','TEACHER_FEEDBACK','TUTOR_OBSERVATION','NAPNE_FOLLOW_UP','SUPPORT_REFUSAL','SUPPORT_REQUEST'];
   readonly entryForm=this.fb.nonNullable.group({kind:['NEED_CATEGORY',Validators.required],code:['',Validators.required],label:['',Validators.required],description:['']});
   readonly templateForm=this.fb.nonNullable.group({name:['',Validators.required],documentType:['PEI',Validators.required],defaults:['{}',Validators.required],active:[true]});
 

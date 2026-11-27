@@ -1,10 +1,11 @@
 import { AppliedFiltersComponent, appliedFilterItems } from '../shared/applied-filters.component';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, DestroyRef, ElementRef, Injector, OnInit, afterNextRender, computed, inject, linkedSignal, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, Injector, OnInit, afterNextRender, computed, effect, inject, linkedSignal, signal, viewChild } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { forkJoin, map } from 'rxjs';
+import { Subscription, debounceTime, forkJoin, map } from 'rxjs';
 import { ApiService } from '../core/api.service';
+import { createFilterOptions } from '../core/filter-options';
 import { createListView } from '../core/list-view';
 import { AdminCourse, AdminSubject, AssignmentView, Campus, Page, StudentRegistrationCandidate } from '../core/models';
 import { createProfessionalCandidates } from '../core/professional-search';
@@ -12,6 +13,7 @@ import { AdminAcademicOfferingsComponent } from './admin-academic-offerings.comp
 import { errorMessage, labelFor } from '../core/presentation';
 import { ToastService } from '../core/toast.service';
 import { ConfirmDialogComponent } from '../shared/confirm-dialog.component';
+import { FilterDisclosureComponent } from '../shared/filter-disclosure.component';
 import { ModalShellComponent } from '../shared/modal-shell.component';
 import { PaginationComponent } from '../shared/pagination.component';
 import { SearchableLookup, SearchableOption, SearchableSelectComponent } from '../shared/searchable-select.component';
@@ -30,7 +32,7 @@ function registrationOption(student: StudentRegistrationCandidate): Registration
   return { id: String(student.id), label: student.registration, student };
 }
 
-@Component({selector:'app-admin-academic',standalone:true,imports:[AppliedFiltersComponent, ReactiveFormsModule,ConfirmDialogComponent,ModalShellComponent,PaginationComponent,ListFiltersComponent,AdminAcademicOfferingsComponent,SearchableSelectComponent],template:`
+@Component({selector:'app-admin-academic',standalone:true,imports:[AppliedFiltersComponent,ReactiveFormsModule,ConfirmDialogComponent,FilterDisclosureComponent,ModalShellComponent,PaginationComponent,ListFiltersComponent,AdminAcademicOfferingsComponent,SearchableSelectComponent],template:`
   <header class="module-head"><span class="eyebrow">Organização acadêmica</span><h2>Estrutura acadêmica e vínculos</h2><p>Cadastre cursos e componentes e defina quem acompanha cada estudante.</p></header>
 
   @if(loading()){
@@ -120,15 +122,15 @@ function registrationOption(student: StudentRegistrationCandidate): Registration
 
     <section class="card assignments">
       <div class="section-header"><div><h3>Vínculos registrados</h3><p>O histórico permanece disponível mesmo após a revogação.</p></div></div>
-      <form class="server-list-toolbar" [formGroup]="assignmentFilters" (ngSubmit)="applyAssignmentFilters()">
+      <form class="server-list-toolbar filter-toolbar" [formGroup]="assignmentFilters" (ngSubmit)="applyAssignmentFilters()">
         <label class="toolbar-search">Buscar vínculos
-          <input #filterSearch type="search" formControlName="query" placeholder="Matrícula, profissional ou componente">
+          <input #filterSearch type="search" formControlName="query" (keydown.enter)="$event.preventDefault()"
+            placeholder="Matrícula ou nome">
         </label>
-        <details>
-          <summary>Filtros{{assignmentFilterCount() ? ' (' + assignmentFilterCount() + ')' : ''}}</summary>
-          <div class="server-list-toolbar">
-            <label>Matrícula <input formControlName="registration"></label>
-            <label>Profissional <input formControlName="actor" placeholder="Nome"></label>
+        <app-filter-disclosure [count]="assignmentFilterCount()" (expandedChange)="assignmentFilterOptionsOpen.set($event)">
+          <div class="toolbar-grid">
+            <label>Matrícula do estudante <input formControlName="registration"></label>
+            <label>Profissional vinculado <input formControlName="actor" placeholder="Nome"></label>
             <label>Tipo de vínculo<select formControlName="type"><option value="">Todos</option>
               @for (type of assignmentTypes; track type) {<option [value]="type">{{label(type)}}</option>}
             </select></label>
@@ -144,36 +146,43 @@ function registrationOption(student: StudentRegistrationCandidate): Registration
             <label>Origem<select formControlName="origin"><option value="">Todas</option>
               <option value="AUTOMATIC">Automática</option><option value="MANUAL">Manual</option>
             </select></label>
-            <label>Período letivo <input formControlName="period" placeholder="Ex.: 2026.2"></label>
+            <label>Período letivo <select formControlName="period" [attr.disabled]="assignmentPeriodOptions.loading() ? '' : null">
+              <option value="">Todos</option>
+              @for (code of assignmentPeriodOptions.value(); track code) { <option [value]="code">{{code}}</option> }
+            </select></label>
             <label>Situação<select formControlName="active"><option value="">Todas</option>
               <option value="true">Ativo</option><option value="false">Revogado</option>
             </select></label>
           </div>
-        </details>
-        <button class="secondary compact" type="submit">Filtrar vínculos</button>
+          @if (assignmentPeriodOptions.loading()) { <p class="meta" role="status">Carregando períodos letivos…</p> }
+          @if (assignmentPeriodOptions.error(); as error) { <p class="error" role="alert">{{error}}</p> }
+          <div class="toolbar-actions"><button class="toolbar-button" type="submit">Aplicar filtros</button></div>
+        </app-filter-disclosure>
         @if (assignmentFilterCount() || appliedAssignmentFilters()['query']) {
-          <button class="secondary compact" type="button" (click)="clearAssignmentFilters()">Limpar filtros</button>
-        }
-        @if (assignmentPage() && !assignmentLoading() && !assignmentError()) {
-          <span class="meta" role="status">{{assignmentPage()?.totalElements}} resultado(s)</span>
+          <button class="toolbar-aux" type="button" (click)="clearAssignmentFilters(); filterSearch.focus()">Limpar filtros</button>
         }
       </form>
-      <app-applied-filters [fallbackFocus]="filterSearch" [filters]="appliedAssignmentItems()" (removed)="removeAssignmentFilter($event)" />
+      @if (appliedAssignmentItems().length) {
+        <app-applied-filters [fallbackFocus]="filterSearch" [filters]="appliedAssignmentItems()" (removed)="removeAssignmentFilter($event)" />
+      }
+      @if (assignmentPage() && !assignmentLoading() && !assignmentError()) {
+        <p class="toolbar-results" role="status">{{assignmentPage()?.totalElements}} resultado(s)</p>
+      }
       @if (assignmentLoading()) {<p class="meta" role="status">Carregando vínculos…</p>}
       @else if (assignmentError()) {
-        <p role="alert">{{assignmentError()}}</p>
+        <p class="error" role="alert">{{assignmentError()}}</p>
         <button type="button" class="secondary compact" (click)="refreshAssignments()">Tentar novamente</button>
       } @else if (!assignments().length) {
         <p class="meta assignment-empty">Nenhum vínculo encontrado.</p>
       } @else {
         <div class="table-wrap">
           <table class="mobile-cards">
-            <thead><tr><th>Matrícula</th><th>Usuário</th><th>Tipo</th><th>Componente</th><th>Origem</th><th>Período</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead>
+            <thead><tr><th>Matrícula do estudante</th><th>Profissional vinculado</th><th>Tipo</th><th>Componente</th><th>Origem</th><th>Período</th><th>Situação</th><th><span class="sr-only">Ações</span></th></tr></thead>
             <tbody>
               @for (a of assignments(); track a.id) {
                 <tr>
-                  <td data-label="Matrícula">{{a.registration ?? 'Matrícula indisponível'}}</td>
-                  <td data-label="Usuário">{{a.userName ?? 'Usuário indisponível'}}</td>
+                  <td data-label="Matrícula do estudante">{{a.registration ?? 'Matrícula indisponível'}}</td>
+                  <td data-label="Profissional vinculado">{{a.userName ?? 'Profissional indisponível'}}</td>
                   <td data-label="Tipo">{{label(a.assignmentType)}}</td>
                   <td data-label="Componente">{{a.subjectName ?? subjectLabel(a.subjectId)}}</td>
                   <td data-label="Origem">{{originLabel(a)}}</td>
@@ -315,13 +324,18 @@ function registrationOption(student: StudentRegistrationCandidate): Registration
   .course-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .35rem 1rem; }
   .course-panel p { color: var(--ink-600); margin: 0 0 .75rem; }
   .course-editor fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
-  .assignments { padding: 0; overflow: hidden; }
-  .assignments .section-header { padding: 1.25rem 1.5rem; margin: 0; }
-  .assignments .list-filter, .assignments .assignment-empty { margin-inline: 1.5rem; }
+  .assignments { --list-inset: var(--space-6); padding: 0; }
+  .assignments .section-header { padding: var(--space-5) var(--list-inset); margin: 0; }
+  .assignments > :is(.server-list-toolbar, app-applied-filters, p, button, app-pagination) {
+    margin-inline: var(--list-inset);
+  }
+  .assignments > :is(.server-list-toolbar, .toolbar-results, button) { margin-bottom: var(--space-3); }
+  .assignments > app-applied-filters { display: block; }
   .assignments .table-wrap { border-radius: 0; border: 0; border-top: 1px solid var(--border); }
-  .assignments app-pagination { display: block; margin-inline: 1.5rem; }
+  .assignments app-pagination { display: block; }
   .assignments app-pagination:has(nav) { margin-bottom: 1.25rem; }
   @media (max-width: 850px) { .admin-academic-grid, .course-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 700px) { .assignments { --list-inset: var(--space-4); } .assignments .table-wrap { padding-inline: var(--list-inset); } }
 `]})
 export class AdminAcademicComponent implements OnInit {
   private readonly api=inject(ApiService);
@@ -346,7 +360,7 @@ export class AdminAcademicComponent implements OnInit {
   readonly assignments = computed(() => this.assignmentPage()?.content ?? []);
   readonly assignmentError = signal('');
   readonly assignmentLoading = signal(false);
-  private assignmentRequest = 0;
+  private assignmentRequest?: Subscription;
   readonly loading=signal(true);
   readonly busy=signal(false);
   readonly pendingRevocation=signal<AssignmentView|null>(null);
@@ -361,10 +375,16 @@ export class AdminAcademicComponent implements OnInit {
   readonly archiveCourseError = signal('');
   readonly activeCourses = computed(() => this.courses().filter(course => course.active));
   protected readonly subjectCourseOptions = computed(() => this.activeCourses().map(coursePickerOption));
-  protected readonly assignmentCourseFilterOptions = computed(() => this.courses().map(coursePickerOption));
+  protected readonly assignmentCourseFilterOptions = computed(() => this.courses()
+    .filter(course => !this.selectedFilterCampus() || String(course.campusId) === this.selectedFilterCampus())
+    .map(coursePickerOption));
   protected readonly assignmentSubjectFilterOptions = computed(() => [
     { id: 'general', label: 'Sem componente específico' },
-    ...this.subjects().map(subject => ({ id: String(subject.id), label: subject.name, detail: subject.code })),
+    ...this.subjects().filter(subject => {
+      const course = this.selectedFilterCourse();
+      if (course) return String(subject.courseId) === course;
+      return !this.selectedFilterCampus() || this.assignmentCourseFilterOptions().some(item => item.id === String(subject.courseId));
+    }).map(subject => ({ id: String(subject.id), label: subject.name, detail: subject.code })),
   ]);
   readonly missingEditCampus = computed(() => {
     const course = this.editingCourse();
@@ -393,9 +413,13 @@ export class AdminAcademicComponent implements OnInit {
   readonly assignmentFilters = this.fb.nonNullable.group({
     query: '', registration: '', actor: '', type: '', subject: '', campus: '', course: '', origin: '', period: '', active: '',
   });
+  private readonly selectedFilterCampus = toSignal(this.assignmentFilters.controls.campus.valueChanges, { initialValue: '' });
+  private readonly selectedFilterCourse = toSignal(this.assignmentFilters.controls.course.valueChanges, { initialValue: '' });
+  protected readonly assignmentFilterOptionsOpen = signal(false);
+  protected readonly assignmentPeriodOptions = createFilterOptions<string[]>([]);
   readonly appliedAssignmentFilters = signal<Readonly<Record<string, string>>>({});
   protected readonly appliedAssignmentItems = computed(() => appliedFilterItems(this.appliedAssignmentFilters(), {
-    registration: 'Matrícula', actor: 'Profissional', type: 'Tipo de vínculo', subject: 'Componente',
+    registration: 'Matrícula do estudante', actor: 'Profissional vinculado', type: 'Tipo de vínculo', subject: 'Componente',
     campus: 'Campus', course: 'Curso', origin: 'Origem', period: 'Período letivo', active: 'Situação',
   }, {
     type: labelFor,
@@ -475,7 +499,38 @@ export class AdminAcademicComponent implements OnInit {
     .filter(subject => subject.courseId === this.studentScope()?.courseId && subject.active)
     .map(subject => ({ id: String(subject.id), label: subject.name, detail: subject.code })));
 
-  ngOnInit():void{this.load();this.loadAssignmentPage(0);}
+  constructor() {
+    effect(() => {
+      if (!this.assignmentFilterOptionsOpen()) {
+        this.assignmentPeriodOptions.cancel();
+        return;
+      }
+      this.refreshAssignmentPeriods();
+    });
+  }
+
+  ngOnInit(): void {
+    const { query, campus, course, subject, period } = this.assignmentFilters.controls;
+    query.valueChanges.pipe(debounceTime(250), takeUntilDestroyed(this.destroyRef)).subscribe(value => {
+      const search = value.trim();
+      if ((this.appliedAssignmentFilters()['query'] ?? '') === search) return;
+      this.appliedAssignmentFilters.update(filters => ({ ...filters, query: search }));
+      this.loadAssignmentPage(0);
+    });
+    campus.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(value => {
+      if (!value) return;
+      if (course.value && !this.assignmentCourseFilterOptions().some(item => item.id === course.value)) course.reset();
+      if (subject.value && !this.assignmentSubjectFilterOptions().some(item => item.id === subject.value)) subject.reset();
+      period.reset();
+    });
+    course.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(value => {
+      if (!value) return;
+      if (subject.value && !this.assignmentSubjectFilterOptions().some(item => item.id === subject.value)) subject.reset();
+      period.reset();
+    });
+    this.load();
+    this.loadAssignmentPage(0);
+  }
   load():void{
     this.loading.set(true);
     forkJoin({campuses:this.api.adminCampuses(),courses:this.api.adminCourses(),subjects:this.api.adminSubjects()}).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
@@ -724,10 +779,16 @@ export class AdminAcademicComponent implements OnInit {
 
   refreshAssignments(): void {
     this.loadAssignmentPage(this.assignmentPage()?.number ?? 0);
+    if (this.assignmentFilterOptionsOpen()) this.refreshAssignmentPeriods();
+  }
+
+  private refreshAssignmentPeriods(): void {
+    this.assignmentPeriodOptions.load(this.api.assignmentPeriods(this.selectedFilterCampus(), this.selectedFilterCourse()));
   }
 
   applyAssignmentFilters(): void {
-    this.appliedAssignmentFilters.set(this.assignmentFilters.getRawValue());
+    const filters = this.assignmentFilters.getRawValue();
+    this.appliedAssignmentFilters.set({ ...filters, query: filters.query.trim() });
     this.loadAssignmentPage(0);
   }
 
@@ -745,12 +806,11 @@ export class AdminAcademicComponent implements OnInit {
   }
 
   loadAssignmentPage(page: number): void {
-    const request = ++this.assignmentRequest;
+    this.assignmentRequest?.unsubscribe();
     this.assignmentLoading.set(true);
     this.assignmentError.set('');
-    this.api.assignmentPage(page, this.appliedAssignmentFilters()).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.assignmentRequest = this.api.assignmentPage(page, this.appliedAssignmentFilters()).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: result => {
-        if (request !== this.assignmentRequest) return;
         const lastPage = Math.max(0, result.totalPages - 1);
         if (result.number > lastPage) {
           this.loadAssignmentPage(lastPage);
@@ -760,7 +820,6 @@ export class AdminAcademicComponent implements OnInit {
         this.assignmentLoading.set(false);
       },
       error: failure => {
-        if (request !== this.assignmentRequest) return;
         this.assignmentLoading.set(false);
         this.assignmentError.set(errorMessage(failure, 'carregar os vínculos'));
       },

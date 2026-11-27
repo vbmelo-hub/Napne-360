@@ -25,7 +25,7 @@ export function appliedFilterItems(
       <ul aria-label="Filtros ativos">
         @for (filter of filters(); track filter.key; let index = $index) {
           <li>
-            <button #filterControl type="button" class="secondary compact" (click)="remove(filter.key, index)"
+            <button #filterControl type="button" class="toolbar-aux filter-chip" (click)="remove(filter.key, index)"
               [attr.aria-label]="'Remover filtro ' + filter.label + ': ' + filter.value">
               {{filter.label}}: {{filter.value}} <span aria-hidden="true">×</span>
             </button>
@@ -35,9 +35,9 @@ export function appliedFilterItems(
     }
   `,
   styles: `
-    ul { list-style: none; display: flex; flex-wrap: wrap; gap: .4rem; padding: 0; margin: .5rem 0; }
-    li { min-width: 0; }
-    button { text-align: left; overflow-wrap: anywhere; }
+    ul { list-style: none; display: flex; flex-wrap: wrap; gap: var(--space-2); padding: 0; margin: var(--space-2) 0; }
+    li { min-width: 0; max-width: 100%; }
+    .filter-chip { min-height: 2rem; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
   `,
 })
 export class AppliedFiltersComponent {

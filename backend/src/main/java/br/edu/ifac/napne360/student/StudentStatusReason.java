@@ -1,0 +1,6 @@
+package br.edu.ifac.napne360.student;
+
+public enum StudentStatusReason {
+    DROPOUT, COURSE_COMPLETION, TRANSFER, LEAVE_OF_ABSENCE, DISMISSAL, OTHER,
+    ACADEMIC_RESUMPTION, ADMINISTRATIVE_CORRECTION
+}

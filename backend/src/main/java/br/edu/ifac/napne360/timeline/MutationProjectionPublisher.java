@@ -11,7 +11,7 @@ public class MutationProjectionPublisher {
     private final AuditService audit;
 
     public void publish(MutationProjection event) {
-        timeline.appendOnce(event.key(), event.studentId(), event.eventType(), event.title(), event.actorName(),
+        timeline.appendOnce(event.key(), event.studentId(), event.eventType(), event.title(), event.actorName(), event.actorId(),
                 event.visibility(), event.data(), event.occurredAt());
         audit.recordProjection(event.key(), event.actorId(), event.ipAddress(), event.action(), event.resourceType(),
                 event.resourceId(), event.details(), event.occurredAt());

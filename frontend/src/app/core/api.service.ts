@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { LIST_PAGE_SIZE } from './list-view';
-import { AdminCourse, AdminSubject, AssignmentView, Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, CaseStageOption, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiAnnexI, PeiCreateRequest, PeiTransferCandidate, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentRegistrationCandidate, StudentSummary, Subject, TimelineEvent, UserDetails, UserView } from './models';
+import { AdminCourse, AdminSubject, AssignmentView, Attachment, Campus, CareRecord, CaseHistoryView, CaseResponsibleCandidate, CaseStageConfiguration, CaseStageConfigurationUpdate, CaseStageOption, Course, DocumentTemplateView, Dossier, NapneCase, Page, Pei, PeiAction, PeiAnnexI, PeiCreateRequest, PeiTransferCandidate, ReferenceEntryAdmin, ReferenceKind, ReferenceOption, StudentDetails, StudentRegistrationCandidate, StudentStatusChange, StudentStatusRestore, StudentStatusRestriction, StudentSummary, Subject, TimelineEvent, UserDetails, UserView } from './models';
 
 type PeiVersionAction = Exclude<PeiAction, 'EDIT' | 'TRANSFER'>;
 
@@ -10,13 +10,14 @@ export class ApiService {
   private http = inject(HttpClient);
 
 
-  students(query = '', page = 0, academicQuery = '', archived = false, courseId = '', status = '') {
+  students(query = '', page = 0, academicQuery = '', archived = false, courseId = '', status = '', reason = '') {
     let params = new HttpParams().set('query', query).set('page', page).set('size', LIST_PAGE_SIZE)
       .append('sort', 'updatedAt,desc').append('sort', 'id,desc');
     if (academicQuery) params = params.set('academicQuery', academicQuery);
     if (archived) params = params.set('archived', true);
     if (courseId) params = params.set('courseId', courseId);
     if (status) params = params.set('status', status);
+    if (reason) params = params.set('reason', reason);
     return this.http.get<Page<StudentSummary>>('/api/v1/students', { params });
   }
   studentFilterCourses() {
@@ -26,7 +27,15 @@ export class ApiService {
   createStudent(value: object) { return this.http.post<StudentDetails>('/api/v1/students', value); }
   updateStudent(id: number, value: object) { return this.http.put<StudentDetails>(`/api/v1/students/${id}`, value); }
   archiveStudent(id: number) { return this.http.delete<void>(`/api/v1/students/${id}`); }
-  reactivateStudent(id: number) { return this.http.patch<StudentDetails>(`/api/v1/students/${id}/reactivate`, {}); }
+  reactivateStudent(id: number, value: StudentStatusRestore = {}) {
+    return this.http.patch<StudentDetails>(`/api/v1/students/${id}/reactivate`, value);
+  }
+  changeStudentStatus(id: number, value: StudentStatusChange) {
+    return this.http.patch<StudentDetails>(`/api/v1/students/${id}/status`, value);
+  }
+  studentStatusRestrictions(id: number) {
+    return this.http.get<StudentStatusRestriction[]>(`/api/v1/students/${id}/status/restrictions`);
+  }
   dossier(id: number) { return this.http.get<Dossier>(`/api/v1/students/${id}/dossier`); }
   saveDossier(id: number, value: object) { return this.http.put<Dossier>(`/api/v1/students/${id}/dossier`, value); }
   dossierHistory(id:number) { return this.http.get<{version:number,fields:Record<string,unknown>,author:string,occurredAt:string}[]>(`/api/v1/students/${id}/dossier/history`); }
@@ -50,7 +59,7 @@ export class ApiService {
   studentCaseStages(id: number) {
     return this.http.get<CaseStageOption[]>(`/api/v1/students/${id}/cases/stages`);
   }
-  caseHistory(id: number, page: number, type = '', filters: { actor?: string; version?: number; from?: string; to?: string } = {}) {
+  caseHistory(id: number, page: number, type = '', filters: { actor?: string; actorId?: string; version?: number; from?: string; to?: string } = {}) {
     let params = new HttpParams().set('page', page).set('size', LIST_PAGE_SIZE);
     if (type) params = params.set('type', type);
     for (const [key, value] of Object.entries(filters)) {
@@ -58,16 +67,22 @@ export class ApiService {
     }
     return this.http.get<Page<CaseHistoryView>>(`/api/v1/cases/${id}/history`, {params});
   }
+  caseHistoryAuthors(id: number) {
+    return this.http.get<{ id: number; name: string }[]>(`/api/v1/cases/${id}/history/actors`);
+  }
   records(id: number) { return this.http.get<CareRecord[]>(`/api/v1/students/${id}/records`); }
   createRecord(id: number, value: object) { return this.http.post<CareRecord>(`/api/v1/students/${id}/records`, value); }
   updateRecord(studentId: number, recordId: string, value: object) { return this.http.put<CareRecord>(`/api/v1/students/${studentId}/records/${recordId}`, value); }
-  timeline(id: number, type = '', page = 0, filters: { actor?: string; from?: string; to?: string } = {}) {
+  timeline(id: number, type = '', page = 0, filters: { actor?: string; actorKey?: string; from?: string; to?: string } = {}) {
     let params = new HttpParams().set('page', page).set('size', LIST_PAGE_SIZE);
     if (type) params = params.set('type', type);
     for (const [key, value] of Object.entries(filters)) {
       if (value) params = params.set(key, value);
     }
     return this.http.get<Page<TimelineEvent>>(`/api/v1/students/${id}/timeline/page`, { params });
+  }
+  timelineActors(id: number) {
+    return this.http.get<{ id: string; label: string; detail?: string }[]>(`/api/v1/students/${id}/timeline/actors`);
   }
   peis(id: number) { return this.http.get<Pei[]>(`/api/v1/students/${id}/peis`); }
   pei(studentId: number, id: string) { return this.http.get<Pei>(`/api/v1/students/${studentId}/peis/${id}`); }
@@ -169,6 +184,12 @@ export class ApiService {
       if (value.trim()) params = params.set(key, value.trim());
     }
     return this.http.get<Page<AssignmentView>>('/api/v1/admin/assignments/page', { params });
+  }
+  assignmentPeriods(campus: string, course: string) {
+    let params = new HttpParams();
+    if (campus) params = params.set('campus', campus);
+    if (course) params = params.set('course', course);
+    return this.http.get<string[]>('/api/v1/admin/assignments/periods', { params });
   }
   createAssignment(value:object) { return this.http.post('/api/v1/admin/assignments',value); }
   revokeAssignment(id:number) { return this.http.patch(`/api/v1/admin/assignments/${id}/active`,{active:false}); }

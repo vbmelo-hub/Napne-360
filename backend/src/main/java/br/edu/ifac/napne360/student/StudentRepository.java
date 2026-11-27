@@ -27,23 +27,27 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
             where s.campus.id = :campusId and s.status <> br.edu.ifac.napne360.student.StudentStatus.ARCHIVED
             and (:courseId is null or s.course.id = :courseId)
             and (:status is null or s.status = :status)
+            and (:reason is null or s.statusReason = :reason)
             and (:query = '' or lower(s.civilName) like lower(concat('%', :query, '%'))
                  or lower(coalesce(s.socialName, '')) like lower(concat('%', :query, '%'))
                  or lower(s.registration) like lower(concat('%', :query, '%')))
             """)
-    Page<Student> searchCampus(@Param("campusId") Long campusId, @Param("query") String query, Long courseId, StudentStatus status, Pageable pageable);
+    Page<Student> searchCampus(Long campusId, String query, Long courseId, StudentStatus status,
+                              StudentStatusReason reason, Pageable pageable);
 
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"campus", "course"})
     @Query("""
             select s from Student s
             where s.campus.id = :campusId and s.status = br.edu.ifac.napne360.student.StudentStatus.ARCHIVED
             and (:courseId is null or s.course.id = :courseId)
-            and (:status is null or s.status = :status)
+            and (:status is null or s.archivedAcademicStatus = :status)
+            and (:reason is null or s.statusReason = :reason)
             and (:query = '' or lower(s.civilName) like lower(concat('%', :query, '%'))
                  or lower(coalesce(s.socialName, '')) like lower(concat('%', :query, '%'))
                  or lower(s.registration) like lower(concat('%', :query, '%')))
             """)
-    Page<Student> searchArchivedCampus(Long campusId, String query, Long courseId, StudentStatus status, Pageable pageable);
+    Page<Student> searchArchivedCampus(Long campusId, String query, Long courseId, StudentStatus status,
+                                      StudentStatusReason reason, Pageable pageable);
 
     @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"campus", "course"})
     @Query("""
@@ -88,7 +92,7 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
 
     String REGISTRATION_CANDIDATE_SCOPE = """
             from Student s where s.course.active = true
-              and s.status <> br.edu.ifac.napne360.student.StudentStatus.ARCHIVED
+              and s.status = br.edu.ifac.napne360.student.StudentStatus.ACTIVE
             """;
 
     @Query("select s " + REGISTRATION_CANDIDATE_SCOPE
@@ -106,4 +110,8 @@ public interface StudentRepository extends JpaRepository<Student, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Student s where s.id = :id")
     Optional<Student> findByIdForUpdate(Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from Student s where s.id = :id and s.campus.id = :campusId")
+    Optional<Student> findByIdAndCampusForUpdate(Long id, Long campusId);
 }

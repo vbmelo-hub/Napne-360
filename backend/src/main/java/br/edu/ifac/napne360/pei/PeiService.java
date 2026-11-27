@@ -92,6 +92,9 @@ public class PeiService {
     public PeiDocument createDraft(Student student, PeiCreateRequest request, Authentication auth, HttpServletRequest http) {
         UserAccount actor = currentUser.require();
         if (!actor.getRoles().contains(RoleName.TEACHER)) throw denied();
+        if (!student.acceptsNewOperations())
+            throw new ApiOperationException(HttpStatus.CONFLICT, "ACADEMIC_STUDENT_INACTIVE",
+                    "A situação acadêmica do estudante não permite iniciar um PEI.");
         if (request.teacherId() != null && !request.teacherId().equals(actor.getId())) {
             throw new IllegalArgumentException("O docente responsável deve ser o autor do rascunho.");
         }
@@ -153,6 +156,8 @@ public class PeiService {
         if (action == Action.START_REVISION) {
             if (previous.getAcademicOfferingId() != null)
                 academic.requirePeiOffering(studentId, previous.getAcademicOfferingId(), null, null, null);
+            else
+                academic.lockStudentForNewPei(studentId);
             var next = newDraft(series, previous, actor, now, contentForTeacher(previous, actor.getName()), actor.getEmail())
                     .teacherId(actor.getId()).build();
             var revisions = replace(series, previous.toBuilder()

@@ -2,6 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
+import { CareRecord } from '../core/models';
 import { StudentDetailComponent } from './student-detail.component';
 
 describe('Casos no acompanhamento do estudante', () => {
@@ -77,7 +78,7 @@ describe('Casos no acompanhamento do estudante', () => {
   }
 
   function openCases() {
-    click(fixture.nativeElement, 'Casos');
+    click(fixture.nativeElement, 'Estudo de caso');
     for (const request of http.match(studentUrl + '/cases/stages')) {
       request.flush([{ code: 'RECEIVED', label: 'Recebido' }, { code: 'CUSTOM_TEST', label: 'Etapa configurada' }]);
     }
@@ -107,6 +108,31 @@ describe('Casos no acompanhamento do estudante', () => {
   afterEach(() => {
     http.verify();
     sessionStorage.clear();
+  });
+
+  it('separa registros históricos por finalidade e mantém o estudo de caso restrito', () => {
+    setup();
+    const root = fixture.nativeElement as HTMLElement;
+    const records: CareRecord[] = [
+      { id: 'triagem', type: 'INITIAL_SCREENING', title: 'Triagem existente' },
+      { id: 'orientacao', type: 'PEDAGOGICAL_GUIDANCE', title: 'Orientação existente' },
+      { id: 'tutoria', type: 'TUTOR_OBSERVATION', title: 'Observação existente' },
+      { id: 'novo-pedido', type: 'SUPPORT_REQUEST', title: 'Nova solicitação existente' },
+    ].map(record => ({
+      ...record, studentId: 1, status: 'ACTIVE', content: {}, caseId: null, subjectId: null, version: 1,
+      createdBy: 'Profissional fictício', updatedAt: '2026-11-17T12:00:00Z',
+    }));
+    fixture.componentInstance.records.set(records);
+    click(root, 'Estudo de caso');
+    http.expectOne(studentUrl + '/cases/stages').flush([]);
+    fixture.detectChanges();
+    const cards = () => Array.from(root.querySelectorAll('.record-card h3'), item => item.textContent);
+    expect(cards()).toEqual(['Triagem existente', 'Orientação existente']);
+
+    click(root, 'Acompanhamento');
+    expect(cards()).toEqual(['Observação existente', 'Nova solicitação existente']);
+    expect(root.querySelector<HTMLSelectElement>('select[formControlName="type"] option[value="NAPNE_FOLLOW_UP"]')).not.toBeNull();
+    expect(root.querySelector<HTMLSelectElement>('select[formControlName="type"] option[value="INITIAL_SCREENING"]')).toBeNull();
   });
 
   it('envia a versão zero ao mudar de etapa e bloqueia novos envios durante a requisição', () => {
@@ -171,6 +197,54 @@ describe('Casos no acompanhamento do estudante', () => {
     fixture.detectChanges();
     expect(card.querySelector('.revisions')?.textContent).toContain('Nome anterior da etapa → Recebido');
     expect(card.querySelector('.revisions')?.textContent).toContain('Entrada anterior · Responsável');
+  });
+
+  it('valida a situação acadêmica no modal e informa o bloqueio de dependências', () => {
+    setup();
+    click(fixture.nativeElement, 'Alterar situação');
+    let dialog = fixture.nativeElement.querySelector('[role="dialog"]') as HTMLElement;
+    http.expectOne(studentUrl + '/status/restrictions').flush([
+      { code: 'STUDENT_HAS_PEIS', message: 'Resolva os PEIs em andamento na aba PEI.' },
+    ]);
+    field(dialog, 'select[formControlName="reason"]', 'COURSE_COMPLETION');
+    expect(dialog.querySelector<HTMLSelectElement>('select[formControlName="status"]')?.value).toBe('COMPLETED');
+    expect(button(dialog, 'Salvar situação').disabled).toBeTrue();
+    expect(dialog.textContent).toContain('Resolva os PEIs em andamento na aba PEI.');
+    click(dialog, 'Cancelar');
+
+    click(fixture.nativeElement, 'Alterar situação');
+    dialog = fixture.nativeElement.querySelector('[role="dialog"]') as HTMLElement;
+    http.expectOne(studentUrl + '/status/restrictions').flush([]);
+    field(dialog, 'select[formControlName="reason"]', 'OTHER');
+    field(dialog, 'select[formControlName="status"]', 'INACTIVE');
+    field(dialog, 'input[formControlName="effectiveDate"]', '2026-01-02');
+    expect(button(dialog, 'Salvar situação').disabled).toBeTrue();
+    field(dialog, 'textarea', '  Ocorrência conferida.  ');
+    expect(button(dialog, 'Salvar situação').disabled).toBeFalse();
+
+    click(dialog, 'Salvar situação');
+    const patch = http.expectOne(studentUrl + '/status');
+    expect(patch.request.method).toBe('PATCH');
+    expect(patch.request.body).toEqual({
+      reason: 'OTHER', status: 'INACTIVE', effectiveDate: '2026-01-02', observations: 'Ocorrência conferida.', version: 0,
+    });
+    patch.flush({ ...fixture.componentInstance.student(), status: 'INACTIVE', academicStatus: 'INACTIVE',
+      statusReason: 'OTHER', archived: false, version: 1 });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.student-academic-status').textContent).toContain('Inativo');
+  });
+
+  it('preserva o arquivamento de caso encerrado e retira a reabertura após inativar o estudante', () => {
+    setup('NAPNE', closedCase);
+    const [card] = openCases();
+    const optionValues = () => Array.from(card.querySelectorAll<HTMLOptionElement>('select option'),
+      option => option.value).filter(Boolean);
+    expect(optionValues()).toEqual(['SCREENING', 'ARCHIVED']);
+
+    fixture.componentInstance.student.update(value => value && { ...value, status: 'INACTIVE' });
+    fixture.detectChanges();
+
+    expect(optionValues()).toEqual(['ARCHIVED']);
   });
 
   it('exige motivo normalizado ao reabrir e limpa o rascunho após sucesso', () => {
@@ -383,7 +457,7 @@ describe('Casos no acompanhamento do estudante', () => {
     it(`mantém ações de caso fora do acesso de ${role}`, () => {
       setup(role);
       const root = fixture.nativeElement as HTMLElement;
-      expect(Array.from(root.querySelectorAll('nav button')).some(item => item.textContent?.trim() === 'Casos')).toBeFalse();
+      expect(Array.from(root.querySelectorAll('nav button')).some(item => item.textContent?.trim() === 'Estudo de caso')).toBeFalse();
       expect(root.querySelector('app-case-card')).toBeNull();
       http.expectNone(request => request.url.startsWith('/api/v1/cases/'));
     });

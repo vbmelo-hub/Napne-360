@@ -134,7 +134,7 @@ class MutationRecoveryIntegrationTest {
         doAnswer(call -> {
             rejectTimelineWhenUnavailable();
             return call.callRealMethod();
-        }).when(timelineWriter).appendOnce(anyString(), anyLong(), anyString(), anyString(), anyString(), any(), anyMap(), any());
+        }).when(timelineWriter).appendOnce(anyString(), anyLong(), anyString(), anyString(), anyString(), any(), any(), anyMap(), any());
         sql.execute("CREATE TRIGGER IF NOT EXISTS audit_unavailable BEFORE INSERT ON audit_event FOR EACH ROW CALL '"
                 + UnavailableAudit.class.getName() + "'");
     }

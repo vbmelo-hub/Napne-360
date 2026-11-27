@@ -17,7 +17,7 @@ import { ListFiltersComponent } from '../shared/list-filters.component';
   selector: 'app-attachment-actions',
   imports: [DatePipe, PaginationComponent, ListFiltersComponent],
   template: `
-    <div class="actions">
+    <div class="row-actions">
       @if (canPreview(attachment())) {
         <button type="button" class="secondary compact" (click)="showPreview(attachment())">Visualizar</button>
       }
@@ -53,9 +53,11 @@ import { ListFiltersComponent } from '../shared/list-filters.component';
           <ul class="versions">
             @for (version of versionList.items(); track version.id) {
               <li>
-                <strong>{{ version.originalName }} · revisão {{ version.revision }}</strong>
-                <span>{{ version.category }} · {{ version.archived ? 'Arquivado' : 'Disponível' }}</span>
-                <span>{{ version.uploadedBy }} · {{ version.uploadedAt | date:'dd/MM/yyyy, HH:mm' }}</span>
+                <div>
+                  <strong>{{ version.originalName }} · revisão {{ version.revision }}</strong>
+                  <span>{{ version.category }} · {{ version.archived ? 'Arquivado' : 'Disponível' }}</span>
+                  <span>{{ version.uploadedBy }} · {{ version.uploadedAt | date:'dd/MM/yyyy, HH:mm' }}</span>
+                </div>
                 @if (canPreview(version)) {
                   <button type="button" class="secondary compact" (click)="showPreview(version, true)">
                     Visualizar revisão {{ version.revision }}
@@ -85,6 +87,7 @@ import { ListFiltersComponent } from '../shared/list-filters.component';
     </dialog>
   `,
   styles: [`
+    :host, .row-actions { display: contents; }
     .actions { display: flex; gap: .5rem; flex-wrap: wrap; }
     .modal-heading { align-items: center; justify-content: space-between; margin-bottom: 1rem; }
     h2 { margin: 0; }
@@ -92,8 +95,11 @@ import { ListFiltersComponent } from '../shared/list-filters.component';
       border: 1px solid var(--border); border-radius: var(--radius-xl); padding: 1.25rem; color: var(--ink-950); }
     dialog::backdrop { background: rgb(7 31 25 / 58%); }
     .versions { display: grid; gap: .75rem; padding: 0; list-style: none; }
-    .versions li { display: grid; justify-items: start; gap: .25rem; padding-top: .75rem;
-      border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+    .versions li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-3);
+      padding-top: var(--space-3); border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+    .versions li :is(strong, span) { display: block; }
+    .versions li span { color: var(--ink-600); font-size: .875rem; }
+    @media (max-width: 500px) { .versions li { grid-template-columns: 1fr; justify-items: start; } }
     iframe, img { display: block; margin: .75rem auto 0; max-width: 100%; }
     iframe { width: 100%; height: 65vh; border: 1px solid var(--border); }
     img { max-height: 65vh; object-fit: contain; }

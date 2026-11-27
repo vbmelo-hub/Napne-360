@@ -3,6 +3,7 @@ package br.edu.ifac.napne360.casework;
 import br.edu.ifac.napne360.security.AccessGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -70,10 +71,18 @@ public class CaseController {
                                            @RequestParam(required = false) String size,
                                            @RequestParam(required = false) CaseHistory.Type type,
                                            @RequestParam(required = false) String actor,
+                                           @RequestParam(required = false) @Positive Long actorId,
                                            @RequestParam(required = false) Long version,
                                            @RequestParam(required = false) Instant from,
                                            @RequestParam(required = false) Instant to) {
-        return service.history(caseId(caseId), page == null ? 0 : pageNumber(page), size == null ? 20 : pageNumber(size), type, actor, version, from, to);
+        return service.history(caseId(caseId), page == null ? 0 : pageNumber(page), size == null ? 20 : pageNumber(size),
+                type, actor, actorId, version, from, to);
+    }
+
+    @GetMapping("/cases/{caseId}/history/actors")
+    @PreAuthorize("hasRole('NAPNE')")
+    public List<CaseService.HistoryAuthor> historyActors(@PathVariable String caseId) {
+        return service.historyAuthors(caseId(caseId));
     }
 
     private long caseId(String value) {

@@ -35,6 +35,12 @@ public class Student {
     @Column(nullable = false, length = 30)
     @Builder.Default
     private StudentStatus status = StudentStatus.ACTIVE;
+    @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private StudentStatus archivedAcademicStatus;
+    @Enumerated(EnumType.STRING)
+    @Column(length = 40)
+    private StudentStatusReason statusReason;
     private Instant archivedAt;
     @Column(nullable = false, updatable = false)
     @Builder.Default
@@ -44,6 +50,18 @@ public class Student {
     private Instant updatedAt = Instant.now();
     @Version
     private long version;
+
+    public boolean isAdministrativelyArchived() {
+        return status == StudentStatus.ARCHIVED;
+    }
+
+    public StudentStatus getAcademicStatus() {
+        return isAdministrativelyArchived() ? archivedAcademicStatus : status;
+    }
+
+    public boolean acceptsNewOperations() {
+        return status == StudentStatus.ACTIVE;
+    }
 
     public String getDisplayName() {
         return socialName == null || socialName.isBlank() ? civilName : socialName;

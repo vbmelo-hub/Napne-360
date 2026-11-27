@@ -18,11 +18,11 @@ public class TimelineService {
                 .title(title).actor(actor).visibility(visibility).data(data == null ? Map.of() : data).build());
     }
 
-    public void appendOnce(String key, Long studentId, String eventType, String title, String actor,
+    public void appendOnce(String key, Long studentId, String eventType, String title, String actor, Long actorId,
                            TimelineVisibility visibility, Map<String, Object> data, Instant occurredAt) {
         try {
             repository.insert(TimelineEventDocument.builder().id(key).studentId(studentId).eventType(eventType)
-                    .title(title).actor(actor).visibility(visibility).data(data).createdAt(occurredAt).build());
+                    .title(title).actor(actor).actorId(actorId).visibility(visibility).data(data).createdAt(occurredAt).build());
         } catch (DuplicateKeyException alreadyPublished) {
             // The deterministic _id identifies the same operation on every retry.
         }

@@ -457,6 +457,21 @@ class CaseControllerIntegrationTest {
                 .andExpect(jsonPath("$.content[0].version").value(1));
     }
 
+    @Test void caseHistoryCanFilterAuthorsWithTheSameNameByTheirRecordedIds() throws Exception {
+        var homonym = account(actor.getName(), campus, true, Set.of(RoleName.NAPNE));
+        perform(patch(stagePath()).content(stageBody("SCREENING", "Triagem", 0)), actor).andExpect(status().isOk());
+        perform(patch(stagePath()).content(stageBody("SCREENING", "Revisão", 1)), homonym).andExpect(status().isOk());
+        String history = "/api/v1/cases/" + legacy.getId() + "/history";
+        perform(get(history + "/actors"), actor).andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].name").value(actor.getName()))
+                .andExpect(jsonPath("$[1].name").value(actor.getName()));
+        perform(get(history).param("actorId", homonym.getId().toString()).param("size", "1"), actor)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].actorId").value(homonym.getId()));
+    }
+
     @ParameterizedTest @ValueSource(strings = {"page=-1", "page=1.1", "page=texto", "page=2147483648", "page=2147483647&size=100", "size=0", "size=-1", "size=101", "size=1.5", "size=texto", "size="})
     void invalidPaginationIs400(String query) throws Exception {
         perform(get("/api/v1/cases/" + legacy.getId() + "/history?" + query), actor).andExpect(status().isBadRequest());
@@ -475,7 +490,7 @@ class CaseControllerIntegrationTest {
     void otherRolesAndCampusCannotReadOrMutateCases(String role, boolean otherCampus) throws Exception {
         Campus where = otherCampus ? campuses.saveAndFlush(Campus.builder().name("Outro").code("B-" + token).build()) : campus;
         var forbidden = account("Sem acesso", where, true, Set.of(RoleName.valueOf(role)));
-        for (String suffix : List.of("", "/history", "/responsible-candidates"))
+        for (String suffix : List.of("", "/history", "/history/actors", "/responsible-candidates"))
             perform(get("/api/v1/cases/" + legacy.getId() + suffix), forbidden).andExpect(status().isForbidden());
         perform(patch(responsiblePath()).content(transferBody(candidate.getId(), "0", null)), forbidden).andExpect(status().isForbidden());
         perform(patch(stagePath()).content(stageBody("SCREENING", null, 0)), forbidden).andExpect(status().isForbidden());
